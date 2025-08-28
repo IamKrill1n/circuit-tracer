@@ -175,3 +175,6 @@ cython_debug/
 
 *.parquet
 .vscode/
+
+#Big files
+demos/graphs/
