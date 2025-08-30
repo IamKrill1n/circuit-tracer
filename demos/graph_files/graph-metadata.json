@@ -15,7 +15,7 @@
         " is"
       ],
       "prompt": "<bos>The capital of state containing Dallas is",
-      "node_threshold": 0.8,
+      "node_threshold": 0.0,
       "schema_version": 1
     }
   ]
