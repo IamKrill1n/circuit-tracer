@@ -246,6 +246,56 @@ def prune_graph(
 
     return PruneResult(node_mask, edge_mask, final_scores)
 
+def prune_graph_topk(graph, top_k=3) -> PruneResult:
+    n_tokens = len(graph.input_tokens)
+    n_logits = len(graph.logit_tokens)
+    total_nodes = graph.adjacency_matrix.size(0)
+    
+    highest_logit_node = total_nodes - n_logits
+
+    visited = set()
+
+    node_mask = torch.zeros(total_nodes, dtype=torch.bool, device=graph.adjacency_matrix.device)
+    edge_mask = torch.zeros((total_nodes, total_nodes), dtype=torch.bool, device=graph.adjacency_matrix.device)
+
+    def dfs(node_idx):
+        if node_idx in visited:
+            return
+        visited.add(node_idx)
+        node_mask[node_idx] = True
+        # Get the row corresponding to incoming effects for this target node.
+        row = graph.adjacency_matrix[node_idx]
+        filtered_row = row.clone()
+        
+        if torch.sum(filtered_row.abs()) == 0:
+            return
+        
+        nonzero_idx = (filtered_row.abs() > 0).nonzero(as_tuple=True)[0]
+        if len(nonzero_idx) == 0:
+            return
+        
+        cur_top_k = min(top_k, len(nonzero_idx))
+        # Use absolute values to choose the strongest connections.
+        top_vals, top_indices = torch.topk(filtered_row, cur_top_k)
+        for src in top_indices.tolist():
+            # Record the edge (note that row index = target, column index = source)
+            edge_mask[node_idx, src] = True
+            dfs(src)
+
+    dfs(highest_logit_node)
+
+    # Compute cumulative influence scores as in prune_graph.
+    logit_weights = torch.zeros(total_nodes, device=graph.adjacency_matrix.device)
+    logit_weights[-n_logits:] = graph.logit_probabilities
+    normalized_matrix = normalize_matrix(graph.adjacency_matrix)
+    node_influence = compute_influence(normalized_matrix, logit_weights)
+    sorted_scores, sorted_indices = torch.sort(node_influence, descending=True)
+    cumulative_scores = torch.cumsum(sorted_scores, dim=0) / sorted_scores.sum()
+    final_scores = torch.zeros_like(node_influence)
+    final_scores[sorted_indices] = cumulative_scores
+
+    return PruneResult(node_mask, edge_mask, final_scores)
+
 
 def compute_graph_scores(graph: Graph) -> tuple[float, float]:
     """Compute metrics for evaluating how well the graph captures the model's computation.
