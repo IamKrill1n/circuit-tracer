@@ -2,7 +2,7 @@
   "graphs": [
     {
       "slug": "dallas-austin",
-      "scan": "mntss/gemma-scope-transcoders",
+      "scan": "gemma-2-2b",
       "transcoder_list": [],
       "prompt_tokens": [
         "<bos>",
