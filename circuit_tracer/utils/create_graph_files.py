@@ -8,7 +8,8 @@ from transformers import AutoTokenizer
 
 from circuit_tracer.frontend.graph_models import Metadata, Model, Node, QParams
 from circuit_tracer.frontend.utils import add_graph_metadata, process_token
-from circuit_tracer.graph import Graph, prune_graph, prune_graph_topk, prune_graph_edge_weights
+from circuit_tracer.graph import Graph, prune_graph
+from circuit_tracer.subgraph.prune import prune_graph_topk, prune_graph_edge_weights
 
 logger = logging.getLogger(__name__)
 
@@ -222,7 +223,7 @@ def create_graph_files_topk(
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     graph.to(device)
-    node_mask, edge_mask, cumulative_scores = (
+    node_mask, edge_mask, cumulative_scores, node_type = (
         el.cpu() for el in prune_graph_topk(graph, top_k)
     )
     graph.to("cpu")
@@ -270,7 +271,7 @@ def create_graph_files_edge_weights(
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     graph.to(device)
-    node_mask, edge_mask, cumulative_scores = (
+    node_mask, edge_mask, cumulative_scores, node_type = (
         el.cpu() for el in prune_graph_edge_weights(graph, edge_weight_threshold)
     )
     graph.to("cpu")
