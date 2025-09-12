@@ -41,19 +41,6 @@ def prune_graph_topk(graph, top_k=3):
 
 
     dfs(highest_logit_node)
-
-    node_type = {}
-
-    for nodes in torch.where(new_node_mask)[0].tolist():
-        if nodes in range(n_features):
-            node_type[nodes] = "Feature"
-        elif nodes in range(n_features, error_end_idx):
-            node_type[nodes] = "Error"
-        elif nodes in range(error_end_idx, error_end_idx + n_tokens):
-            node_type[nodes] = "Token"
-        else:
-            node_type[nodes] = "Logit"
-
     logit_weights = torch.zeros(total_nodes, device=graph.adjacency_matrix.device)
     logit_weights[-n_logits:] = graph.logit_probabilities
     normalized_matrix = normalize_matrix(graph.adjacency_matrix)
@@ -62,7 +49,8 @@ def prune_graph_topk(graph, top_k=3):
     cumulative_scores = torch.cumsum(sorted_scores, dim=0) / sorted_scores.sum()
     final_scores = torch.zeros_like(node_influence)
     final_scores[sorted_indices] = cumulative_scores
-    return (new_node_mask, new_edge_mask, final_scores, node_type)
+    
+    return PruneResult(new_node_mask, new_edge_mask, final_scores)
 
 def prune_graph_edge_weights(graph, edge_weight_threshold = 3):
     n_tokens = len(graph.input_tokens)
@@ -100,18 +88,6 @@ def prune_graph_edge_weights(graph, edge_weight_threshold = 3):
 
     dfs(highest_logit_node)
 
-    node_type = {}
-
-    for nodes in torch.where(new_node_mask)[0].tolist():
-        if nodes in range(n_features):
-            node_type[nodes] = "Feature"
-        elif nodes in range(n_features, error_end_idx):
-            node_type[nodes] = "Error"
-        elif nodes in range(error_end_idx, error_end_idx + n_tokens):
-            node_type[nodes] = "Token"
-        else:
-            node_type[nodes] = "Logit"
-
     logit_weights = torch.zeros(total_nodes, device=graph.adjacency_matrix.device)
     logit_weights[-n_logits:] = graph.logit_probabilities
     normalized_matrix = normalize_matrix(graph.adjacency_matrix)
@@ -120,14 +96,14 @@ def prune_graph_edge_weights(graph, edge_weight_threshold = 3):
     cumulative_scores = torch.cumsum(sorted_scores, dim=0) / sorted_scores.sum()
     final_scores = torch.zeros_like(node_influence)
     final_scores[sorted_indices] = cumulative_scores
-
-    return (new_node_mask, new_edge_mask, final_scores, node_type)
+    
+    return PruneResult(new_node_mask, new_edge_mask, final_scores)
 
 if __name__ == "__main__":
     from circuit_tracer.graph import Graph
     graph_path = "demos/graphs/example_graph.pt"
     graph = Graph.from_pt(graph_path)
-    node_mask, edge_mask, cumulative_scores, node_type = prune_graph_topk(graph, top_k = 3)
+    node_mask, edge_mask, cumulative_scores = prune_graph_topk(graph, top_k = 3)
     print(edge_mask.sum(), node_mask.sum())
-    node_mask, edge_mask, cumulative_scores, node_type = prune_graph_edge_weights(graph, edge_weight_threshold=3)
+    node_mask, edge_mask, cumulative_scores = prune_graph_edge_weights(graph, edge_weight_threshold=3)
     print(edge_mask.sum(), node_mask.sum())

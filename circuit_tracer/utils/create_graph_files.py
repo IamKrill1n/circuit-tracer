@@ -223,7 +223,7 @@ def create_graph_files_topk(
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     graph.to(device)
-    node_mask, edge_mask, cumulative_scores, node_type = (
+    node_mask, edge_mask, cumulative_scores = (
         el.cpu() for el in prune_graph_topk(graph, top_k)
     )
     graph.to("cpu")
@@ -271,7 +271,7 @@ def create_graph_files_edge_weights(
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     graph.to(device)
-    node_mask, edge_mask, cumulative_scores, node_type = (
+    node_mask, edge_mask, cumulative_scores = (
         el.cpu() for el in prune_graph_edge_weights(graph, edge_weight_threshold)
     )
     graph.to("cpu")

@@ -26,34 +26,79 @@
   },
   "nodes": [
     {
-      "node_id": "3_9559_3",
-      "feature": 45730262,
-      "layer": "3",
-      "ctx_idx": 3,
+      "node_id": "0_7750_4",
+      "feature": 30042875,
+      "layer": "0",
+      "ctx_idx": 4,
       "feature_type": "cross layer transcoder",
       "token_prob": 0.0,
       "is_target_logit": false,
       "run_idx": 0,
       "reverse_ctx_idx": 0,
-      "jsNodeId": "3_9559-0",
+      "jsNodeId": "0_7750-0",
       "clerp": "",
-      "influence": 0.3854331970214844,
-      "activation": 21.75
+      "influence": 0.6461671590805054,
+      "activation": 2.484375
     },
     {
-      "node_id": "4_7671_3",
-      "feature": 29464321,
-      "layer": "4",
-      "ctx_idx": 3,
+      "node_id": "0_5626_6",
+      "feature": 15834377,
+      "layer": "0",
+      "ctx_idx": 6,
       "feature_type": "cross layer transcoder",
       "token_prob": 0.0,
       "is_target_logit": false,
       "run_idx": 0,
       "reverse_ctx_idx": 0,
-      "jsNodeId": "4_7671-0",
+      "jsNodeId": "0_5626-0",
       "clerp": "",
-      "influence": 0.3935694694519043,
-      "activation": 24.0
+      "influence": 0.41548818349838257,
+      "activation": 10.5
+    },
+    {
+      "node_id": "1_4767_6",
+      "feature": 11374063,
+      "layer": "1",
+      "ctx_idx": 6,
+      "feature_type": "cross layer transcoder",
+      "token_prob": 0.0,
+      "is_target_logit": false,
+      "run_idx": 0,
+      "reverse_ctx_idx": 0,
+      "jsNodeId": "1_4767-0",
+      "clerp": "",
+      "influence": 0.7361267805099487,
+      "activation": 2.828125
+    },
+    {
+      "node_id": "2_9457_6",
+      "feature": 44750527,
+      "layer": "2",
+      "ctx_idx": 6,
+      "feature_type": "cross layer transcoder",
+      "token_prob": 0.0,
+      "is_target_logit": false,
+      "run_idx": 0,
+      "reverse_ctx_idx": 0,
+      "jsNodeId": "2_9457-0",
+      "clerp": "",
+      "influence": 0.47597214579582214,
+      "activation": 8.625
+    },
+    {
+      "node_id": "3_5892_6",
+      "feature": 17384352,
+      "layer": "3",
+      "ctx_idx": 6,
+      "feature_type": "cross layer transcoder",
+      "token_prob": 0.0,
+      "is_target_logit": false,
+      "run_idx": 0,
+      "reverse_ctx_idx": 0,
+      "jsNodeId": "3_5892-0",
+      "clerp": "",
+      "influence": 0.5827522277832031,
+      "activation": 7.25
     },
     {
       "node_id": "4_13154_6",
@@ -71,96 +116,6 @@
       "activation": 16.25
     },
     {
-      "node_id": "4_7671_7",
-      "feature": 29464321,
-      "layer": "4",
-      "ctx_idx": 7,
-      "feature_type": "cross layer transcoder",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "4_7671-0",
-      "clerp": "",
-      "influence": 0.4965975880622864,
-      "activation": 10.1875
-    },
-    {
-      "node_id": "4_7870_7",
-      "feature": 31011745,
-      "layer": "4",
-      "ctx_idx": 7,
-      "feature_type": "cross layer transcoder",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "4_7870-0",
-      "clerp": "",
-      "influence": 0.4695827066898346,
-      "activation": 9.5
-    },
-    {
-      "node_id": "6_4662_2",
-      "feature": 10902108,
-      "layer": "6",
-      "ctx_idx": 2,
-      "feature_type": "cross layer transcoder",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "6_4662-0",
-      "clerp": "",
-      "influence": 0.521635890007019,
-      "activation": 18.5
-    },
-    {
-      "node_id": "6_4662_3",
-      "feature": 10902108,
-      "layer": "6",
-      "ctx_idx": 3,
-      "feature_type": "cross layer transcoder",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "6_4662-0",
-      "clerp": "",
-      "influence": 0.5398871898651123,
-      "activation": 16.0
-    },
-    {
-      "node_id": "6_4012_4",
-      "feature": 8078183,
-      "layer": "6",
-      "ctx_idx": 4,
-      "feature_type": "cross layer transcoder",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "6_4012-0",
-      "clerp": "",
-      "influence": 0.5389356017112732,
-      "activation": 12.4375
-    },
-    {
-      "node_id": "6_4662_7",
-      "feature": 10902108,
-      "layer": "6",
-      "ctx_idx": 7,
-      "feature_type": "cross layer transcoder",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "6_4662-0",
-      "clerp": "",
-      "influence": 0.5850493907928467,
-      "activation": 9.125
-    },
-    {
       "node_id": "7_6861_6",
       "feature": 23595007,
       "layer": "7",
@@ -174,21 +129,6 @@
       "clerp": "",
       "influence": 0.34174084663391113,
       "activation": 15.5
-    },
-    {
-      "node_id": "7_691_7",
-      "feature": 244642,
-      "layer": "7",
-      "ctx_idx": 7,
-      "feature_type": "cross layer transcoder",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "7_691-0",
-      "clerp": "",
-      "influence": 0.44520896673202515,
-      "activation": 18.375
     },
     {
       "node_id": "14_2268_6",
@@ -206,21 +146,6 @@
       "activation": 26.875
     },
     {
-      "node_id": "15_4494_2",
-      "feature": 10172289,
-      "layer": "15",
-      "ctx_idx": 2,
-      "feature_type": "cross layer transcoder",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "15_4494-0",
-      "clerp": "",
-      "influence": 0.4745839834213257,
-      "activation": 72.5
-    },
-    {
       "node_id": "16_25_6",
       "feature": 886,
       "layer": "16",
@@ -234,201 +159,6 @@
       "clerp": "",
       "influence": 0.2957691550254822,
       "activation": 33.0
-    },
-    {
-      "node_id": "16_4298_7",
-      "feature": 9311753,
-      "layer": "16",
-      "ctx_idx": 7,
-      "feature_type": "cross layer transcoder",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "16_4298-0",
-      "clerp": "",
-      "influence": 0.44687706232070923,
-      "activation": 22.0
-    },
-    {
-      "node_id": "17_1084_7",
-      "feature": 607735,
-      "layer": "17",
-      "ctx_idx": 7,
-      "feature_type": "cross layer transcoder",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "17_1084-0",
-      "clerp": "",
-      "influence": 0.5264149308204651,
-      "activation": 10.5625
-    },
-    {
-      "node_id": "17_7178_7",
-      "feature": 25894788,
-      "layer": "17",
-      "ctx_idx": 7,
-      "feature_type": "cross layer transcoder",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "17_7178-0",
-      "clerp": "",
-      "influence": 0.4401424527168274,
-      "activation": 28.5
-    },
-    {
-      "node_id": "18_3852_7",
-      "feature": 7494237,
-      "layer": "18",
-      "ctx_idx": 7,
-      "feature_type": "cross layer transcoder",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "18_3852-0",
-      "clerp": "",
-      "influence": 0.5965331792831421,
-      "activation": 7.9375
-    },
-    {
-      "node_id": "18_6101_7",
-      "feature": 18730241,
-      "layer": "18",
-      "ctx_idx": 7,
-      "feature_type": "cross layer transcoder",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "18_6101-0",
-      "clerp": "",
-      "influence": 0.3701213598251343,
-      "activation": 22.0
-    },
-    {
-      "node_id": "18_8959_7",
-      "feature": 40306712,
-      "layer": "18",
-      "ctx_idx": 7,
-      "feature_type": "cross layer transcoder",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "18_8959-0",
-      "clerp": "",
-      "influence": 0.35775089263916016,
-      "activation": 37.0
-    },
-    {
-      "node_id": "18_16041_7",
-      "feature": 128969811,
-      "layer": "18",
-      "ctx_idx": 7,
-      "feature_type": "cross layer transcoder",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "18_16041-0",
-      "clerp": "",
-      "influence": 0.560257613658905,
-      "activation": 10.0
-    },
-    {
-      "node_id": "19_37_7",
-      "feature": 1633,
-      "layer": "19",
-      "ctx_idx": 7,
-      "feature_type": "cross layer transcoder",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "19_37-0",
-      "clerp": "",
-      "influence": 0.4947727918624878,
-      "activation": 7.6875
-    },
-    {
-      "node_id": "19_1445_7",
-      "feature": 1073825,
-      "layer": "19",
-      "ctx_idx": 7,
-      "feature_type": "cross layer transcoder",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "19_1445-0",
-      "clerp": "",
-      "influence": 0.39484360814094543,
-      "activation": 36.0
-    },
-    {
-      "node_id": "19_2439_7",
-      "feature": 3024550,
-      "layer": "19",
-      "ctx_idx": 7,
-      "feature_type": "cross layer transcoder",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "19_2439-0",
-      "clerp": "",
-      "influence": 0.5145416855812073,
-      "activation": 13.0625
-    },
-    {
-      "node_id": "19_2695_7",
-      "feature": 3686950,
-      "layer": "19",
-      "ctx_idx": 7,
-      "feature_type": "cross layer transcoder",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "19_2695-0",
-      "clerp": "",
-      "influence": 0.39971497654914856,
-      "activation": 11.9375
-    },
-    {
-      "node_id": "19_4857_7",
-      "feature": 11894983,
-      "layer": "19",
-      "ctx_idx": 7,
-      "feature_type": "cross layer transcoder",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "19_4857-0",
-      "clerp": "",
-      "influence": 0.6780113577842712,
-      "activation": 12.5
-    },
-    {
-      "node_id": "20_5916_7",
-      "feature": 17626932,
-      "layer": "20",
-      "ctx_idx": 7,
-      "feature_type": "cross layer transcoder",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "20_5916-0",
-      "clerp": "",
-      "influence": 0.4255684018135071,
-      "activation": 46.0
     },
     {
       "node_id": "20_15589_7",
@@ -446,243 +176,18 @@
       "activation": 51.5
     },
     {
-      "node_id": "21_5943_7",
-      "feature": 17793573,
-      "layer": "21",
-      "ctx_idx": 7,
-      "feature_type": "cross layer transcoder",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "21_5943-0",
-      "clerp": "",
-      "influence": 0.2814328968524933,
-      "activation": 59.0
-    },
-    {
-      "node_id": "0_3_3",
-      "feature": -1,
-      "layer": "3",
-      "ctx_idx": 3,
-      "feature_type": "mlp reconstruction error",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "3_3-0",
-      "clerp": "",
-      "influence": 0.4020833969116211,
-      "activation": null
-    },
-    {
-      "node_id": "0_6_2",
-      "feature": -1,
-      "layer": "6",
-      "ctx_idx": 2,
-      "feature_type": "mlp reconstruction error",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "6_2-0",
-      "clerp": "",
-      "influence": 0.5427200198173523,
-      "activation": null
-    },
-    {
-      "node_id": "0_9_7",
-      "feature": -1,
-      "layer": "9",
-      "ctx_idx": 7,
-      "feature_type": "mlp reconstruction error",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "9_7-0",
-      "clerp": "",
-      "influence": 0.43842095136642456,
-      "activation": null
-    },
-    {
-      "node_id": "0_12_7",
-      "feature": -1,
-      "layer": "12",
-      "ctx_idx": 7,
-      "feature_type": "mlp reconstruction error",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "12_7-0",
-      "clerp": "",
-      "influence": 0.3765684962272644,
-      "activation": null
-    },
-    {
-      "node_id": "0_14_2",
-      "feature": -1,
-      "layer": "14",
-      "ctx_idx": 2,
-      "feature_type": "mlp reconstruction error",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "14_2-0",
-      "clerp": "",
-      "influence": 0.6151848435401917,
-      "activation": null
-    },
-    {
-      "node_id": "0_14_6",
-      "feature": -1,
-      "layer": "14",
-      "ctx_idx": 6,
-      "feature_type": "mlp reconstruction error",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "14_6-0",
-      "clerp": "",
-      "influence": 0.4703052341938019,
-      "activation": null
-    },
-    {
-      "node_id": "0_14_7",
-      "feature": -1,
-      "layer": "14",
-      "ctx_idx": 7,
-      "feature_type": "mlp reconstruction error",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "14_7-0",
-      "clerp": "",
-      "influence": 0.41117724776268005,
-      "activation": null
-    },
-    {
-      "node_id": "0_15_6",
-      "feature": -1,
-      "layer": "15",
-      "ctx_idx": 6,
-      "feature_type": "mlp reconstruction error",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "15_6-0",
-      "clerp": "",
-      "influence": 0.5173083543777466,
-      "activation": null
-    },
-    {
-      "node_id": "0_15_7",
-      "feature": -1,
-      "layer": "15",
-      "ctx_idx": 7,
-      "feature_type": "mlp reconstruction error",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "15_7-0",
-      "clerp": "",
-      "influence": 0.3540026843547821,
-      "activation": null
-    },
-    {
-      "node_id": "0_16_7",
-      "feature": -1,
-      "layer": "16",
-      "ctx_idx": 7,
-      "feature_type": "mlp reconstruction error",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "16_7-0",
-      "clerp": "",
-      "influence": 0.30782243609428406,
-      "activation": null
-    },
-    {
-      "node_id": "0_17_7",
-      "feature": -1,
-      "layer": "17",
-      "ctx_idx": 7,
-      "feature_type": "mlp reconstruction error",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "17_7-0",
-      "clerp": "",
-      "influence": 0.3595890998840332,
-      "activation": null
-    },
-    {
-      "node_id": "0_18_7",
-      "feature": -1,
-      "layer": "18",
-      "ctx_idx": 7,
-      "feature_type": "mlp reconstruction error",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "18_7-0",
-      "clerp": "",
-      "influence": 0.3251275420188904,
-      "activation": null
-    },
-    {
-      "node_id": "0_19_7",
-      "feature": -1,
-      "layer": "19",
-      "ctx_idx": 7,
-      "feature_type": "mlp reconstruction error",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "19_7-0",
-      "clerp": "",
-      "influence": 0.3666761815547943,
-      "activation": null
-    },
-    {
-      "node_id": "0_24_7",
-      "feature": -1,
-      "layer": "24",
-      "ctx_idx": 7,
-      "feature_type": "mlp reconstruction error",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "24_7-0",
-      "clerp": "",
-      "influence": 0.286947101354599,
-      "activation": null
-    },
-    {
-      "node_id": "E_651_1",
-      "feature": 1,
+      "node_id": "E_2_0",
+      "feature": 0,
       "layer": "E",
-      "ctx_idx": 1,
+      "ctx_idx": 0,
       "feature_type": "embedding",
       "token_prob": 0.0,
       "is_target_logit": false,
       "run_idx": 0,
       "reverse_ctx_idx": 0,
-      "jsNodeId": "E_651-1",
+      "jsNodeId": "E_2-0",
       "clerp": "",
-      "influence": 0.13815928995609283,
+      "influence": 0.10039403289556503,
       "activation": null
     },
     {
@@ -746,21 +251,6 @@
       "activation": null
     },
     {
-      "node_id": "E_603_7",
-      "feature": 7,
-      "layer": "E",
-      "ctx_idx": 7,
-      "feature_type": "embedding",
-      "token_prob": 0.0,
-      "is_target_logit": false,
-      "run_idx": 0,
-      "reverse_ctx_idx": 0,
-      "jsNodeId": "E_603-7",
-      "clerp": "",
-      "influence": 0.24204441905021667,
-      "activation": null
-    },
-    {
       "node_id": "27_22605_7",
       "feature": 22605,
       "layer": "27",
@@ -778,94 +268,89 @@
   ],
   "links": [
     {
-      "source": "E_6037_2",
-      "target": "3_9559_3",
-      "weight": 19.875
-    },
-    {
-      "source": "E_576_3",
-      "target": "3_9559_3",
-      "weight": 5.125
-    },
-    {
-      "source": "3_9559_3",
-      "target": "4_7671_3",
-      "weight": 3.375
-    },
-    {
-      "source": "0_3_3",
-      "target": "4_7671_3",
-      "weight": 3.46875
+      "source": "E_2_0",
+      "target": "0_7750_4",
+      "weight": 1.3671875
     },
     {
       "source": "E_6037_2",
-      "target": "4_7671_3",
-      "weight": 16.25
+      "target": "0_7750_4",
+      "weight": 1.328125
+    },
+    {
+      "source": "E_2329_4",
+      "target": "0_7750_4",
+      "weight": 3.25
+    },
+    {
+      "source": "E_2_0",
+      "target": "0_5626_6",
+      "weight": 0.416015625
     },
     {
       "source": "E_576_3",
-      "target": "4_7671_3",
-      "weight": 7.75
+      "target": "0_5626_6",
+      "weight": 0.01080322265625
+    },
+    {
+      "source": "E_26865_6",
+      "target": "0_5626_6",
+      "weight": 12.6875
+    },
+    {
+      "source": "0_7750_4",
+      "target": "1_4767_6",
+      "weight": 0.359375
+    },
+    {
+      "source": "E_2329_4",
+      "target": "1_4767_6",
+      "weight": 1.4921875
+    },
+    {
+      "source": "E_26865_6",
+      "target": "1_4767_6",
+      "weight": 6.0
+    },
+    {
+      "source": "0_5626_6",
+      "target": "2_9457_6",
+      "weight": 1.1953125
+    },
+    {
+      "source": "1_4767_6",
+      "target": "2_9457_6",
+      "weight": 1.0078125
+    },
+    {
+      "source": "E_26865_6",
+      "target": "2_9457_6",
+      "weight": 18.375
+    },
+    {
+      "source": "2_9457_6",
+      "target": "3_5892_6",
+      "weight": 1.7578125
+    },
+    {
+      "source": "E_2_0",
+      "target": "3_5892_6",
+      "weight": 0.65234375
+    },
+    {
+      "source": "E_26865_6",
+      "target": "3_5892_6",
+      "weight": 6.9375
+    },
+    {
+      "source": "3_5892_6",
+      "target": "4_13154_6",
+      "weight": 1.359375
     },
     {
       "source": "E_26865_6",
       "target": "4_13154_6",
       "weight": 34.5
-    },
-    {
-      "source": "E_6037_2",
-      "target": "4_7671_7",
-      "weight": 12.125
-    },
-    {
-      "source": "E_603_7",
-      "target": "4_7671_7",
-      "weight": 5.78125
-    },
-    {
-      "source": "E_6037_2",
-      "target": "4_7870_7",
-      "weight": 11.3125
-    },
-    {
-      "source": "E_6037_2",
-      "target": "6_4662_2",
-      "weight": 23.25
-    },
-    {
-      "source": "4_7671_3",
-      "target": "6_4662_3",
-      "weight": 5.96875
-    },
-    {
-      "source": "E_6037_2",
-      "target": "6_4662_3",
-      "weight": 8.5
-    },
-    {
-      "source": "E_576_3",
-      "target": "6_4662_3",
-      "weight": 3.75
-    },
-    {
-      "source": "E_2329_4",
-      "target": "6_4012_4",
-      "weight": 18.625
-    },
-    {
-      "source": "4_7671_7",
-      "target": "6_4662_7",
-      "weight": 3.0
-    },
-    {
-      "source": "4_7870_7",
-      "target": "6_4662_7",
-      "weight": 3.796875
-    },
-    {
-      "source": "E_6037_2",
-      "target": "6_4662_7",
-      "weight": 7.375
     },
     {
       "source": "4_13154_6",
@@ -876,11 +361,6 @@
       "source": "E_26865_6",
       "target": "7_6861_6",
       "weight": 20.25
-    },
-    {
-      "source": "E_6037_2",
-      "target": "7_691_7",
-      "weight": 8.25
     },
     {
       "source": "4_13154_6",
@@ -898,31 +378,6 @@
       "weight": 27.5
     },
     {
-      "source": "6_4662_2",
-      "target": "15_4494_2",
-      "weight": 3.953125
-    },
-    {
-      "source": "0_6_2",
-      "target": "15_4494_2",
-      "weight": 5.40625
-    },
-    {
-      "source": "0_14_2",
-      "target": "15_4494_2",
-      "weight": 9.125
-    },
-    {
-      "source": "E_6037_2",
-      "target": "15_4494_2",
-      "weight": 50.0
-    },
-    {
-      "source": "4_13154_6",
-      "target": "16_25_6",
-      "weight": 7.0
-    },
-    {
       "source": "7_6861_6",
       "target": "16_25_6",
       "weight": 10.5625
@@ -933,399 +388,9 @@
       "weight": 22.625
     },
     {
-      "source": "0_15_6",
-      "target": "16_25_6",
-      "weight": 3.640625
-    },
-    {
       "source": "E_26865_6",
       "target": "16_25_6",
       "weight": 30.0
-    },
-    {
-      "source": "15_4494_2",
-      "target": "16_4298_7",
-      "weight": 3.75
-    },
-    {
-      "source": "E_6037_2",
-      "target": "16_4298_7",
-      "weight": 12.5625
-    },
-    {
-      "source": "6_4662_2",
-      "target": "17_1084_7",
-      "weight": 3.59375
-    },
-    {
-      "source": "6_4662_7",
-      "target": "17_1084_7",
-      "weight": 3.28125
-    },
-    {
-      "source": "16_4298_7",
-      "target": "17_1084_7",
-      "weight": 7.28125
-    },
-    {
-      "source": "0_12_7",
-      "target": "17_1084_7",
-      "weight": 3.265625
-    },
-    {
-      "source": "E_6037_2",
-      "target": "17_1084_7",
-      "weight": 11.6875
-    },
-    {
-      "source": "15_4494_2",
-      "target": "17_7178_7",
-      "weight": 5.4375
-    },
-    {
-      "source": "16_4298_7",
-      "target": "17_7178_7",
-      "weight": 3.453125
-    },
-    {
-      "source": "E_6037_2",
-      "target": "17_7178_7",
-      "weight": 9.625
-    },
-    {
-      "source": "16_4298_7",
-      "target": "18_3852_7",
-      "weight": 9.6875
-    },
-    {
-      "source": "17_1084_7",
-      "target": "18_3852_7",
-      "weight": 3.359375
-    },
-    {
-      "source": "0_9_7",
-      "target": "18_3852_7",
-      "weight": 3.671875
-    },
-    {
-      "source": "0_12_7",
-      "target": "18_3852_7",
-      "weight": 4.3125
-    },
-    {
-      "source": "0_17_7",
-      "target": "18_3852_7",
-      "weight": 3.6875
-    },
-    {
-      "source": "E_6037_2",
-      "target": "18_3852_7",
-      "weight": 10.75
-    },
-    {
-      "source": "15_4494_2",
-      "target": "18_6101_7",
-      "weight": 5.03125
-    },
-    {
-      "source": "17_7178_7",
-      "target": "18_6101_7",
-      "weight": 15.1875
-    },
-    {
-      "source": "0_9_7",
-      "target": "18_6101_7",
-      "weight": 3.0625
-    },
-    {
-      "source": "0_15_7",
-      "target": "18_6101_7",
-      "weight": 3.8125
-    },
-    {
-      "source": "0_17_7",
-      "target": "18_6101_7",
-      "weight": 13.625
-    },
-    {
-      "source": "E_6037_2",
-      "target": "18_6101_7",
-      "weight": 4.875
-    },
-    {
-      "source": "E_2329_4",
-      "target": "18_6101_7",
-      "weight": 3.53125
-    },
-    {
-      "source": "6_4012_4",
-      "target": "18_8959_7",
-      "weight": 3.03125
-    },
-    {
-      "source": "15_4494_2",
-      "target": "18_8959_7",
-      "weight": 3.3125
-    },
-    {
-      "source": "17_7178_7",
-      "target": "18_8959_7",
-      "weight": 13.9375
-    },
-    {
-      "source": "0_14_7",
-      "target": "18_8959_7",
-      "weight": 4.25
-    },
-    {
-      "source": "0_17_7",
-      "target": "18_8959_7",
-      "weight": 10.8125
-    },
-    {
-      "source": "E_6037_2",
-      "target": "18_8959_7",
-      "weight": 4.8125
-    },
-    {
-      "source": "E_2329_4",
-      "target": "18_8959_7",
-      "weight": 16.25
-    },
-    {
-      "source": "4_7870_7",
-      "target": "18_16041_7",
-      "weight": 3.5625
-    },
-    {
-      "source": "6_4662_2",
-      "target": "18_16041_7",
-      "weight": 5.96875
-    },
-    {
-      "source": "6_4662_3",
-      "target": "18_16041_7",
-      "weight": 3.171875
-    },
-    {
-      "source": "7_691_7",
-      "target": "18_16041_7",
-      "weight": 3.90625
-    },
-    {
-      "source": "15_4494_2",
-      "target": "18_16041_7",
-      "weight": 3.640625
-    },
-    {
-      "source": "16_4298_7",
-      "target": "18_16041_7",
-      "weight": 7.53125
-    },
-    {
-      "source": "17_1084_7",
-      "target": "18_16041_7",
-      "weight": 5.21875
-    },
-    {
-      "source": "0_12_7",
-      "target": "18_16041_7",
-      "weight": 6.59375
-    },
-    {
-      "source": "E_6037_2",
-      "target": "18_16041_7",
-      "weight": 11.4375
-    },
-    {
-      "source": "18_6101_7",
-      "target": "19_37_7",
-      "weight": 3.140625
-    },
-    {
-      "source": "0_14_7",
-      "target": "19_37_7",
-      "weight": 3.359375
-    },
-    {
-      "source": "E_6037_2",
-      "target": "19_37_7",
-      "weight": 8.1875
-    },
-    {
-      "source": "16_4298_7",
-      "target": "19_1445_7",
-      "weight": 6.40625
-    },
-    {
-      "source": "17_7178_7",
-      "target": "19_1445_7",
-      "weight": 3.234375
-    },
-    {
-      "source": "18_3852_7",
-      "target": "19_1445_7",
-      "weight": 3.25
-    },
-    {
-      "source": "18_6101_7",
-      "target": "19_1445_7",
-      "weight": 7.96875
-    },
-    {
-      "source": "0_9_7",
-      "target": "19_1445_7",
-      "weight": 3.625
-    },
-    {
-      "source": "0_18_7",
-      "target": "19_1445_7",
-      "weight": 7.125
-    },
-    {
-      "source": "E_6037_2",
-      "target": "19_1445_7",
-      "weight": 10.9375
-    },
-    {
-      "source": "18_8959_7",
-      "target": "19_2439_7",
-      "weight": 6.3125
-    },
-    {
-      "source": "E_2329_4",
-      "target": "19_2439_7",
-      "weight": 6.40625
-    },
-    {
-      "source": "6_4662_2",
-      "target": "19_2695_7",
-      "weight": 4.5625
-    },
-    {
-      "source": "6_4662_7",
-      "target": "19_2695_7",
-      "weight": 3.28125
-    },
-    {
-      "source": "15_4494_2",
-      "target": "19_2695_7",
-      "weight": 3.5
-    },
-    {
-      "source": "16_4298_7",
-      "target": "19_2695_7",
-      "weight": 5.28125
-    },
-    {
-      "source": "0_14_7",
-      "target": "19_2695_7",
-      "weight": 3.453125
-    },
-    {
-      "source": "E_6037_2",
-      "target": "19_2695_7",
-      "weight": 15.75
-    },
-    {
-      "source": "E_26865_6",
-      "target": "19_2695_7",
-      "weight": 5.15625
-    },
-    {
-      "source": "4_7671_7",
-      "target": "19_4857_7",
-      "weight": 3.359375
-    },
-    {
-      "source": "6_4662_2",
-      "target": "19_4857_7",
-      "weight": 4.5
-    },
-    {
-      "source": "7_691_7",
-      "target": "19_4857_7",
-      "weight": 4.9375
-    },
-    {
-      "source": "16_4298_7",
-      "target": "19_4857_7",
-      "weight": 9.8125
-    },
-    {
-      "source": "17_7178_7",
-      "target": "19_4857_7",
-      "weight": 6.96875
-    },
-    {
-      "source": "18_6101_7",
-      "target": "19_4857_7",
-      "weight": 4.71875
-    },
-    {
-      "source": "18_16041_7",
-      "target": "19_4857_7",
-      "weight": 4.65625
-    },
-    {
-      "source": "0_12_7",
-      "target": "19_4857_7",
-      "weight": 3.6875
-    },
-    {
-      "source": "0_16_7",
-      "target": "19_4857_7",
-      "weight": 3.265625
-    },
-    {
-      "source": "E_6037_2",
-      "target": "19_4857_7",
-      "weight": 18.5
-    },
-    {
-      "source": "17_7178_7",
-      "target": "20_5916_7",
-      "weight": 9.3125
-    },
-    {
-      "source": "18_6101_7",
-      "target": "20_5916_7",
-      "weight": 6.21875
-    },
-    {
-      "source": "18_8959_7",
-      "target": "20_5916_7",
-      "weight": 8.8125
-    },
-    {
-      "source": "19_4857_7",
-      "target": "20_5916_7",
-      "weight": 5.875
-    },
-    {
-      "source": "0_17_7",
-      "target": "20_5916_7",
-      "weight": 4.03125
-    },
-    {
-      "source": "0_19_7",
-      "target": "20_5916_7",
-      "weight": 6.28125
-    },
-    {
-      "source": "E_6037_2",
-      "target": "20_5916_7",
-      "weight": 7.09375
-    },
-    {
-      "source": "4_13154_6",
-      "target": "20_15589_7",
-      "weight": 11.125
-    },
-    {
-      "source": "7_6861_6",
-      "target": "20_15589_7",
-      "weight": 8.875
     },
     {
       "source": "14_2268_6",
@@ -1338,149 +403,14 @@
       "weight": 14.1875
     },
     {
-      "source": "18_8959_7",
-      "target": "20_15589_7",
-      "weight": 9.75
-    },
-    {
-      "source": "19_1445_7",
-      "target": "20_15589_7",
-      "weight": 6.90625
-    },
-    {
-      "source": "19_2439_7",
-      "target": "20_15589_7",
-      "weight": 3.78125
-    },
-    {
-      "source": "0_14_6",
-      "target": "20_15589_7",
-      "weight": 3.34375
-    },
-    {
-      "source": "0_14_7",
-      "target": "20_15589_7",
-      "weight": 5.3125
-    },
-    {
-      "source": "0_15_7",
-      "target": "20_15589_7",
-      "weight": 3.640625
-    },
-    {
-      "source": "0_16_7",
-      "target": "20_15589_7",
-      "weight": 6.21875
-    },
-    {
-      "source": "0_19_7",
-      "target": "20_15589_7",
-      "weight": 6.5
-    },
-    {
-      "source": "E_651_1",
-      "target": "20_15589_7",
-      "weight": 4.75
-    },
-    {
-      "source": "E_6037_2",
-      "target": "20_15589_7",
-      "weight": 4.46875
-    },
-    {
-      "source": "E_2329_4",
-      "target": "20_15589_7",
-      "weight": 6.625
-    },
-    {
       "source": "E_26865_6",
       "target": "20_15589_7",
       "weight": 50.75
     },
     {
-      "source": "16_4298_7",
-      "target": "21_5943_7",
-      "weight": 7.90625
-    },
-    {
-      "source": "17_1084_7",
-      "target": "21_5943_7",
-      "weight": 4.5625
-    },
-    {
-      "source": "17_7178_7",
-      "target": "21_5943_7",
-      "weight": 5.96875
-    },
-    {
-      "source": "18_6101_7",
-      "target": "21_5943_7",
-      "weight": 14.6875
-    },
-    {
-      "source": "18_8959_7",
-      "target": "21_5943_7",
-      "weight": 3.46875
-    },
-    {
-      "source": "19_37_7",
-      "target": "21_5943_7",
-      "weight": 3.859375
-    },
-    {
-      "source": "19_2695_7",
-      "target": "21_5943_7",
-      "weight": 6.6875
-    },
-    {
-      "source": "20_5916_7",
-      "target": "21_5943_7",
-      "weight": 3.640625
-    },
-    {
-      "source": "0_16_7",
-      "target": "21_5943_7",
-      "weight": 7.1875
-    },
-    {
-      "source": "0_17_7",
-      "target": "21_5943_7",
-      "weight": 4.5
-    },
-    {
-      "source": "0_18_7",
-      "target": "21_5943_7",
-      "weight": 7.84375
-    },
-    {
-      "source": "0_19_7",
-      "target": "21_5943_7",
-      "weight": 6.0625
-    },
-    {
-      "source": "E_6037_2",
-      "target": "21_5943_7",
-      "weight": 4.6875
-    },
-    {
-      "source": "E_2329_4",
-      "target": "21_5943_7",
-      "weight": 3.625
-    },
-    {
       "source": "20_15589_7",
       "target": "27_22605_7",
       "weight": 6.0
-    },
-    {
-      "source": "21_5943_7",
-      "target": "27_22605_7",
-      "weight": 3.515625
-    },
-    {
-      "source": "0_24_7",
-      "target": "27_22605_7",
-      "weight": 3.703125
     },
     {
       "source": "E_26865_6",

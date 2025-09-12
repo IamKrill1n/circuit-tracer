@@ -3,8 +3,9 @@ import networkx as nx
 import numpy as np
 from typing import Optional, List, Set, Tuple, Dict
 
-from ..graph import Graph
-
+from circuit_tracer.graph import Graph
+from circuit_tracer.subgraph.prune import prune_graph_topk, prune_graph_edge_weights
+from circuit_tracer.demos.graph_visualization import create_graph_visualization
 
 def _get_nx_graph(adj_matrix: np.ndarray, directed: bool) -> nx.Graph:
     """Helper to create a networkx graph from a numpy adjacency matrix."""
@@ -18,7 +19,6 @@ def compute_invalid_merge_pairs(
     graph: Graph,
     node_mask: Optional[torch.Tensor] = None,
     edge_mask: Optional[torch.Tensor] = None,
-    node_type: Optional[Dict[int, str]] = None,
 ) -> Tuple[np.ndarray, List[int]]:
     """
     Compute a reduced invalid-merge boolean matrix for nodes selected by node_mask.
@@ -37,15 +37,17 @@ def compute_invalid_merge_pairs(
     """
     adj = graph.adjacency_matrix.cpu().numpy()
     n_nodes = adj.shape[0]
+    n_tokens = len(graph.input_tokens)
+    n_logits = len(graph.logit_tokens)
+    n_features = len(graph.selected_features)
+    layers = graph.cfg.n_layers
+    error_end_idx = n_features + graph.n_pos * layers
 
     # Resolve node_mask -> list of original node indices
     if node_mask is None:
         valid_nodes = list(range(n_nodes))
     else:
-        if isinstance(node_mask, torch.Tensor):
-            valid_nodes = torch.where(node_mask.view(-1))[0].tolist()
-        else:
-            valid_nodes = [i for i, v in enumerate(node_mask) if v]
+        valid_nodes = torch.where(node_mask.view(-1))[0].tolist()
 
     m = len(valid_nodes)
     if m == 0:
@@ -61,6 +63,18 @@ def compute_invalid_merge_pairs(
         )
         reduced_edge_mask = edge_mask_np[np.ix_(valid_nodes, valid_nodes)]
         reduced_adj_directed[~reduced_edge_mask] = 0.0
+
+    node_type = {}
+    
+    for nodes in valid_nodes:
+        if nodes in range(n_features):
+            node_type[nodes] = "Feature"
+        elif nodes in range(n_features, error_end_idx):
+            node_type[nodes] = "Error"
+        elif nodes in range(error_end_idx, error_end_idx + n_tokens):
+            node_type[nodes] = "Token"
+        else:
+            node_type[nodes] = "Logit"
 
     # Build directed graph for reachability (use binary adjacency)
     directed_binary = (reduced_adj_directed != 0).astype(float)
@@ -204,3 +218,30 @@ def hierarchical_cluster_from_invalid(
 
     final_clusters = [set(nodes) for nodes in cluster_map.values()]
     return final_clusters
+
+if __name__ == "__main__":
+    from circuit_tracer.graph import Graph
+    graph_path = "demos/graphs/example_graph.pt"
+    graph = Graph.from_pt(graph_path)
+    node_mask, edge_mask, cumulative_scores= prune_graph_topk(graph, top_k = 3)
+    print(edge_mask.sum(), node_mask.sum())
+    results = hierarchical_cluster_from_invalid(graph, *compute_invalid_merge_pairs(graph, node_mask, edge_mask), edge_mask=edge_mask, num_clusters=10)
+    supernodes = []
+    for i, cluster in enumerate(clusters):
+        name = f"Cluster {i}"
+        # Optionally, you could store additional info from the cluster in 'features'
+        sn = Supernode(name=name, features=[])
+        supernodes.append(sn)
+
+    # For visualization purposes we group the clusters in one row.
+    ordered_nodes = [supernodes]
+
+    # Create an InterventionGraph object with a prompt describing the clustering
+    prompt = "Hierarchical Clustering Visualization of the Attribution Graph"
+    intervention_graph = InterventionGraph(ordered_nodes=ordered_nodes, prompt=prompt)
+
+    # For demonstration, define dummy top outputs (you can replace these with model outputs)
+    top_outputs = [("Dummy Output", 1.0)]
+
+    # Visualize the intervention graph (this uses the SVG-based visualization)
+    display(create_graph_visualization(intervention_graph, top_outputs))
