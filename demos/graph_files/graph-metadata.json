@@ -1,12 +1,14 @@
 {
   "graphs": [
     {
-      "slug": "dallas-austin",
-      "scan": "gemma-2-2b",
+      "slug": "dallas-austin-edge-weight",
+      "scan": "mntss/gemma-scope-transcoders",
       "transcoder_list": [],
       "prompt_tokens": [
         "<bos>",
-        "The",
+        "Fact",
+        ":",
+        " The",
         " capital",
         " of",
         " state",
@@ -14,8 +16,28 @@
         " Dallas",
         " is"
       ],
-      "prompt": "<bos>The capital of state containing Dallas is",
-      "node_threshold": 0.0,
+      "prompt": "<bos>Fact: The capital of state containing Dallas is",
+      "node_threshold": 0.8,
+      "schema_version": 1
+    },
+    {
+      "slug": "dallas-austin",
+      "scan": "mntss/gemma-scope-transcoders",
+      "transcoder_list": [],
+      "prompt_tokens": [
+        "<bos>",
+        "Fact",
+        ":",
+        " The",
+        " capital",
+        " of",
+        " state",
+        " containing",
+        " Dallas",
+        " is"
+      ],
+      "prompt": "<bos>Fact: The capital of state containing Dallas is",
+      "node_threshold": 0.8,
       "schema_version": 1
     }
   ]

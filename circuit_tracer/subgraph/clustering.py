@@ -5,7 +5,7 @@ from typing import Optional, List, Set, Tuple, Dict
 
 from circuit_tracer.graph import Graph
 from circuit_tracer.subgraph.prune import prune_graph_topk, prune_graph_edge_weights
-from circuit_tracer.demos.graph_visualization import create_graph_visualization
+# from circuit_tracer.demos.graph_visualization import create_graph_visualization, Supernode, InterventionGraph
 
 def _get_nx_graph(adj_matrix: np.ndarray, directed: bool) -> nx.Graph:
     """Helper to create a networkx graph from a numpy adjacency matrix."""
@@ -219,29 +219,29 @@ def hierarchical_cluster_from_invalid(
     final_clusters = [set(nodes) for nodes in cluster_map.values()]
     return final_clusters
 
-if __name__ == "__main__":
-    from circuit_tracer.graph import Graph
-    graph_path = "demos/graphs/example_graph.pt"
-    graph = Graph.from_pt(graph_path)
-    node_mask, edge_mask, cumulative_scores= prune_graph_topk(graph, top_k = 3)
-    print(edge_mask.sum(), node_mask.sum())
-    results = hierarchical_cluster_from_invalid(graph, *compute_invalid_merge_pairs(graph, node_mask, edge_mask), edge_mask=edge_mask, num_clusters=10)
-    supernodes = []
-    for i, cluster in enumerate(clusters):
-        name = f"Cluster {i}"
-        # Optionally, you could store additional info from the cluster in 'features'
-        sn = Supernode(name=name, features=[])
-        supernodes.append(sn)
+# if __name__ == "__main__":
+#     from circuit_tracer.graph import Graph
+#     graph_path = "demos/graphs/example_graph.pt"
+#     graph = Graph.from_pt(graph_path)
+#     node_mask, edge_mask, cumulative_scores= prune_graph_topk(graph, top_k = 3)
+#     print(edge_mask.sum(), node_mask.sum())
+#     clusters = hierarchical_cluster_from_invalid(graph, *compute_invalid_merge_pairs(graph, node_mask, edge_mask), edge_mask=edge_mask, num_clusters=10)
+#     supernodes = []
+#     for i, cluster in enumerate(clusters):
+#         name = f"Cluster {i}"
+#         # Optionally, you could store additional info from the cluster in 'features'
+#         sn = Supernode(name=name, features=[])
+#         supernodes.append(sn)
 
-    # For visualization purposes we group the clusters in one row.
-    ordered_nodes = [supernodes]
+#     # For visualization purposes we group the clusters in one row.
+#     ordered_nodes = [supernodes]
 
-    # Create an InterventionGraph object with a prompt describing the clustering
-    prompt = "Hierarchical Clustering Visualization of the Attribution Graph"
-    intervention_graph = InterventionGraph(ordered_nodes=ordered_nodes, prompt=prompt)
+#     # Create an InterventionGraph object with a prompt describing the clustering
+#     prompt = "Hierarchical Clustering Visualization of the Attribution Graph"
+#     intervention_graph = InterventionGraph(ordered_nodes=ordered_nodes, prompt=prompt)
 
-    # For demonstration, define dummy top outputs (you can replace these with model outputs)
-    top_outputs = [("Dummy Output", 1.0)]
+#     # For demonstration, define dummy top outputs (you can replace these with model outputs)
+#     top_outputs = [("Dummy Output", 1.0)]
 
-    # Visualize the intervention graph (this uses the SVG-based visualization)
-    display(create_graph_visualization(intervention_graph, top_outputs))
+#     # Visualize the intervention graph (this uses the SVG-based visualization)
+#     create_graph_visualization(intervention_graph, top_outputs)
