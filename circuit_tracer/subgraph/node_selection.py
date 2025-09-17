@@ -79,7 +79,7 @@ def select_nodes_from_json(json_path: str, crit: str, top_k: int = 3, edge_weigh
 
     dfs(target_logit)
 
-    return G, attr if attr else None
+    return G, attr
 
 if __name__ == "__main__":
     graph_path = "demos/graph_files/dallas-austin.json"
