@@ -79,10 +79,11 @@ def select_nodes_from_json(json_path: str, crit: str, top_k: int = 3, edge_weigh
 
     dfs(target_logit)
 
+    assert nx.is_directed_acyclic_graph(G), "The resulting graph G is not a DAG."
     return G, attr
 
 if __name__ == "__main__":
     graph_path = "demos/graph_files/dallas-austin.json"
-    G, attr = select_nodes_from_json(graph_path, crit="edge_weight", edge_weight_threshold=3)
+    G, attr = select_nodes_from_json(graph_path, crit="topk", top_k = 3)
     print(f"Created graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
     print("Nodes:", list(G.nodes(data=True))[:5])
