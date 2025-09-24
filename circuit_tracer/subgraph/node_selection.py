@@ -57,7 +57,7 @@ def select_nodes_from_json(json_path: str, crit: str, top_k: int = 3, edge_weigh
 
     def dfs(node_idx):
         visisted[node_idx] = True
-        G.add_node(node_ids[node_idx])
+        G.add_node(tuple([node_ids[node_idx]]))
         row = adj[node_idx]
         if torch.sum(row) == 0:
             return
@@ -73,7 +73,7 @@ def select_nodes_from_json(json_path: str, crit: str, top_k: int = 3, edge_weigh
         for src in nonzero_idx[topk_idx].tolist():
             if attr[node_ids[src]]['feature_type'] == 'mlp reconstruction error':
                 continue
-            G.add_edge(node_ids[src], node_ids[node_idx], weight=adj[node_idx, src].item())
+            G.add_edge(tuple([node_ids[src]]), tuple([node_ids[node_idx]]), weight=adj[node_idx, src].item())
             if not visisted[src]:
                 dfs(src)
 
@@ -86,4 +86,4 @@ if __name__ == "__main__":
     graph_path = "demos/graph_files/dallas-austin.json"
     G, attr = select_nodes_from_json(graph_path, crit="topk", top_k = 3)
     print(f"Created graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
-    print("Nodes:", list(G.nodes(data=True))[:5])
+    print("Nodes:", list(G.nodes(data=False))[:5])
