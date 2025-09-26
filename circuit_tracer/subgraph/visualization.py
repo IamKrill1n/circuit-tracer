@@ -1,12 +1,12 @@
 from circuit_tracer.subgraph.node_selection import select_nodes_from_json
-from circuit_tracer.subgraph.grouping import hierarchical_cluster_nx
+# from circuit_tracer.subgraph.grouping import greedy_clustering
 from circuit_tracer import ReplacementModel
 import networkx as nx  # type: ignore
-from typing import Any, Dict, List, Set, Optional, Tuple
+from typing import Any, Callable, Dict, List, Set, Optional, Tuple
 from collections import namedtuple
 import math
 import html
-
+import matplotlib.pyplot as plt  # type: ignore
 import torch
 from IPython.display import SVG
 
@@ -448,101 +448,168 @@ def create_graph_visualization(
 
     return SVG(svg_content)
 
-def visualize_subgraph(graph: nx.DiGraph, prompt: str, attr: Dict[Any, Dict[str, Any]], clusters: Optional[List[Set[Any]]] = None, model: Optional[ReplacementModel] = None):
+def topological_layers(graph: nx.DiGraph) -> List[List[Any]]:
+    """Return topological layers: each layer is a list of nodes that have no edges between them.
+
+    Uses Kahn's algorithm: repeatedly remove nodes with indegree 0. Raises ValueError if graph has a cycle.
+    """
+    indeg = {n: graph.in_degree(n) for n in graph.nodes()}
+    layers: List[List[Any]] = []
+    # Work on a copy of indegree dict only
+    while indeg:
+        zero = [n for n, d in indeg.items() if d == 0]
+        if not zero:
+            raise ValueError("Graph contains a cycle; cannot produce topological layers.")
+        layers.append(zero)
+        for u in zero:
+            # decrement indegree of successors
+            for _, v in graph.out_edges(u):
+                if v in indeg:
+                    indeg[v] -= 1
+            # remove u from consideration
+            del indeg[u]
+    return layers
+
+def visualize_clusters(
+    graph: nx.DiGraph,
+    draw: bool = True,
+    filename: Optional[str] = None,
+    label_fn: Optional[Callable[[Any], str]] = None,
+) -> List[List[Any]]:
+    """Print topological layers and optionally draw the graph laid out by layers.
+
+    - Each printed line is a layer where nodes have no edges between them.
+    - If draw=True, produces a matplotlib figure where layers are horizontal ranks.
+    - filename: if provided, save the figure to this path instead of showing.
+    - label_fn: optional function to convert node id -> label string.
+    """
+    if label_fn is None:
+        def label_fn(n: Any) -> str:
+            return n[0] if isinstance(n, tuple) and len(n) == 1 else str(n)
+
+    layers = topological_layers(graph)
+
+    # Print layers
+    for i, layer in enumerate(layers):
+        labels = [label_fn(n) for n in layer]
+        print(f"Layer {i}: " + ", ".join(labels))
+
+    if draw:
+        # build positions: nodes in same layer are spread horizontally, layers stacked vertically
+        pos: Dict[Any, Tuple[float, float]] = {}
+        max_width = max(len(l) for l in layers) if layers else 1
+        for i, layer in enumerate(layers):
+            y = -i  # top layer at y=0, subsequent layers below
+            count = len(layer)
+            if count == 0:
+                continue
+            for idx, node in enumerate(layer):
+                x = idx - (count - 1) / 2.0
+                pos[node] = (x, y)
+
+        plt.figure(figsize=(max(6, max_width * 0.8), max(4, len(layers) * 0.8)))
+        nx.draw_networkx_nodes(graph, pos, node_size=350, node_color="blue", linewidths=0.5)
+        labels = {n: label_fn(n) for layer in layers for n in layer}
+        nx.draw_networkx_labels(graph, pos, labels=labels, font_size=8)
+        nx.draw_networkx_edges(graph, pos, arrows=True, arrowsize=12, edge_color="black")
+        plt.axis("off")
+        plt.tight_layout()
+        if filename:
+            plt.savefig(filename, bbox_inches="tight")
+            print(f"Saved visualization to {filename}")
+            plt.close()
+        else:
+            plt.show()
+
+    return layers
+
+def visualize_intervention_graph(graph: nx.DiGraph, prompt: str, attr: Dict[Any, Dict[str, Any]], model: Optional[ReplacementModel] = None):
     """Visualize a subgraph with clusters using the InterventionGraph/Supernode visualization.
 
-    This creates one Supernode per cluster, links supernodes according to inter-cluster edges
-    in `graph`, and renders an InterventionGraph SVG via create_graph_visualization.
-
+    This creates one Supernode per cluster (where a cluster is a tuple of node_ids),
+    names the Supernode by joining (with " + ") each node’s name obtained via attr[node_id].get("clerp")
+    (falling back to the node_id if missing), and links Supernodes according to inter-cluster edges.
     Returns:
       IPython.display.SVG
     """
-    # Create Supernode objects (one per cluster)
-    supernodes: List[Supernode] = []
     node_to_supernode: Dict[Any, Supernode] = {}
+    
+    # Get layers where each 'node' is actually a cluster (tuple of node_ids)
+    layers = topological_layers(graph)
+    ordered_nodes = []
+    for layer in layers:
+        supernodes: List[Supernode] = []
+        for cluster in layer:
+            # Compute the name for the supernode by joining names from each node in the cluster.
+            names = []
+            for node in cluster:
+                # Extract key from tuple if necessary
+                name = str(attr[node].get('clerp')) if node in attr else str(node)
+                names.append(name)
+            sn_name = " + ".join(names)
 
-    if clusters is None:
-        clusters = [{n} for n in graph.nodes()]
+            # Collect features if available.
+            features: List[Feature] = []
+            for node in cluster:
+                key = node[0] if isinstance(node, tuple) and len(node) == 1 else node
+                node_attr = attr.get(key, {})
+                if node_attr.get('feature type') == "embedding":
+                    continue
+                l_val = node_attr.get('layer')
+                p_val = node_attr.get('ctx_idx')
+                f_idx = node_attr.get('feature')
+                if l_val is not None and p_val is not None and f_idx is not None:
+                    features.append(Feature(layer=l_val, pos=p_val, feature_idx=f_idx))
+            
+            sn = Supernode(name=sn_name, features=features)
+            sn.activation = 1.0
+            sn.intervention = None
+            sn.replacement_node = None
+            node_to_supernode[cluster] = sn
+            supernodes.append(sn)
+        ordered_nodes.append(supernodes)
+            
+    # Establish child relationships based on graph edges between clusters.
+    # For each edge in the graph from cluster A to cluster B, add the corresponding supernode of B as a child of supernode A.
+    for src, dst in graph.edges():
+        src_sn = node_to_supernode.get(src)
+        dst_sn = node_to_supernode.get(dst)
+        if src_sn and dst_sn and dst_sn not in src_sn.children:
+            src_sn.children.append(dst_sn)
+    
+    print(ordered_nodes)
 
-    merged_graph = nx.DiGraph()
-
-    for i, cluster in enumerate(clusters):
-        name = ""
-        features: List[Feature] = []
-
-        # Try to collect feature tuples from node attributes if present.
-        for node_id in cluster:
-            name += f"{node_id};"
-            node_attr = attr.get(node_id, {}) if isinstance(attr, dict) else {}
-            # Accept several possible shapes stored in JSON
-            raw_feats = node_attr.get("feature")
-            if isinstance(raw_feats, list):
-                for rf in raw_feats:
-                    try:
-                        if isinstance(rf, dict):
-                            fl = int(rf.get("layer", 0))
-                            fp = int(rf.get("ctx_idx", 0))
-                            fi = int(rf.get("feature", 0))
-                        elif isinstance(rf, (list, tuple)) and len(rf) >= 3:
-                            fl, fp, fi = int(rf[0]), int(rf[1]), int(rf[2])
-                        else:
-                            continue
-                        features.append(Feature(layer=fl, pos=fp, feature_idx=fi))
-                    except Exception:
-                        # Skip malformed feature entries
-                        continue
-
-        sn = Supernode(name=name, features=features)
-        supernodes.append(sn)
-        merged_graph.add_node(sn)
-        for nid in cluster:
-            node_to_supernode[nid] = sn
-
-    # # Build children relationships between Supernodes based on inter-cluster edges
-    for u, v in graph.edges():
-        su = node_to_supernode.get(u)
-        sv = node_to_supernode.get(v)
-        if su is None or sv is None or su is sv:
-            continue
-        
-        # print(su.name, " ", sv.name)
-        if not merged_graph.has_edge(su, sv):
-            merged_graph.add_edge(su, sv)
-            su.children.append(sv)
-
-    assert nx.is_directed_acyclic_graph(merged_graph), "Merged graph must be a DAG"
-
-    ordered_nodes = list(nx.topological_sort(merged_graph))
+    # Build the intervention graph with the ordered supernodes.
     intervention_graph = InterventionGraph(ordered_nodes=ordered_nodes, prompt=prompt)
 
-    # Register nodes in the InterventionGraph and set default activations / activation fractions.
-    # for sn in supernodes:
-    #     # initialize_node expects an activations mapping; pass empty mapping.
-    #     # If sn.features is empty, initialize_node will set default_activations = None safely.
-    #     intervention_graph.initialize_node(sn, {})
-    #     # Mark nodes as active by default for visualization
-    #     sn.activation = 1.0
-    #     sn.intervention = None
-    #     sn.replacement_node = None
-    
     def get_top_outputs(model, k: int = 5):
         logits, activations = model.get_activations(prompt)
         top_probs, top_token_ids = logits.squeeze(0)[-1].softmax(-1).topk(k)
         top_tokens = [model.tokenizer.decode(token_id) for token_id in top_token_ids]
-        top_outputs = list(zip(top_tokens, top_probs.tolist()))
-        return top_outputs
+        return list(zip(top_tokens, top_probs.tolist()))
     
-    top_outputs = get_top_outputs(model)
-
-    # Render and return an SVG object suitable for notebooks / IPython
+    top_outputs = get_top_outputs(model) if model else []
+    
     return create_graph_visualization(intervention_graph, top_outputs)
 
 if __name__ == "__main__":
     prompt = "Fact: the capital of the state containing Dallas is"
-    graph_path = "demos/graph_files/dallas-austin.json"
+    graph_path = "demos/graph_files/gemma-clt-fact-dallas-austin_2025-09-25T14-52-21-776Z.json"
     G, attr = select_nodes_from_json(graph_path, crit="topk", top_k=3)
     print(f"Created graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
     print("Nodes:", list(G.nodes(data=True))[:5])
-    clusters = hierarchical_cluster_nx(G, attr, num_clusters=5)
+    # clusters = greedy_clustering(G, attr = attr, num_clusters = 15)
     model = ReplacementModel.from_pretrained("google/gemma-2-2b", 'gemma', dtype=torch.bfloat16)
-    visualize_subgraph(G, prompt, attr, clusters = None, model = model)
+    visualize_intervention_graph(G, prompt, attr, model = model)
+    # visualize_clusters(G,
+    #     draw=True,
+    #     filename='subgraph.png',
+    #     label_fn=lambda tup: str(attr[tup].get('clerp')) if tup in attr else str(tup)
+    # )
+    
+    # visualize_clusters(
+    #     merged_G,
+    #     draw=True,
+    #     filename='merged_subgraph.png',
+    #     label_fn=lambda tup: str(attr[tup].get('clerp')) if tup in attr else str(tup)
+    # )
