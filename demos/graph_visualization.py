@@ -1,13 +1,16 @@
 # %%
 from collections import namedtuple
-from typing import List, Optional, Tuple, Dict
+from typing import List, Optional, Tuple, Dict, Any
 import math
 import html
-
+import networkx as nx
+from circuit_tracer.subgraph.visualization import topological_layers
+from circuit_tracer.replacement_model import ReplacementModel
 import torch
 from IPython.display import SVG
 
-
+from circuit_tracer.subgraph.node_selection import select_nodes_from_json
+from circuit_tracer.subgraph.grouping import greedy_clustering
 Feature = namedtuple("Feature", ["layer", "pos", "feature_idx"])
 
 
@@ -445,38 +448,96 @@ def create_graph_visualization(
 
     return SVG(svg_content)
 
+def visualize_intervention_graph(graph: nx.DiGraph, prompt: str, attr: Dict[Any, Dict[str, Any]], model: Optional[ReplacementModel] = None):
+    """Visualize a subgraph with clusters using the InterventionGraph/Supernode visualization.
 
+    This creates one Supernode per cluster (where a cluster is a tuple of node_ids),
+    names the Supernode by joining (with " + ") each node’s name obtained via attr[node_id].get("clerp")
+    (falling back to the node_id if missing), and links Supernodes according to inter-cluster edges.
+    Returns:
+      IPython.display.SVG
+    """
+    node_to_supernode: Dict[Any, Supernode] = {}
+    assert nx.is_directed_acyclic_graph(graph), "Resulting graph is not a DAG"
+    # Get layers where each 'node' is actually a cluster (tuple of node_ids)
+    layers = topological_layers(graph)
+    ordered_nodes = []
+    for layer in layers:
+        supernodes: List[Supernode] = []
+        for cluster in layer:
+            # Compute the name for the supernode by joining names from each node in the cluster.
+            names = []
+            for node in cluster:
+                # Extract key from tuple if necessary
+                
+                name = str(attr[node].get('clerp')) if node in attr else str(node)
+                if name == "":
+                    name = str(node)
+                names.append(name)
+            sn_name = " + ".join(names)
+
+            # Collect features if available.
+            features: List[Feature] = []
+            for node in cluster:
+                key = node[0] if isinstance(node, tuple) and len(node) == 1 else node
+                node_attr = attr.get(key, {})
+                if node_attr.get('feature type') == "embedding":
+                    continue
+                l_val = node_attr.get('layer')
+                p_val = node_attr.get('ctx_idx')
+                f_idx = node_attr.get('feature')
+                if l_val is not None and p_val is not None and f_idx is not None:
+                    features.append(Feature(layer=l_val, pos=p_val, feature_idx=f_idx))
+            
+            sn = Supernode(name=sn_name, features=features)
+            sn.activation = 1.0
+            sn.intervention = None
+            sn.replacement_node = None
+            node_to_supernode[cluster] = sn
+            supernodes.append(sn)
+        ordered_nodes.append(supernodes)
+            
+    # Establish child relationships based on graph edges between clusters.
+    # For each edge in the graph from cluster A to cluster B, add the corresponding supernode of B as a child of supernode A.
+    # for src, dst in graph.edges():
+    #     src_sn = node_to_supernode.get(src)
+    #     dst_sn = node_to_supernode.get(dst)
+    #     if src_sn and dst_sn and dst_sn not in src_sn.children:
+    #         src_sn.children.append(dst_sn)
+    
+    print(ordered_nodes)
+    return ordered_nodes
+
+    # Build the intervention graph with the ordered supernodes.
+    intervention_graph = InterventionGraph(ordered_nodes=ordered_nodes, prompt=prompt)
+
+    def get_top_outputs(model, k: int = 5):
+        logits, activations = model.get_activations(prompt)
+        top_probs, top_token_ids = logits.squeeze(0)[-1].softmax(-1).topk(k)
+        top_tokens = [model.tokenizer.decode(token_id) for token_id in top_token_ids]
+        return list(zip(top_tokens, top_probs.tolist()))
+    
+    top_outputs = get_top_outputs(model) if model else []
+    
+    
+    # return create_graph_visualization(intervention_graph, top_outputs)
 # %%
-# if __name__ == '__main__':
-#     say_austin_node = Node('Say Austin', activation=0.18)
-#     texas_node = Node('Texas', activation=0.91, children=[say_austin_node])
-#     say_capital_node = Node('Say a capital', activation=None, intervention='-2x', children=[say_austin_node])
-#     dallas_node = Node('Dallas', activation=1.0, children=[texas_node])
-#     state_node = Node('State', activation=1.0, children=[say_capital_node, texas_node])
-#     capital_node = Node('capital', activation=1.0, children=[say_capital_node])
+if __name__ == '__main__':
+    graph_path = "demos/graph_files/factthelargestco-1755767633671_2025-09-26T13-34-02-113Z.json"
+    G, attr = select_nodes_from_json(graph_path, crit="topk", top_k=3)
+    print(f"Created graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
+    print("Nodes:", list(G.nodes(data=True))[:5])
+    clusters, merged_G = greedy_clustering(G, None, attr, num_clusters=5)
+    print(f"Formed {len(clusters)} clusters.")
+    for i, c in enumerate(clusters):
+        print(f"Cluster {i}: {c}")
+    # old_nodes = [[capital_node, state_node, dallas_node],[say_capital_node, texas_node], [say_austin_node]]
 
-#     old_nodes = [[capital_node, state_node, dallas_node],[say_capital_node, texas_node], [say_austin_node]]
-
-#     prompt = "Fact: the capital of the state containing Dallas is"
-#     top_outputs = [("Texas", 0.76), ("located", 0.04), ("", 0.04), ("Houston", 0.03), ("Austin", 0.01), ("a", 0.01)]
-
-#     create_graph_visualization(old_nodes, prompt, top_outputs)
-
-#     say_sacramento_node = Node('Say Sacramento', activation=None)
-#     say_austin_node = Node('Say Austin', activation=0.0, replacement_node=say_sacramento_node)
-#     california_node = Node('California', activation=None, children=[say_sacramento_node], intervention='+2x')
-#     texas_node = Node('Texas', activation=None, children=[say_austin_node], intervention='-2x', replacement_node=california_node)
-#     say_capital_node = Node('Say a capital', activation=0.91, children=[say_austin_node])
-#     dallas_node = Node('Dallas', activation=1.0, children=[texas_node])
-#     state_node = Node('State', activation=1.0, children=[say_capital_node, texas_node])
-#     capital_node = Node('capital', activation=1.0, children=[say_capital_node])
-
-#     prompt = "Fact: the capital of the state containing Dallas is"
-#     top_outputs = [("Sacramento", 0.97), ("", 0.007), ("not", 0.004), ("the", 0.003), ("⏎", 0.003), ("()", 0.002)]
-
-#     nodes = [[capital_node, state_node, dallas_node],[say_capital_node, texas_node], [say_austin_node]]
-
-#     create_graph_visualization(nodes, prompt, top_outputs)
+    prompt = "Fact: the capital of the state containing Dallas is"
+    ordered_nodes = visualize_intervention_graph(G, prompt=prompt, attr=attr)
+    top_outputs = [("Texas", 0.76), ("located", 0.04), ("", 0.04), ("Houston", 0.03), ("Austin", 0.01), ("a", 0.01)]
+    dallas_austin_graph = InterventionGraph(ordered_nodes=ordered_nodes, prompt=prompt)
+    create_graph_visualization(dallas_austin_graph, top_outputs)
 
 # # %%
 
