@@ -1,10 +1,12 @@
-from circuit_tracer.subgraph.node_selection import select_nodes_from_json
-from circuit_tracer.subgraph.grouping import greedy_clustering
+from platform import node
+from circuit_tracer.subgraph.pruning import trim_graph
+from circuit_tracer.subgraph.grouping import greedy_grouping
 from circuit_tracer import ReplacementModel
 import networkx as nx  # type: ignore
 from typing import Any, Callable, Dict, List, Optional, Tuple
 import matplotlib.pyplot as plt  # type: ignore
 import torch
+import numpy as np
 
 def topological_layers(graph: nx.DiGraph) -> List[List[Any]]:
     """Return topological layers: each layer is a list of nodes that have no edges between them.
@@ -83,22 +85,24 @@ def visualize_clusters(
 
 if __name__ == "__main__":
     prompt = "Fact: the capital of the state containing Dallas is"
-    graph_path = "demos/graph_files/gemma-clt-fact-dallas-austin_2025-09-25T14-52-21-776Z.json"
-    G, attr = select_nodes_from_json(graph_path, crit="topk", top_k=3)
+    graph_path = "demos/graph_files/factthelargestco-1755767633671_2025-09-26T13-34-02-113Z.json"
+    G, attr = trim_graph(graph_path, crit="topk", top_k=3)
     print(f"Created graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
     print("Nodes:", list(G.nodes(data=True))[:5])
-    clusters, merged_G = greedy_clustering(G, None, attr = attr, num_clusters = 15)
+    distance_graph = np.random.rand(G.number_of_nodes(), G.number_of_nodes())
+    groups, merged_G = greedy_grouping(G, distance_graph=distance_graph, attr=attr, num_groups=15)
     # model = ReplacementModel.from_pretrained("google/gemma-2-2b", 'gemma', dtype=torch.bfloat16)
     # visualize_intervention_graph(G, prompt, attr, model = model)
 
-    visualize_clusters(G,
+    visualize_clusters(
+        G,
         draw=True,
         filename='demos/subgraphs/subgraph.png',
-        label_fn=lambda tup: attr[tup].get('clerp') if tup in attr else str(tup)
+        label_fn=lambda node: attr[node].get('clerp') if attr[node].get('clerp') != "" else str(node)
     )
     visualize_clusters(
         merged_G,
         draw=True,
         filename='demos/subgraphs/merged_subgraph.png',
-        label_fn=lambda tup: str(attr[tup].get('clerp')) if tup in attr else str(tup)
+        label_fn=lambda tuple_node: " + ".join(attr[node].get('clerp') if attr[node].get('clerp') != "" else str(node) for node in tuple_node)
     )

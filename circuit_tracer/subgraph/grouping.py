@@ -1,4 +1,4 @@
-from circuit_tracer.subgraph.node_selection import select_nodes_from_json
+from circuit_tracer.subgraph.pruning import trim_graph
 import torch
 import numpy as np
 import networkx as nx  # type: ignore
@@ -8,14 +8,14 @@ from collections import namedtuple
 Feature = namedtuple("Feature", ["layer", "pos", "feature_idx"])
 Intervention = namedtuple('Intervention', ['supernode', 'scaling_factor'])
 
-def init_invalid_merge(
+def get_path_invalid_merge(
     graph: nx.DiGraph,
     attr: Dict[Any, Dict[str, Any]],
     conditions: Optional[Callable[[Any, Any, nx.DiGraph], bool]] = None,
-) -> Tuple[np.ndarray, List[Any]]:
+) -> np.ndarray:
     """Compute invalid merge pairs for a DAG represented as a NetworkX DiGraph.
 
-    Assumes that graph.nodes are tuples of one string.
+    Assumes that graph.nodes are tuples of strings.
     A pair (u, v) is invalid to merge if:
       - There exists a directed path u -> v or v -> u in `graph` (DAG reachability)
       - If `attr` is provided, nodes missing in attr or with `feature_type` not equal to
@@ -24,7 +24,7 @@ def init_invalid_merge(
         are marked invalid.
 
     Args:
-      - graph: nx.DiGraph assumed to be a DAG (from select_nodes_from_json).
+      - graph: nx.DiGraph assumed to be a DAG.
       - attr: Optional dict mapping node keys (string) to attribute dicts.
       - conditions: Optional callable (u, v, graph) -> bool.
 
@@ -35,7 +35,7 @@ def init_invalid_merge(
     node_list = list(graph.nodes())
     n = len(node_list)
     if n == 0:
-        return np.zeros((0, 0), dtype=bool), node_list
+        return np.zeros((0, 0), dtype=bool)
 
     # Helper: extract key from node tuple
     def node_key(node: Any) -> Any:
@@ -74,158 +74,91 @@ def init_invalid_merge(
     # Ensure diagonal is True
     np.fill_diagonal(invalid, True)
 
-    return invalid, node_list
+    return invalid
 
-def check_valid_merge(cluster1: Tuple[Any], cluster2: Tuple[Any], invalid_merge: np.ndarray, node_list: List[Any]) -> bool:
-    for node1 in cluster1:
-        for node2 in cluster2:
-            i = node_list.index(node1)
-            j = node_list.index(node2)
-            if invalid_merge[i, j]:
-                return False
-    return True
-
-def merge_nodes(cluster1: Tuple[Any, ...], cluster2: Tuple[Any, ...], graph: nx.DiGraph):
-    """Merge two clusters (tuples of member node-ids) into a new supernode.
-
-    - Each member node is itself a graph node-id (a tuple of one string).
-    - The new supernode id is the concatenation of the two clusters: cluster1 + cluster2
-      (a tuple of member node-ids).
-    - Incoming edges from outside the union are redirected to the supernode.
-    - Outgoing edges to outside the union are redirected from the supernode.
-    - Edges internal to the union are dropped (no self-loops created).
-    - For multiple edges from the same source (or to the same target) across members,
-      weights are summed.
-    """
-    members: Set[Any] = set(cluster1) | set(cluster2)
-    new_node = tuple(cluster1 + cluster2)
-
-    # Create the new supernode
-    if not graph.has_node(new_node):
-        graph.add_node(new_node)
-
-    # Collect incoming and outgoing edges to/from the union (excluding internal edges)
-    in_accum: Dict[Any, float] = {}
-    out_accum: Dict[Any, float] = {}
-
-    for u in list(members):
-        # Redirect incoming edges src -> u (src not in union)
-        for src, _, data in list(graph.in_edges(u, data=True)):
-            if src in members:
-                continue
-            w = float(data.get("weight", 1.0))
-            in_accum[src] = in_accum.get(src, 0.0) + w
-
-        # Redirect outgoing edges u -> dst (dst not in union)
-        for _, dst, data in list(graph.out_edges(u, data=True)):
-            if dst in members:
-                continue
-            w = float(data.get("weight", 1.0))
-            out_accum[dst] = out_accum.get(dst, 0.0) + w
-
-    # Add redirected edges to/from the new supernode
-    for src, w in in_accum.items():
-        graph.add_edge(src, new_node, weight=w)
-    for dst, w in out_accum.items():
-        graph.add_edge(new_node, dst, weight=w)
-
-    # Remove member nodes (and their incident edges)
-    for u in list(members):
-        if graph.has_node(u):
-            graph.remove_node(u)
-    
-def cluster_distance(
-    cluster1: Tuple[Any],
-    cluster2: Tuple[Any],
+def group_distance(
+    group1: Tuple[Any],
+    group2: Tuple[Any],
     distance_graph: np.ndarray,
     node_index: Dict[Any, int],
 ):
     distances = []
-    for node1 in cluster1:
-        for node2 in cluster2:
+    for node1 in group1:
+        for node2 in group2:
             i = node_index[node1]
             j = node_index[node2]
             distances.append(distance_graph[i, j])
     return np.mean(distances) if distances else np.inf
 
-def greedy_clustering(
+def merge_nodes(   
+    group1: Tuple[Any],
+    group2: Tuple[Any],
     graph: nx.DiGraph,
-    distance_graph: Optional[np.ndarray],
+): 
+    # May be try nx.contracted_nodes in the future
+    """Merge two clusters of nodes in the graph.
+
+    Creates a new node representing the merged cluster, transfers edges,
+    and removes the original nodes.
+
+    Args:
+      - cluster1: Tuple of nodes to merge (first cluster).
+      - cluster2: Tuple of nodes to merge (second cluster).
+      - graph: The NetworkX DiGraph to modify.
+    """
+    new_node = tuple(group1 + group2)
+    graph.add_node(new_node)
+
+    for pred in graph.predecessors(group1):
+        graph.add_edge(pred, new_node)  
+
+    for succ in graph.successors(group1):
+        graph.add_edge(new_node, succ)
+
+    for pred in graph.predecessors(group2):
+        graph.add_edge(pred, new_node)
+    
+    for succ in graph.successors(group2):
+        graph.add_edge(new_node, succ)
+
+    # Remove original nodes
+    graph.remove_node(group1)
+    graph.remove_node(group2)
+
+
+def greedy_grouping(
+    graph: nx.DiGraph,
+    distance_graph: np.ndarray,
     attr: Dict[Any, Dict[str, Any]],
     conditions: Optional[Callable[[Any, Any, nx.DiGraph], bool]] = None,
-    num_clusters: Optional[int] = None,
+    num_groups: Optional[int] = None,
 ):
-    """Greedily cluster nodes in a DAG represented as a NetworkX DiGraph.
+    """Greedily group nodes in a DAG represented as a NetworkX DiGraph.
 
-    Merges are performed consecutively (one pair at a time). A pair of clusters is
-    eligible for merging only if no original-node pair between them was marked
-    invalid by init_invalid_merge (this enforces the "no path between them" rule).
-    After each merge the merged_graph is updated and the cluster-level invalid matrix
-    is recomputed (from the original per-node invalid matrix).
-
+    Merges are performed consecutively (one pair at a time).
+    After each merge the merged_graph is updated and the group-level invalid matrix
+    is recomputed
     Returns:
-      - clusters: list of tuples (each tuple contains original node ids)
+      - groups: list of tuples (each tuple contains original node ids)
       - merged_graph: the NetworkX DiGraph after performing the merges
     """
     # Compute original per-node invalid merge matrix (operates on original node ids)
-    invalid_orig, node_list = init_invalid_merge(graph, attr, conditions)
-    node_index = {node: i for i, node in enumerate(node_list)}
+    invalid_pairs = get_path_invalid_merge(graph, attr, conditions)
+    node_index = {node: i for i, node in enumerate(graph.nodes())}
 
-    n = len(node_list)
+    n = len(node_index)
     if n == 0:
         return [], graph.copy()
 
-    # Default distance graph: all ones except diagonal zeros
-    if distance_graph is None:
-        distance_graph = np.ones((n, n), dtype=float)
-        np.fill_diagonal(distance_graph, 0.0)
-    elif distance_graph.shape != (n, n):
-        raise ValueError("distance_graph must be None or an n x n array matching number of nodes")
+    mapping = {node: (node,) for node in graph.nodes()}
+    merged_graph = nx.relabel_nodes(graph, mapping, copy=True)
 
-    # Start with singleton clusters (tuples of original nodes)
-    clusters: List[Tuple[Any, ...]] = [ (node,) for node in node_list ]
-
-    # Helper: cluster-level invalid matrix derived from invalid_orig
-    def build_cluster_invalid(clusters: List[Tuple[Any, ...]]) -> np.ndarray:
-        m = len(clusters)
-        cm = np.zeros((m, m), dtype=bool)
-        for i in range(m):
-            for j in range(m):
-                if i == j:
-                    cm[i, j] = True
-                    continue
-                # cluster invalid if any pair of original nodes between clusters is invalid
-                any_invalid = False
-                for a in clusters[i]:
-                    for b in clusters[j]:
-                        ia = node_index[a]
-                        ib = node_index[b]
-                        if invalid_orig[ia, ib]:
-                            any_invalid = True
-                            break
-                    if any_invalid:
-                        break
-                cm[i, j] = any_invalid
-        return cm
-
-    # Helper: compute mean pairwise distance between two clusters (uses original node indices)
-    def cluster_dist_mean(c1: Tuple[Any, ...], c2: Tuple[Any, ...]) -> float:
-        vals = []
-        for a in c1:
-            for b in c2:
-                ia = node_index[a]
-                ib = node_index[b]
-                vals.append(float(distance_graph[ia, ib]))
-        return float(np.mean(vals)) if vals else np.inf
-
-    merged_graph = graph.copy()
-
-    # Greedy merge loop
-    cluster_invalid = build_cluster_invalid(clusters)
+    groups = list(merged_graph.nodes())
+ 
     while True:
-        m = len(clusters)
-        # Stop if target number of clusters reached
-        if num_clusters is not None and m <= num_clusters:
+        m = len(groups)
+        # Stop if target number of groups reached
+        if num_groups is not None and m <= num_groups:
             break
 
         best_dist = np.inf
@@ -233,10 +166,10 @@ def greedy_clustering(
         # find best valid pair (i < j)
         for i in range(m):
             for j in range(i + 1, m):
-                if cluster_invalid[i, j]:
+                if invalid_pairs[i, j]:
                     continue  # invalid to merge
-                # Only consider clusters where all members are eligible by attr (init_invalid_merge already enforced attr-based invalids)
-                d = cluster_dist_mean(clusters[i], clusters[j])
+                # Only consider groups where all members are eligible by attr (init_invalid_merge already enforced attr-based invalids)
+                d = group_distance(groups[i], groups[j], distance_graph, node_index)
                 if d < best_dist:
                     best_dist = d
                     best_pair = (i, j)
@@ -247,37 +180,38 @@ def greedy_clustering(
 
         i, j = best_pair
         # Merge j into i (keep ordering stable)
-        c1 = clusters[i]
-        c2 = clusters[j]
-        new_cluster = tuple(c1 + c2)
-
-        # Update merged_graph by creating merged node and transferring edges
+        c1 = groups[i]
+        c2 = groups[j]
         merge_nodes(c1, c2, merged_graph)
 
-        # Replace cluster entries
-        # ensure we replace the smaller index with new_cluster and remove the larger
-        if i < j:
-            clusters[i] = new_cluster
-            del clusters[j]
-        else:
-            clusters[j] = new_cluster
-            del clusters[i]
+        # Update groups list and invalid_pairs matrix
+        groups = list(merged_graph.nodes())
+        invalid_pairs = get_path_invalid_merge(merged_graph, attr, conditions)
 
-        # Recompute cluster-level invalid matrix (from original invalid matrix)
-        cluster_invalid = build_cluster_invalid(clusters)
+    # Recompute edge weight between groups using the original paper definition
+    for u, v in merged_graph.edges():
+        weights = []
+        for nt in u:
+            for ns in v:
+                if graph.has_edge(ns, nt):
+                    weights.append(graph[ns][nt]['weight'])  
+        merged_graph[u][v]['weight'] = np.mean(weights) if weights else 0
 
     # Final check: merged_graph must remain a DAG
     assert nx.is_directed_acyclic_graph(merged_graph), "Resulting merged_graph is not a DAG"
 
-    return clusters, merged_graph
+    return groups, merged_graph
 
 
 if __name__ == "__main__":
     graph_path = "demos/graph_files/dallas-austin.json"
-    G, attr = select_nodes_from_json(graph_path, crit="topk", top_k=3)
+    G, attr = trim_graph(graph_path, crit="edge_weight", edge_weight_threshold=3)
     print(f"Created graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
-    print("Nodes:", list(G.nodes(data=True))[:5])
-    clusters, merged_G = greedy_clustering(G, None, attr, num_clusters=5)
-    print(f"Formed {len(clusters)} clusters.")
-    for i, c in enumerate(clusters):
+    print("Nodes:", list(G.nodes(data=False))[:5])    
+
+    # print("Nodes:", list(G.nodes(data=True))[:5])
+    distance_graph = np.random.rand(G.number_of_nodes(), G.number_of_nodes())
+    groups, merged_G = greedy_grouping(G, distance_graph, attr, num_groups=15)
+    print(f"Formed {len(groups)} clusters.")
+    for i, c in enumerate(groups):
         print(f"Cluster {i}: {c}")
