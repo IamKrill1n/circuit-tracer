@@ -68,10 +68,13 @@ def visualize_clusters(
                 pos[node] = (x, y)
 
         plt.figure(figsize=(max(6, max_width * 0.8), max(4, len(layers) * 0.8)))
-        nx.draw_networkx_nodes(graph, pos, node_size=350, node_color="blue", linewidths=0.5)
+        # nx.draw_networkx_nodes(graph, pos, node_size=350, node_color="blue", linewidths=0.5)
         labels = {n: label_fn(n) for layer in layers for n in layer}
         nx.draw_networkx_labels(graph, pos, labels=labels, font_size=8)
-        nx.draw_networkx_edges(graph, pos, arrows=True, arrowsize=12, edge_color="black")
+        edges, weights = zip(*nx.get_edge_attributes(graph, 'weight').items())
+        nx.draw(graph, pos, node_color='lightblue', edgelist=edges, edge_color=weights, width=2.0, arrows = False, edge_cmap=plt.cm.Greens, with_labels=False)
+        # print(weights)
+        # nx.draw_networkx_edges(graph, pos, edgelist=edges, edge_color=list(weights), width=10.0, edge_cmap='Reds')
         plt.axis("off")
         plt.tight_layout()
         if filename:

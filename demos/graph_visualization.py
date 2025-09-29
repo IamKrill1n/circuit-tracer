@@ -7,10 +7,11 @@ import networkx as nx
 from circuit_tracer.subgraph.visualization import topological_layers
 from circuit_tracer.replacement_model import ReplacementModel
 import torch
+import numpy as np
 from IPython.display import SVG
 
-from circuit_tracer.subgraph.node_selection import select_nodes_from_json
-from circuit_tracer.subgraph.grouping import greedy_clustering
+from circuit_tracer.subgraph.pruning import trim_graph
+from circuit_tracer.subgraph.grouping import greedy_grouping
 Feature = namedtuple("Feature", ["layer", "pos", "feature_idx"])
 
 
@@ -499,14 +500,14 @@ def visualize_intervention_graph(graph: nx.DiGraph, prompt: str, attr: Dict[Any,
             
     # Establish child relationships based on graph edges between clusters.
     # For each edge in the graph from cluster A to cluster B, add the corresponding supernode of B as a child of supernode A.
-    # for src, dst in graph.edges():
-    #     src_sn = node_to_supernode.get(src)
-    #     dst_sn = node_to_supernode.get(dst)
-    #     if src_sn and dst_sn and dst_sn not in src_sn.children:
-    #         src_sn.children.append(dst_sn)
+    for src, dst in graph.edges():
+        src_sn = node_to_supernode.get(src)
+        dst_sn = node_to_supernode.get(dst)
+        if src_sn and dst_sn and dst_sn not in src_sn.children:
+            src_sn.children.append(dst_sn)
     
-    print(ordered_nodes)
-    return ordered_nodes
+    # print(ordered_nodes)
+    # return ordered_nodes
 
     # Build the intervention graph with the ordered supernodes.
     intervention_graph = InterventionGraph(ordered_nodes=ordered_nodes, prompt=prompt)
@@ -520,24 +521,26 @@ def visualize_intervention_graph(graph: nx.DiGraph, prompt: str, attr: Dict[Any,
     top_outputs = get_top_outputs(model) if model else []
     
     
-    # return create_graph_visualization(intervention_graph, top_outputs)
+    return create_graph_visualization(intervention_graph, top_outputs)
 # %%
 if __name__ == '__main__':
-    graph_path = "demos/graph_files/factthelargestco-1755767633671_2025-09-26T13-34-02-113Z.json"
-    G, attr = select_nodes_from_json(graph_path, crit="topk", top_k=3)
+    graph_path = "demos/graph_files/dallas-austin.json"
+    G, attr = trim_graph(graph_path, crit="edge_weight", edge_weight_threshold=3)
     print(f"Created graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
-    print("Nodes:", list(G.nodes(data=True))[:5])
-    clusters, merged_G = greedy_clustering(G, None, attr, num_clusters=5)
-    print(f"Formed {len(clusters)} clusters.")
-    for i, c in enumerate(clusters):
+    print("Nodes:", list(G.nodes(data=False))[:5])    
+
+    # print("Nodes:", list(G.nodes(data=True))[:5])
+    distance_graph = np.random.rand(G.number_of_nodes(), G.number_of_nodes())
+    groups, merged_G = greedy_grouping(G, distance_graph, attr, num_groups=15)
+    print(f"Formed {len(groups)} clusters.")
+    for i, c in enumerate(groups):
         print(f"Cluster {i}: {c}")
     # old_nodes = [[capital_node, state_node, dallas_node],[say_capital_node, texas_node], [say_austin_node]]
 
     prompt = "Fact: the capital of the state containing Dallas is"
     ordered_nodes = visualize_intervention_graph(G, prompt=prompt, attr=attr)
     top_outputs = [("Texas", 0.76), ("located", 0.04), ("", 0.04), ("Houston", 0.03), ("Austin", 0.01), ("a", 0.01)]
-    dallas_austin_graph = InterventionGraph(ordered_nodes=ordered_nodes, prompt=prompt)
-    create_graph_visualization(dallas_austin_graph, top_outputs)
+    
 
 # # %%
 
