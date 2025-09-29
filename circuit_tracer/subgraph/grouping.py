@@ -188,12 +188,13 @@ def greedy_grouping(
         groups = list(merged_graph.nodes())
         invalid_pairs = get_path_invalid_merge(merged_graph, attr, conditions)
 
-    # Recompute edge weight between groups using the original paper definition
+    # Recompute edge weight between groups
     for u, v in merged_graph.edges():
         weights = []
-        for nt in u:
-            for ns in v:
+        for ns in u:
+            for nt in v:
                 if graph.has_edge(ns, nt):
+                    # print(graph[ns][nt]['weight'])
                     weights.append(graph[ns][nt]['weight'])  
         merged_graph[u][v]['weight'] = np.mean(weights) if weights else 0
 
