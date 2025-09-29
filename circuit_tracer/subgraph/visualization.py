@@ -67,7 +67,7 @@ def visualize_clusters(
                 x = idx - (count - 1) / 2.0
                 pos[node] = (x, y)
 
-        plt.figure(figsize=(max(6, max_width * 0.8), max(4, len(layers) * 0.8)))
+        plt.figure(figsize=(max(20, max_width * 0.8), max(16, len(layers) * 0.8)))
         # nx.draw_networkx_nodes(graph, pos, node_size=350, node_color="blue", linewidths=0.5)
         labels = {n: label_fn(n) for layer in layers for n in layer}
         nx.draw_networkx_labels(graph, pos, labels=labels, font_size=8)
@@ -93,7 +93,7 @@ if __name__ == "__main__":
     print(f"Created graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
     print("Nodes:", list(G.nodes(data=True))[:5])
     distance_graph = np.random.rand(G.number_of_nodes(), G.number_of_nodes())
-    groups, merged_G = greedy_grouping(G, distance_graph=distance_graph, attr=attr, num_groups=15)
+    groups, merged_G = greedy_grouping(G, distance_graph=distance_graph, attr=attr, num_groups=2)
     # model = ReplacementModel.from_pretrained("google/gemma-2-2b", 'gemma', dtype=torch.bfloat16)
     # visualize_intervention_graph(G, prompt, attr, model = model)
 
