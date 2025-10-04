@@ -1,6 +1,7 @@
 from platform import node
 from circuit_tracer.subgraph.pruning import trim_graph
 from circuit_tracer.subgraph.grouping import greedy_grouping
+from circuit_tracer.subgraph.distance import build_distance_graph_from_clerp
 from circuit_tracer import ReplacementModel
 import networkx as nx  # type: ignore
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -68,13 +69,47 @@ def visualize_clusters(
                 pos[node] = (x, y)
 
         plt.figure(figsize=(max(20, max_width * 0.8), max(16, len(layers) * 0.8)))
-        # nx.draw_networkx_nodes(graph, pos, node_size=350, node_color="blue", linewidths=0.5)
+        nx.draw_networkx_nodes(graph, pos, node_size=350, node_color='lightblue', linewidths=0.5)
         labels = {n: label_fn(n) for layer in layers for n in layer}
         nx.draw_networkx_labels(graph, pos, labels=labels, font_size=8)
-        edges, weights = zip(*nx.get_edge_attributes(graph, 'weight').items())
-        nx.draw(graph, pos, node_color='lightblue', edgelist=edges, edge_color=weights, width=2.0, arrows = False, edge_cmap=plt.cm.Greens, with_labels=False)
-        # print(weights)
-        # nx.draw_networkx_edges(graph, pos, edgelist=edges, edge_color=list(weights), width=10.0, edge_cmap='Reds')
+
+        # draw edges with color mapped to weight and small curvature for perfectly vertical edges
+        from matplotlib.patches import FancyArrowPatch
+        import matplotlib as mpl
+
+        edge_list = list(graph.edges())
+        if edge_list:
+            edge_weights = [graph[u][v].get("weight", 1.0) for u, v in edge_list]
+            norm = mpl.colors.Normalize(vmin=min(edge_weights), vmax=max(edge_weights)) if len(edge_weights) > 1 else mpl.colors.Normalize(vmin=0, vmax=1)
+            cmap = plt.cm.Greens
+            ax = plt.gca()
+
+            for idx, (u, v) in enumerate(edge_list):
+                w = edge_weights[idx]
+                color = cmap(norm(w))
+                xyA = pos[u]
+                xyB = pos[v]
+
+                # If the edge is (nearly) vertical, give it curvature so it is visible
+                dx = xyB[0] - xyA[0]
+                # small threshold to detect vertical alignment
+                if abs(dx) < 1e-6:
+                    # alternate sign to avoid overlapping multiple edges
+                    rad = 0.18 * (1 if (idx % 2 == 0) else -1)
+                else:
+                    # slight curvature for non-vertical edges can be zero
+                    rad = 0.0
+
+                arrow = FancyArrowPatch(
+                    xyA, xyB,
+                    connectionstyle=f"arc3,rad={rad}",
+                    arrowstyle='-|>',
+                    mutation_scale=12,
+                    linewidth=2.0,
+                    color=color,
+                    zorder=0,
+                )
+                ax.add_patch(arrow)
         plt.axis("off")
         plt.tight_layout()
         if filename:
@@ -87,25 +122,39 @@ def visualize_clusters(
     return layers
 
 if __name__ == "__main__":
-    prompt = "Fact: the capital of the state containing Dallas is"
-    graph_path = "demos/graph_files/factthelargestco-1755767633671_2025-09-26T13-34-02-113Z.json"
-    G, attr = trim_graph(graph_path, crit="topk", top_k=3)
+    prompt = "A bee is a type of"
+    graph_path = "demos/graph_files/caffein-plt.json"
+    G, attr = trim_graph(graph_path, top_k=5, edge_threshold=0.5)
     print(f"Created graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
-    print("Nodes:", list(G.nodes(data=True))[:5])
-    distance_graph = np.random.rand(G.number_of_nodes(), G.number_of_nodes())
-    groups, merged_G = greedy_grouping(G, distance_graph=distance_graph, attr=attr, num_groups=2)
+    for node in G.nodes():
+        print(node, attr[node].get('clerp', ''))
+    
+
+    # Russian
+    # attr['18_868_11']['clerp'] = 'say a country'
+    # attr['20_15360_11']['clerp'] = 'say a country'
+    # attr['17_14546_11']['clerp'] = 'abstract: country'
+    # attr['18_8149_11']['clerp'] = 'abstract: area and size'
+    # attr['15_16322_11']['clerp'] = 'abstract: sequencing/comparison'
+    # attr['19_11557_11']['clerp'] = 'say Russian'
+
+    # Dallas
+
+    # distance_graph = np.random.rand(G.number_of_nodes(), G.number_of_nodes())
+    distance_graph = build_distance_graph_from_clerp(G, attr, progress=True, normalize=True)
+    groups, merged_G = greedy_grouping(G, distance_graph=distance_graph, attr=attr, num_groups=5)
     # model = ReplacementModel.from_pretrained("google/gemma-2-2b", 'gemma', dtype=torch.bfloat16)
     # visualize_intervention_graph(G, prompt, attr, model = model)
-
+    print(f"Formed {len(groups)} clusters.")
     visualize_clusters(
         G,
         draw=True,
-        filename='demos/subgraphs/subgraph.png',
+        filename='demos/subgraphs/subgraph2.png',
         label_fn=lambda node: attr[node].get('clerp') if attr[node].get('clerp') != "" else str(node)
     )
     visualize_clusters(
         merged_G,
         draw=True,
-        filename='demos/subgraphs/merged_subgraph.png',
+        filename='demos/subgraphs/merged_subgraph2.png',
         label_fn=lambda tuple_node: " + ".join(attr[node].get('clerp') if attr[node].get('clerp') != "" else str(node) for node in tuple_node)
     )
