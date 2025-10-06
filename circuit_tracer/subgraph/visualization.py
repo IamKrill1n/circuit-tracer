@@ -69,9 +69,9 @@ def visualize_clusters(
                 pos[node] = (x, y)
 
         plt.figure(figsize=(max(20, max_width * 0.8), max(16, len(layers) * 0.8)))
-        nx.draw_networkx_nodes(graph, pos, node_size=350, node_color='lightblue', linewidths=0.5)
+        nx.draw_networkx_nodes(graph, pos, node_size=500, node_color='lightblue', linewidths=0.5)
         labels = {n: label_fn(n) for layer in layers for n in layer}
-        nx.draw_networkx_labels(graph, pos, labels=labels, font_size=8)
+        nx.draw_networkx_labels(graph, pos, labels=labels, font_size=15)
 
         # draw edges with color mapped to weight and small curvature for perfectly vertical edges
         from matplotlib.patches import FancyArrowPatch
@@ -122,9 +122,9 @@ def visualize_clusters(
     return layers
 
 if __name__ == "__main__":
-    prompt = "A bee is a type of"
-    graph_path = "demos/graph_files/caffein-plt.json"
-    G, attr = trim_graph(graph_path, top_k=5, edge_threshold=0.5)
+    prompt = "Fact: Black tea contains a small amount of"
+    graph_path = "demos/graph_files/caffeine-clt.json"
+    G, attr = trim_graph(graph_path, top_k=7, edge_threshold=0.3)
     print(f"Created graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
     for node in G.nodes():
         print(node, attr[node].get('clerp', ''))
@@ -142,19 +142,19 @@ if __name__ == "__main__":
 
     # distance_graph = np.random.rand(G.number_of_nodes(), G.number_of_nodes())
     distance_graph = build_distance_graph_from_clerp(G, attr, progress=True, normalize=True)
-    groups, merged_G = greedy_grouping(G, distance_graph=distance_graph, attr=attr, num_groups=5)
+    groups, merged_G = greedy_grouping(G, distance_graph=distance_graph, attr=attr, num_groups=15)
     # model = ReplacementModel.from_pretrained("google/gemma-2-2b", 'gemma', dtype=torch.bfloat16)
     # visualize_intervention_graph(G, prompt, attr, model = model)
     print(f"Formed {len(groups)} clusters.")
     visualize_clusters(
         G,
         draw=True,
-        filename='demos/subgraphs/subgraph2.png',
+        filename='demos/subgraphs/caffeine-clt_k_7_e_03.png',
         label_fn=lambda node: attr[node].get('clerp') if attr[node].get('clerp') != "" else str(node)
     )
     visualize_clusters(
         merged_G,
         draw=True,
-        filename='demos/subgraphs/merged_subgraph2.png',
+        filename='demos/subgraphs/merged_caffeine-clt_k_7_e_03.png',
         label_fn=lambda tuple_node: " + ".join(attr[node].get('clerp') if attr[node].get('clerp') != "" else str(node) for node in tuple_node)
     )
