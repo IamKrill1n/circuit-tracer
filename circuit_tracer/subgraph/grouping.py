@@ -177,7 +177,7 @@ def greedy_grouping(
         # No valid merges left
         if best_pair == (-1, -1) or not np.isfinite(best_dist):
             break
-
+        print(best_dist)
         i, j = best_pair
         # Merge j into i (keep ordering stable)
         c1 = groups[i]

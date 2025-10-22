@@ -103,6 +103,6 @@ def trim_graph(json_path: str, top_k: int = 3, edge_threshold: float = 0.85):
 
 if __name__ == "__main__":
     graph_path = "demos/graph_files/factthelargestco-1755767633671_2025-09-26T13-34-02-113Z.json"
-    G, attr = trim_graph(graph_path, crit="topk", top_k = 5, edge_threshold=0.85)
+    G, attr = trim_graph(graph_path, top_k = 5, edge_threshold=0.85)
     print(f"Created graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
     print("Nodes:", list(G.nodes(data=False))[:5])
