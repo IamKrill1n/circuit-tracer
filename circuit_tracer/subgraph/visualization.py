@@ -122,9 +122,12 @@ def visualize_clusters(
     return layers
 
 if __name__ == "__main__":
-    prompt = "Fact: Black tea contains a small amount of"
-    graph_path = "demos/graph_files/caffeine-clt.json"
-    G, attr = trim_graph(graph_path, top_k=7, edge_threshold=0.3)
+    prompt = "Before is to after as past is to"
+    graph_path = "demos/graph_files/puppy-clt.json"
+    name = graph_path.split('/')[-1].split('.')[0]
+    top_k = 7
+    edge_threshold = 0.3
+    G, attr = trim_graph(graph_path, top_k=top_k, edge_threshold=edge_threshold)
     print(f"Created graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
     for node in G.nodes():
         print(node, attr[node].get('clerp', ''))
@@ -149,12 +152,12 @@ if __name__ == "__main__":
     visualize_clusters(
         G,
         draw=True,
-        filename='demos/subgraphs/caffeine-clt_k_7_e_03.png',
+        filename=f'demos/subgraphs/{name}_k_{top_k}_e_{edge_threshold}.png',
         label_fn=lambda node: attr[node].get('clerp') if attr[node].get('clerp') != "" else str(node)
     )
     visualize_clusters(
         merged_G,
         draw=True,
-        filename='demos/subgraphs/merged_caffeine-clt_k_7_e_03.png',
+        filename=f'demos/subgraphs/merged_{name}_k_{top_k}_e_{edge_threshold}.png',
         label_fn=lambda tuple_node: " + ".join(attr[node].get('clerp') if attr[node].get('clerp') != "" else str(node) for node in tuple_node)
     )
