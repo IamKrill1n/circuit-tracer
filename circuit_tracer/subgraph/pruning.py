@@ -2,25 +2,8 @@ import torch
 
 from circuit_tracer.graph import Graph, PruneResult, prune_graph, normalize_matrix, compute_influence
 from typing import Optional
-import json
+from utils import get_adj_from_json
 import networkx as nx  # type: ignore
-
-def get_adj_from_json(nodes, links):
-    node_ids = [n["node_id"] for n in nodes]
-    id_to_index = {node_id: idx for idx, node_id in enumerate(node_ids)}
-    n = len(node_ids)
-    adj_matrix = torch.zeros((n, n), dtype=torch.float32)
-
-    for link in links:
-        src = link["source"]
-        tgt = link["target"]
-        weight = link.get("weight", 0.0)
-        if src in id_to_index and tgt in id_to_index:
-            src_idx = id_to_index[src]
-            tgt_idx = id_to_index[tgt]
-            adj_matrix[tgt_idx, src_idx] = weight  # Note: row=tgt, col=src for incoming edges
-
-    return adj_matrix, node_ids
 
 def trim_graph(json_path: str, top_k: int = 3, edge_threshold: float = 0.85):
     """Create a NetworkX DiGraph from a graph JSON file produced by create_graph_files*.
@@ -37,19 +20,11 @@ def trim_graph(json_path: str, top_k: int = 3, edge_threshold: float = 0.85):
     Returns:
         nx.DiGraph with pruned edges.
     """
-
-    with open(json_path, "r") as f:
-        data = json.load(f)
-
-    nodes = data.get("nodes", [])
-    links = data.get("links", [])
-
-    attr = {node["node_id"]: node for node in nodes}
-    adj, node_ids = get_adj_from_json(nodes, links)
+    adj, node_ids, attr = get_adj_from_json(json_path)
 
     n = adj.size(0)
     visisted = torch.zeros(n, dtype=torch.bool)
-    target_logit = next((i for i, node in enumerate(nodes) if node.get("is_target_logit") is True), None)
+    target_logit = next((i for i, node in enumerate(node_ids) if attr[node].get("is_target_logit") is True), None)
 
     G = nx.DiGraph()
     edges = []
