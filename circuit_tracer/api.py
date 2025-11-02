@@ -46,6 +46,9 @@ def generate_graph(
     return res.status, data.decode("utf-8")
 
 if __name__ == '__main__':
-    data = get_feature("gemma-2-2b", "10-clt-hp", 512)
+    # data = get_feature("gemma-2-2b", "10-clt-hp", 512)
+    # print(data)
+    status, data = generate_graph(modelId="gemma-2-2b", prompt="If dog is to bark, then cat is to", slug="meow", sourceSetName="clt-hp",
+                    desiredLogitProb=0.9, edgeThreshold=0.8, maxFeatureNodes=5000, maxNLogits=10, nodeThreshold=0.5)
+    print(status)
     print(data)
-    # generate_graph()

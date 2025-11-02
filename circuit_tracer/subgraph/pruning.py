@@ -9,7 +9,7 @@ def get_graph_from_json(json_path: str):
     """Load a nx.DiGraph object from a JSON file."""
     adj, node_ids, attr = get_adj_from_json(json_path)
 
-    G = nx.from_numpy_array(adj.numpy(), create_using=nx.DiGraph)
+    G = nx.from_numpy_array(adj.cpu().numpy().T, create_using=nx.DiGraph)
 
     mapping = {i: node_id for i, node_id in enumerate(node_ids)}
     G = nx.relabel_nodes(G, mapping)
@@ -111,12 +111,12 @@ def mask_token(graph: nx.DiGraph, attr: dict, mask: List):
         for node in list(G.nodes):
             if G.in_degree(node) == 0 and attr[node]['feature_type'] != 'embedding':
                 nodes_to_remove.add(node)
-            if G.out_degree(node) == 0 and attr[node]['feature_type'] != 'logit':
-                nodes_to_remove.add(node)
+            # if G.out_degree(node) == 0 and attr[node]['feature_type'] != 'logit':
+            #     nodes_to_remove.add(node)
 
         if not nodes_to_remove:
             break
-
+        print("Removing nodes:", nodes_to_remove)
         G.remove_nodes_from(nodes_to_remove)
 
     attr = {node: attr[node] for node in G.nodes}
