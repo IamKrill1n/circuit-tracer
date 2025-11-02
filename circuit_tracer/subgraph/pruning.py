@@ -1,9 +1,20 @@
 import torch
-
+import numpy as np
 from circuit_tracer.graph import Graph, PruneResult, prune_graph, normalize_matrix, compute_influence
-from typing import Optional
+from typing import List, Optional
 from utils import get_adj_from_json
 import networkx as nx  # type: ignore
+
+def get_graph_from_json(json_path: str):
+    """Load a nx.DiGraph object from a JSON file."""
+    adj, node_ids, attr = get_adj_from_json(json_path)
+
+    G = nx.from_numpy_array(adj.numpy(), create_using=nx.DiGraph)
+
+    mapping = {i: node_id for i, node_id in enumerate(node_ids)}
+    G = nx.relabel_nodes(G, mapping)
+
+    return G, attr
 
 def trim_graph(json_path: str, top_k: int = 3, edge_threshold: float = 0.85):
     """Create a NetworkX DiGraph from a graph JSON file produced by create_graph_files*.
@@ -58,7 +69,7 @@ def trim_graph(json_path: str, top_k: int = 3, edge_threshold: float = 0.85):
 
     # Remove nodes with no incoming or outgoing edges
     while True:
-        nodes_to_remove  = set()
+        nodes_to_remove = set()
 
         for node in list(G.nodes):
             if G.in_degree(node) == 0 and attr[node]['feature_type'] != 'embedding':
@@ -75,6 +86,44 @@ def trim_graph(json_path: str, top_k: int = 3, edge_threshold: float = 0.85):
 
     assert nx.is_directed_acyclic_graph(G), "The resulting graph G is not a DAG."
     return G, attr
+
+def mask_token(graph: nx.DiGraph, attr: dict, mask: List):
+    """Create a masked version of the input graph by removing embedding nodes specified in the mask.
+
+    Args:
+        graph: The input graph.
+        attr: Node attributes.
+        mask: A boolean tensor indicating which nodes to remove.
+
+    Returns:
+        A new graph with the specified nodes removed.
+    """
+
+    G = graph.copy()
+    nodes_to_remove = [node for node in G.nodes if attr[node]['feature_type'] == 'embedding' and not mask[attr[node]['ctx_idx']]]
+    print(nodes_to_remove)
+    G.remove_nodes_from(nodes_to_remove)
+
+    # Remove nodes with no incoming or outgoing edges
+    while True:
+        nodes_to_remove = set()
+
+        for node in list(G.nodes):
+            if G.in_degree(node) == 0 and attr[node]['feature_type'] != 'embedding':
+                nodes_to_remove.add(node)
+            if G.out_degree(node) == 0 and attr[node]['feature_type'] != 'logit':
+                nodes_to_remove.add(node)
+
+        if not nodes_to_remove:
+            break
+
+        G.remove_nodes_from(nodes_to_remove)
+
+    attr = {node: attr[node] for node in G.nodes}
+
+    assert nx.is_directed_acyclic_graph(G), "The resulting graph G is not a DAG."
+    return G, attr
+
 
 if __name__ == "__main__":
     graph_path = "demos/graph_files/factthelargestco-1755767633671_2025-09-26T13-34-02-113Z.json"

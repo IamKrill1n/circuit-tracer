@@ -1,5 +1,5 @@
 from platform import node
-from circuit_tracer.subgraph.pruning import trim_graph
+from circuit_tracer.subgraph.pruning import trim_graph, mask_token
 from circuit_tracer.subgraph.grouping import greedy_grouping
 from circuit_tracer.subgraph.distance import build_distance_graph_from_clerp
 from circuit_tracer import ReplacementModel
@@ -122,12 +122,14 @@ def visualize_clusters(
     return layers
 
 if __name__ == "__main__":
-    prompt = "Before is to after as past is to"
+    prompt = "<bos> If cat is to kitten as dog is to"
     graph_path = "demos/graph_files/puppy-clt.json"
     name = graph_path.split('/')[-1].split('.')[0]
     top_k = 10
-    edge_threshold = 0.25
+    edge_threshold = 0.3
+    mask = [0, 0, 1, 0, 0, 1, 0, 1, 0, 0]
     G, attr = trim_graph(graph_path, top_k=top_k, edge_threshold=edge_threshold)
+    G, attr = mask_token(G, attr, mask = mask)
     print(f"Created graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
     for node in G.nodes():
         print(node, attr[node].get('clerp', ''))
