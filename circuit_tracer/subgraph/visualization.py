@@ -122,12 +122,12 @@ def visualize_clusters(
     return layers
 
 if __name__ == "__main__":
-    prompt = "<bos> If cat is to kitten as dog is to"
-    graph_path = "demos/graph_files/puppy-clt.json"
+    prompt = "<bos> If dog is to bark, then cat is to"
+    graph_path = "demos/graph_files/meow-clt.json"
     name = graph_path.split('/')[-1].split('.')[0]
     top_k = 10
     edge_threshold = 0.3
-    mask = [0, 0, 1, 0, 0, 1, 0, 1, 0, 0]
+    mask = [0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0]
     G, attr = trim_graph(graph_path, top_k=top_k, edge_threshold=edge_threshold)
     G, attr = mask_token(G, attr, mask = mask)
     print(f"Created graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
