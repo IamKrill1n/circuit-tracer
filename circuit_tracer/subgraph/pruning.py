@@ -2,12 +2,13 @@ import torch
 import numpy as np
 from circuit_tracer.graph import Graph, PruneResult, prune_graph, normalize_matrix, compute_influence
 from typing import List, Optional
-from utils import get_adj_from_json
+from circuit_tracer.subgraph.utils import get_data_from_json, get_clerp
 import networkx as nx  # type: ignore
+
 
 def get_graph_from_json(json_path: str):
     """Load a nx.DiGraph object from a JSON file."""
-    adj, node_ids, attr = get_adj_from_json(json_path)
+    adj, node_ids, attr, metadata = get_data_from_json(json_path)
 
     G = nx.from_numpy_array(adj.cpu().numpy().T, create_using=nx.DiGraph)
 
@@ -16,7 +17,7 @@ def get_graph_from_json(json_path: str):
 
     return G, attr
 
-def trim_graph(json_path: str, top_k: int = 3, edge_threshold: float = 0.85):
+def trim_graph(json_path: str, top_k: int = 10, edge_threshold: float = 0.3):
     """Create a NetworkX DiGraph from a graph JSON file produced by create_graph_files*.
 
     This operates purely on the saved JSON (no original `.pt` graph needed). It keeps the
@@ -31,8 +32,8 @@ def trim_graph(json_path: str, top_k: int = 3, edge_threshold: float = 0.85):
     Returns:
         nx.DiGraph with pruned edges.
     """
-    adj, node_ids, attr = get_adj_from_json(json_path)
-
+    adj, node_ids, attr, metadata = get_data_from_json(json_path)
+    
     n = adj.size(0)
     visisted = torch.zeros(n, dtype=torch.bool)
     target_logit = next((i for i, node in enumerate(node_ids) if attr[node].get("is_target_logit") is True), None)
@@ -61,6 +62,7 @@ def trim_graph(json_path: str, top_k: int = 3, edge_threshold: float = 0.85):
 
     dfs(target_logit)
 
+    # print(f"Subgraph has {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
     # Remove low-weight edges
     sorted_edges = sorted(edges, key=lambda x: x[2], reverse=True)
     keep_num = int(len(sorted_edges) * edge_threshold)
@@ -82,9 +84,12 @@ def trim_graph(json_path: str, top_k: int = 3, edge_threshold: float = 0.85):
 
         G.remove_nodes_from(nodes_to_remove)
 
+    # print(f"Trimmed graph has {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
     attr = {node: attr[node] for node in G.nodes}
 
     assert nx.is_directed_acyclic_graph(G), "The resulting graph G is not a DAG."
+
+    get_clerp(metadata, G, attr)
     return G, attr
 
 def mask_token(graph: nx.DiGraph, attr: dict, mask: List):
@@ -101,7 +106,7 @@ def mask_token(graph: nx.DiGraph, attr: dict, mask: List):
 
     G = graph.copy()
     nodes_to_remove = [node for node in G.nodes if attr[node]['feature_type'] == 'embedding' and not mask[attr[node]['ctx_idx']]]
-    print(nodes_to_remove)
+
     G.remove_nodes_from(nodes_to_remove)
 
     # Remove nodes with no incoming or outgoing edges
@@ -116,17 +121,19 @@ def mask_token(graph: nx.DiGraph, attr: dict, mask: List):
 
         if not nodes_to_remove:
             break
-        print("Removing nodes:", nodes_to_remove)
         G.remove_nodes_from(nodes_to_remove)
 
     attr = {node: attr[node] for node in G.nodes}
 
     assert nx.is_directed_acyclic_graph(G), "The resulting graph G is not a DAG."
+    print(f"Masked graph has {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
     return G, attr
 
 
 if __name__ == "__main__":
-    graph_path = "demos/graph_files/factthelargestco-1755767633671_2025-09-26T13-34-02-113Z.json"
-    G, attr = trim_graph(graph_path, top_k = 5, edge_threshold=0.85)
-    print(f"Created graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
-    print("Nodes:", list(G.nodes(data=False))[:5])
+    graph_path = "graph_files/airplane-clt-hp.json"
+    G, attr = trim_graph(graph_path, top_k = 10, edge_threshold=0.3)
+    for node in list(G.nodes)[:5]:
+        print(f"Node: {node}, clerp: {attr[node].get('clerp', '')}")
+    # print(f"Created graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
+    # print("Nodes:", list(G.nodes(data=False))[:5])

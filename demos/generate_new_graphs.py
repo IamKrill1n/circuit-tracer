@@ -38,6 +38,7 @@ def process_prompt_line(prompt: str) -> Tuple[str, str]:
         return "", ""
     parts = p.split()
     slug = parts[-1]
+    p = " ".join(parts[:-1])
     return p, slug
 
 
@@ -62,13 +63,13 @@ def main(
         prompt, slug = process_prompt_line(raw)
         if not prompt or not slug:
             continue
-
+        slug += f"-{DEFAULT_SOURCE_SET}"
         out_path = os.path.join(GRAPH_DIR, f"{slug}.json")
         if os.path.exists(out_path):
             print(f"skipping {slug}: already exists at {out_path}")
             continue
-
-        print(f"requesting graph for slug='{slug}' prompt='{prompt[:80]}...'")
+        
+        print(f"requesting graph for slug='{slug}' prompt='{prompt[:64]}...'")
         status, body = generate_graph(
             model_id,
             prompt,
@@ -109,7 +110,7 @@ def main(
 
         print(f"saved {slug} -> {out_path} (nodes={len(data.get('nodes', []))})")
         time.sleep(REQUEST_DELAY)
-        break
+        # break
 
 
 if __name__ == "__main__":
