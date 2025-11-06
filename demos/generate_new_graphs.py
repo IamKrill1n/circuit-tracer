@@ -1,4 +1,4 @@
-from circuit_tracer.api import generate_graph
+from circuit_tracer.subgraph.api import generate_graph
 import os
 import time
 import json
