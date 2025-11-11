@@ -17,7 +17,7 @@ def get_graph_from_json(json_path: str):
 
     return G, attr
 
-def trim_graph(json_path: str, top_k: int = 10, edge_threshold: float = 0.3):
+def trim_graph(adj, node_ids, attr, top_k: int = 10, edge_threshold: float = 0.3, debug : bool = False):
     """Create a NetworkX DiGraph from a graph JSON file produced by create_graph_files*.
 
     This operates purely on the saved JSON (no original `.pt` graph needed). It keeps the
@@ -32,7 +32,6 @@ def trim_graph(json_path: str, top_k: int = 10, edge_threshold: float = 0.3):
     Returns:
         nx.DiGraph with pruned edges.
     """
-    adj, node_ids, attr, metadata = get_data_from_json(json_path)
     
     n = adj.size(0)
     visisted = torch.zeros(n, dtype=torch.bool)
@@ -62,6 +61,23 @@ def trim_graph(json_path: str, top_k: int = 10, edge_threshold: float = 0.3):
 
     dfs(target_logit)
 
+    if debug == True:
+        import matplotlib.pyplot as plt
+        import os
+        # Plot edge weight distribution
+        sorted_edges = sorted(edges, key=lambda x: x[2], reverse=True)
+        weights = [w for _, _, w in sorted_edges]
+        plt.figure(figsize=(8, 5))
+        plt.hist(weights, bins=50)
+        plt.title("Edge Weight Distribution")
+        plt.xlabel("Weight")
+        plt.ylabel("Frequency")
+        # Save plot
+        out = "demos/plots/edge_weight_hist.png"
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        plt.savefig(out, bbox_inches="tight")
+        plt.savefig("edge_weight_distribution.png")
+        plt.close()
     # print(f"Subgraph has {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
     # Remove low-weight edges
     sorted_edges = sorted(edges, key=lambda x: x[2], reverse=True)
@@ -89,7 +105,6 @@ def trim_graph(json_path: str, top_k: int = 10, edge_threshold: float = 0.3):
 
     assert nx.is_directed_acyclic_graph(G), "The resulting graph G is not a DAG."
 
-    get_clerp(metadata, G, attr)
     return G, attr
 
 def mask_token(graph: nx.DiGraph, attr: dict, mask: List):
@@ -132,8 +147,9 @@ def mask_token(graph: nx.DiGraph, attr: dict, mask: List):
 
 if __name__ == "__main__":
     graph_path = "graph_files/airplane-clt-hp.json"
-    G, attr = trim_graph(graph_path, top_k = 10, edge_threshold=0.3)
-    for node in list(G.nodes)[:5]:
-        print(f"Node: {node}, clerp: {attr[node].get('clerp', '')}")
-    # print(f"Created graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
+    adj, node_ids, attr, metadata = get_data_from_json(graph_path)
+    G, attr = trim_graph(adj, node_ids, attr, top_k=10, edge_threshold=0.3, debug=True)
+    # for node in list(G.nodes)[:5]:
+    #     print(f"Node: {node}, clerp: {attr[node].get('clerp', '')}")
+    print(f"Created graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
     # print("Nodes:", list(G.nodes(data=False))[:5])

@@ -1,5 +1,6 @@
 from platform import node
 from circuit_tracer.subgraph.pruning import trim_graph, mask_token
+from circuit_tracer.subgraph.utils import get_data_from_json, get_clerp
 from circuit_tracer.subgraph.grouping import greedy_grouping
 from circuit_tracer.subgraph.distance import build_distance_graph_from_clerp
 from circuit_tracer import ReplacementModel
@@ -50,9 +51,20 @@ def visualize_clusters(
 
     layers = topological_layers(graph)
 
+    # Build a safe string label for every node using label_fn, coercing non-str results.
+    label_map: Dict[Any, str] = {}
+    for layer in layers:
+        for n in layer:
+            raw = label_fn(n)
+            if isinstance(raw, list):
+                # join list entries into a single string
+                label_map[n] = " + ".join(str(x) for x in raw)
+            else:
+                label_map[n] = "" if raw is None else str(raw)
+
     # Print layers
     for i, layer in enumerate(layers):
-        labels = [label_fn(n) for n in layer]
+        labels = [label_map[n] for n in layer]
         print(f"Layer {i}: " + ", ".join(labels))
 
     if draw:
@@ -70,7 +82,7 @@ def visualize_clusters(
 
         plt.figure(figsize=(max(20, max_width * 0.8), max(16, len(layers) * 0.8)))
         nx.draw_networkx_nodes(graph, pos, node_size=500, node_color='lightblue', linewidths=0.5)
-        labels = {n: label_fn(n) for layer in layers for n in layer}
+        labels = {n: label_map[n] for layer in layers for n in layer}
         nx.draw_networkx_labels(graph, pos, labels=labels, font_size=15)
 
         # draw edges with color mapped to weight and small curvature for perfectly vertical edges
@@ -123,16 +135,17 @@ def visualize_clusters(
 
 if __name__ == "__main__":
     prompt = "The saying goes: Hot is to cold as light is to dark"
-    graph_path = "graph_files/meow-clt.json"
+    graph_path = "graph_files/airplane-clt-hp.json"
+    adj, node_ids, attr, metadata = get_data_from_json(graph_path)
     name = graph_path.split('/')[-1].split('.')[0]
     top_k = 10
     edge_threshold = 0.3
     mask = [0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0]
-    G, attr = trim_graph(graph_path, top_k=top_k, edge_threshold=edge_threshold)
+    G, attr = trim_graph(adj, node_ids, attr, top_k=top_k, edge_prunning_method='percentile', edge_threshold=edge_threshold)
     G, attr = mask_token(G, attr, mask = mask)
     print(f"Created graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
-    for node in G.nodes():
-        print(node, attr[node].get('clerp', ''))
+    # for node in G.nodes():
+    #     print(node, attr[node].get('clerp', ''))
     
 
     # Russian
@@ -155,7 +168,7 @@ if __name__ == "__main__":
     visualize_clusters(
         G,
         draw=True,
-        filename=f'subgraphs/{name}_k_{top_k}_e_{edge_threshold}.png',
+        filename=f'demos/subgraphs/{name}_k_{top_k}_e_{edge_threshold}.png',
         label_fn=lambda node: attr[node].get('clerp') if attr[node].get('clerp') != "" else str(node)
     )
     # visualize_clusters(

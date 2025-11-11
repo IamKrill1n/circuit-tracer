@@ -30,7 +30,7 @@ def get_data_from_json(json_path: str):
 
     return adj_matrix, node_ids, attr, metadata
 
-def get_clerp(metadata: dict, graph: nx.DiGraph, attr: dict):
+def get_clerp(metadata: dict, attr: dict):
     '''
     Get clerp of all the nodes in the graph.
     Update attr dict in place.
@@ -41,7 +41,8 @@ def get_clerp(metadata: dict, graph: nx.DiGraph, attr: dict):
     source_set = source_url.split("/")[-1]
     tokens = metadata.get("prompt_tokens", [])
 
-    for node in graph.nodes:
+    node_list = attr.keys()
+    for node in node_list:
         clerp = attr[node].get("clerp", "")
         if clerp == "":
             tmp = node.split("_")
@@ -53,14 +54,14 @@ def get_clerp(metadata: dict, graph: nx.DiGraph, attr: dict):
                     attr[node]["clerp"] = "Embedding: " + tokens[int(ctx_idx)]
                     continue
                 layer = layer + "-" + source_set
-                print(modelId, layer, index)
                 status, data = get_feature(modelId, layer, index)
                 if status == 200:
                     try:
                         feature_info = json.loads(data)
                         clerp = feature_info.get("explanations", "")
                         if clerp != []:
-                            clerp = clerp[0].get("description", "")
+                            clerp = str(clerp[0].get("description", ""))
+                        print(clerp)
                         attr[node]["clerp"] = clerp
                     except Exception as e:
                         print(f"Failed to parse feature info for node {node}: {e}")
