@@ -141,7 +141,7 @@ if __name__ == "__main__":
     top_k = 10
     edge_threshold = 0.3
     mask = [0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0]
-    G, attr = trim_graph(adj, node_ids, attr, top_k=top_k, edge_prunning_method='percentile', edge_threshold=edge_threshold)
+    G, attr = trim_graph(adj, node_ids, attr, top_k=top_k, edge_threshold=edge_threshold)
     G, attr = mask_token(G, attr, mask = mask)
     print(f"Created graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
     # for node in G.nodes():

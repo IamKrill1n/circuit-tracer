@@ -36,13 +36,17 @@ def generate_subgraphs(out_path : str, graph_path: str, top_k: int, edge_thresho
 
 if __name__ == "__main__":
     graph_dir = "graph_files"
-    out_path = "subgraphs"
-    os.makedirs(out_path, exist_ok=True)
+    out_dir = "subgraphs"
+    os.makedirs(out_dir, exist_ok=True)
     top_k = 10
     for graph_file in os.listdir(graph_dir):
         print(f"Processing {graph_file}...")
         graph_path = os.path.join(graph_dir, graph_file)
         name = graph_file.split('.')[0]
+        out_path=os.path.join(out_dir, name)
         edge_threshold = 0.3
+        if os.path.exists(out_path + f"_k_{top_k}_e_{edge_threshold}.png"):
+            print(f"Subgraph for {graph_file} already exists, skipping...")
+            continue
         mask = [0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0]
-        generate_subgraphs(out_path=os.path.join(out_path, name), graph_path=graph_path, top_k=top_k, edge_threshold=edge_threshold, mask=mask)
+        generate_subgraphs(out_path=out_path, graph_path=graph_path, top_k=top_k, edge_threshold=edge_threshold, mask=mask)
