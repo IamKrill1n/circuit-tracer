@@ -17,24 +17,22 @@ def get_graph_from_json(json_path: str):
 
     return G, attr
 
-def remove_edges(edges_to_remove, G: nx.DiGraph):
-    new_G = G.copy()
-    new_G.remove_edges_from([(src, tgt) for src, tgt, _ in edges_to_remove])
+def fix(G: nx.DiGraph, attr : dict):
     while True:
         nodes_to_remove = set()
 
-        for node in list(new_G.nodes):
-            if new_G.in_degree(node) == 0 and attr[node]['feature_type'] != 'embedding':
+        for node in list(G.nodes):
+            if G.in_degree(node) == 0 and attr[node]['feature_type'] != 'embedding':
                 nodes_to_remove.add(node)
-            if new_G.out_degree(node) == 0 and attr[node]['feature_type'] != 'logit':
+            if G.out_degree(node) == 0 and attr[node]['feature_type'] != 'logit':
                 nodes_to_remove.add(node)
 
         if not nodes_to_remove:
             break
 
-        new_G.remove_nodes_from(nodes_to_remove)
+        G.remove_nodes_from(nodes_to_remove)
     
-    return new_G
+    return G
 
 def trim_graph(adj, node_ids, attr, top_k: int = 10, edge_threshold: float = 0.3, debug : bool = False):
     """Create a NetworkX DiGraph from a graph JSON file produced by create_graph_files*.
@@ -103,7 +101,10 @@ def trim_graph(adj, node_ids, attr, top_k: int = 10, edge_threshold: float = 0.3
         for threshold in np.linspace(0.5, 0.1, 11):
             keep_num = int(len(sorted_edges) * threshold)
             print(f"Threshold: {threshold:.2f}, Keeping top {keep_num} edges out of {len(sorted_edges)}")
-            new_G = remove_edges(sorted_edges[keep_num:], G)
+            new_G = G.copy()
+            edges_to_remove = sorted_edges[keep_num:]
+            new_G.remove_edges_from([(src, tgt) for src, tgt, _ in edges_to_remove])
+            fix(new_G, attr)
             print(f"Trimmed graph has {new_G.number_of_nodes()} nodes and {new_G.number_of_edges()} edges.")
             num_nodes.append(new_G.number_of_nodes())
             num_edges.append(new_G.number_of_edges())
@@ -127,7 +128,8 @@ def trim_graph(adj, node_ids, attr, top_k: int = 10, edge_threshold: float = 0.3
     sorted_edges = sorted(edges, key=lambda x: x[2], reverse=True)
     keep_num = int(len(sorted_edges) * edge_threshold)
     edges_to_remove = sorted_edges[keep_num:]
-    G = remove_edges(edges_to_remove, G)
+    G.remove_edges_from([(src, tgt) for src, tgt, _ in edges_to_remove])
+    fix(G, attr)
 
     # print(f"Trimmed graph has {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
     attr = {node: attr[node] for node in G.nodes}
@@ -151,7 +153,8 @@ def mask_token(graph: nx.DiGraph, attr: dict, mask: List):
     G = graph.copy()
     nodes_to_remove = [node for node in G.nodes if attr[node]['feature_type'] == 'embedding' and not mask[attr[node]['ctx_idx']]]
     G.remove_nodes_from(nodes_to_remove)
-
+    fix(G, attr)
+    
     attr = {node: attr[node] for node in G.nodes}
 
     assert nx.is_directed_acyclic_graph(G), "The resulting graph G is not a DAG."
