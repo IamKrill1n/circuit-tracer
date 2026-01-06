@@ -134,15 +134,15 @@ def visualize_clusters(
     return layers
 
 if __name__ == "__main__":
-    prompt = "The saying goes: Hot is to cold as light is to dark"
-    graph_path = "graph_files/thelargestplanet-1763017024609_2025-11-13T06-58-01-950Z.json"
+    prompt = "Mexico:peso :: US:"
+    graph_path = "demos/graph_files/dollar.json"
     adj, node_ids, attr, metadata = get_data_from_json(graph_path)
     name = graph_path.split('/')[-1].split('.')[0]
     top_k = 10
     edge_threshold = 0.3
-    mask = [0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0]
+    mask = [0, 1, 0, 1, 0, 1, 0]
     G, attr = trim_graph(adj, node_ids, attr, top_k=top_k, edge_threshold=edge_threshold)
-    # G, attr = mask_token(G, attr, mask = mask)
+    G, attr = mask_token(G, attr, mask = mask)
     print(f"Created graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
     # for node in G.nodes():
     #     print(node, attr[node].get('clerp', ''))
