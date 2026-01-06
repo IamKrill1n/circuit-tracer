@@ -142,6 +142,7 @@ def verify_feature_edges(
         )
         new_logits = new_logits.squeeze(0)
 
+        assert new_activation_cache is not None
         new_relevant_activations = new_activation_cache[
             active_features[:, 0], active_features[:, 1], active_features[:, 2]
         ]
@@ -376,7 +377,7 @@ def verify_large_gemma_model(s: torch.Tensor):
 
 def verify_gemma_2_2b(s: str):
     model = ReplacementModel.from_pretrained("google/gemma-2-2b", "gemma")
-    graph = attribute(s, model)
+    graph = attribute(s, model, batch_size=256)
 
     print("Changing logit softcap to 0, as the logits will otherwise be off.")
     with model.zero_softcap():
