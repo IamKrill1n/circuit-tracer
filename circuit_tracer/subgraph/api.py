@@ -1,29 +1,98 @@
-import http.client
 import os
-import json
-conn = http.client.HTTPSConnection("www.neuronpedia.org")
+import requests
+from typing import Tuple
+
+BASE_URL = "https://www.neuronpedia.org"
 
 
-def get_feature(modelId : str, layer : str, index : int):
-    headers = { 'x-api-key': str(os.getenv("NEURONPEDIA_API_KEY")) }
-    conn.request("GET", f"/api/feature/{modelId}/{layer}/{index}", headers=headers)
+def _get_api_key() -> str:
+    """Retrieve API key from environment."""
+    return str(os.getenv("NEURONPEDIA_API_KEY", ""))
 
-    res = conn.getresponse()
-    data = res.read()
 
-    return res.status, data.decode("utf-8")
+def get_feature(modelId: str, layer: str, index: int) -> Tuple[int, str]:
+    """Fetch a feature from the Neuronpedia API.
+    
+    Args:
+        modelId: Model identifier (e.g., "gemma-2-2b")
+        layer: Layer identifier (e.g., "10-clt-hp")
+        index: Feature index
+        
+    Returns:
+        Tuple of (status_code, response_body)
+    """
+    url = f"{BASE_URL}/api/feature/{modelId}/{layer}/{index}"
+    headers = {"x-api-key": _get_api_key()}
+    
+    resp = requests.get(url, headers=headers, timeout=30)
+    return resp.status_code, resp.text
+
+
+def generate_autointerp(
+    modelId: str,
+    layer: str,
+    index: int,
+    explanationModelName: str = "gemini-2.5-flash",
+    explanationType: str = "oai_token-act-pair"
+) -> Tuple[int, str]:
+    """Generate auto-interpretation for a feature.
+    
+    Args:
+        modelId: Model identifier
+        layer: Layer identifier
+        index: Feature index
+        explanationModelName: Model to use for explanation generation
+        explanationType: Type of explanation to generate
+        
+    Returns:
+        Tuple of (status_code, response_body)
+    """
+    url = f"{BASE_URL}/api/explanation/generate"
+    headers = {
+        "Content-Type": "application/json",
+        "x-api-key": _get_api_key()
+    }
+    payload = {
+        "modelId": modelId,
+        "layer": layer,
+        "index": index,
+        "explanationType": explanationType,
+        "explanationModelName": explanationModelName
+    }
+    
+    resp = requests.post(url, headers=headers, json=payload, timeout=60)
+    return resp.status_code, resp.text
+
 
 def generate_graph(
-    modelId : str, 
-    prompt : str, 
-    slug: str, 
+    modelId: str,
+    prompt: str,
+    slug: str,
     sourceSetName: str,
-    desiredLogitProb: float = 0.95, 
-    edgeThreshold: float = 0.85, 
+    desiredLogitProb: float = 0.95,
+    edgeThreshold: float = 0.85,
     maxFeatureNodes: int = 5000,
     maxNLogits: int = 10,
     nodeThreshold: float = 0.8
-):
+) -> Tuple[int, str]:
+    """Generate an attribution graph via the Neuronpedia API.
+    
+    Args:
+        modelId: Model identifier (e.g., "gemma-2-2b")
+        prompt: Input text prompt
+        slug: Unique identifier for the graph
+        sourceSetName: Source set name (e.g., "clt-hp")
+        desiredLogitProb: Desired logit probability threshold
+        edgeThreshold: Edge weight threshold
+        maxFeatureNodes: Maximum number of feature nodes
+        maxNLogits: Maximum number of logits
+        nodeThreshold: Node importance threshold
+        
+    Returns:
+        Tuple of (status_code, response_body)
+    """
+    url = f"{BASE_URL}/api/graph/generate"
+    headers = {"Content-Type": "application/json"}
     payload = {
         "modelId": modelId,
         "prompt": prompt,
@@ -35,20 +104,28 @@ def generate_graph(
         "maxNLogits": maxNLogits,
         "nodeThreshold": nodeThreshold
     }
+    
+    resp = requests.post(url, headers=headers, json=payload, timeout=120)
+    return resp.status_code, resp.text
 
-    headers = { 'Content-Type': "application/json" }
 
-    conn.request("POST", "/api/graph/generate", json.dumps(payload), headers)
-
-    res = conn.getresponse()
-    data = res.read()
-
-    return res.status, data.decode("utf-8")
-
-if __name__ == '__main__':
+if __name__ == "__main__":
+    # Example: get feature
     status, data = get_feature("gemma-2-2b", "10-clt-hp", 512)
+    print(f"Status: {status}")
     print(data)
-    # status, data = generate_graph(modelId="gemma-2-2b", prompt="If dog is to bark, then cat is to", slug="meow", sourceSetName="clt-hp",
-    #                 desiredLogitProb=0.9, edgeThreshold=0.8, maxFeatureNodes=5000, maxNLogits=10, nodeThreshold=0.5)
-    # print(status)
+    
+    # Example: generate graph (uncomment to use)
+    # status, data = generate_graph(
+    #     modelId="gemma-2-2b",
+    #     prompt="If dog is to bark, then cat is to",
+    #     slug="meow",
+    #     sourceSetName="clt-hp",
+    #     desiredLogitProb=0.9,
+    #     edgeThreshold=0.8,
+    #     maxFeatureNodes=5000,
+    #     maxNLogits=10,
+    #     nodeThreshold=0.5
+    # )
+    # print(f"Status: {status}")
     # print(data)

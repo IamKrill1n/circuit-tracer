@@ -8,14 +8,17 @@ from circuit_tracer.subgraph.grouping import greedy_grouping, merge_nodes
 from circuit_tracer.subgraph.distance import build_distance_graph_from_clerp
 from circuit_tracer.subgraph.utils import get_data_from_json, get_clerp
 
-def generate_subgraphs(out_path : str, graph_path: str, top_k: int, edge_threshold: float, mask = None):
+def generate_subgraphs(out_path : str, graph_path: str, top_k: int, edge_threshold: float, include_clerp : bool, mask = None):
     # Find subgraph
     adj, node_ids, attr, metadata = get_data_from_json(graph_path)
+
     G, attr = trim_graph(adj, node_ids, attr, top_k=top_k, edge_threshold=edge_threshold)
     if mask is not None:
         G, attr = mask_token(G, attr, mask=mask)
 
-    get_clerp(metadata, attr)
+    print(f"Graph has {G.number_of_nodes()} nodes and {G.number_of_edges()} edges")
+    if include_clerp:
+        get_clerp(metadata, attr)
 
     visualize_clusters(
         G,
@@ -35,7 +38,9 @@ def generate_subgraphs(out_path : str, graph_path: str, top_k: int, edge_thresho
     # )
 
 if __name__ == "__main__":
-    generate_subgraphs(graph_path = 'demos/graph_files/puppy-clt.json', out_path = 'demos/subgraphs/puppy-llama.png', top_k=10, edge_threshold=0.3, mask=[0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0])
+    prompts = "<bos> <start_of_turn> user ⏎ Answer immediately: what's the capital of the state containing Dallas? <end_of_turn> ⏎ <start_of_turn> model ⏎"
+    mask = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0]
+    generate_subgraphs(graph_path = 'demos/graph_files/dallas-austin_gemma3.json', out_path = 'demos/subgraphs/dallas-austin_gemma3', top_k=5, edge_threshold=0.6, include_clerp = False, mask=None)
     # graph_dir = "graph_files"
     # out_dir = "subgraphs"
     # os.makedirs(out_dir, exist_ok=True)
