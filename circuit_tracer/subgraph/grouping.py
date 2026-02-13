@@ -1,4 +1,3 @@
-from circuit_tracer.subgraph.pruning import trim_graph
 import torch
 import numpy as np
 import networkx as nx  # type: ignore
@@ -204,15 +203,15 @@ def greedy_grouping(
     return groups, merged_graph
 
 
-if __name__ == "__main__":
-    graph_path = "demos/graph_files/dallas-austin.json"
-    G, attr = trim_graph(graph_path, crit="edge_weight", edge_weight_threshold=3)
-    print(f"Created graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
-    print("Nodes:", list(G.nodes(data=False))[:5])    
+# if __name__ == "__main__":
+    # graph_path = "demos/graph_files/dallas-austin.json"
+    # G, attr = trim_graph(graph_path, crit="edge_weight", edge_weight_threshold=3)
+    # print(f"Created graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
+    # print("Nodes:", list(G.nodes(data=False))[:5])    
 
-    # print("Nodes:", list(G.nodes(data=True))[:5])
-    distance_graph = np.random.rand(G.number_of_nodes(), G.number_of_nodes())
-    groups, merged_G = greedy_grouping(G, distance_graph, attr, num_groups=15)
-    print(f"Formed {len(groups)} clusters.")
-    for i, c in enumerate(groups):
-        print(f"Cluster {i}: {c}")
+    # # print("Nodes:", list(G.nodes(data=True))[:5])
+    # distance_graph = np.random.rand(G.number_of_nodes(), G.number_of_nodes())
+    # groups, merged_G = greedy_grouping(G, distance_graph, attr, num_groups=15)
+    # print(f"Formed {len(groups)} clusters.")
+    # for i, c in enumerate(groups):
+    #     print(f"Cluster {i}: {c}")

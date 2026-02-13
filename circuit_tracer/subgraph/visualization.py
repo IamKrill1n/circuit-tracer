@@ -1,5 +1,5 @@
 from platform import node
-from circuit_tracer.subgraph.pruning import trim_graph, mask_token
+from circuit_tracer.subgraph.prune import prune_graph_pipeline
 from circuit_tracer.subgraph.utils import get_data_from_json, get_clerp
 from circuit_tracer.subgraph.grouping import greedy_grouping
 from circuit_tracer.subgraph.distance import build_distance_graph_from_clerp
@@ -138,12 +138,20 @@ if __name__ == "__main__":
     graph_path = "demos/graph_files/puppy-clt.json"
     adj, node_ids, attr, metadata = get_data_from_json(graph_path)
     name = graph_path.split('/')[-1].split('.')[0]
-    top_k = 10
-    edge_threshold = 0.3
+    # top_k = 10
+    node_threshold = 0.8
+    edge_threshold = 0.98
     mask = [0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0]
-    G, attr = trim_graph(adj, node_ids, attr, top_k=top_k, edge_threshold=edge_threshold)
-    G, attr = mask_token(G, attr, mask = mask)
-    print(f"Created graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
+
+    G, attr, R = prune_graph_pipeline(
+        json_path=graph_path,
+        mask=mask,
+        node_threshold=node_threshold,
+        edge_threshold=edge_threshold,
+        preprocess="abs",
+        norm_method="sum",
+        max_edges=100,
+    )
     # for node in G.nodes():
     #     print(node, attr[node].get('clerp', ''))
     
@@ -160,7 +168,7 @@ if __name__ == "__main__":
 
     # distance_graph = np.random.rand(G.number_of_nodes(), G.number_of_nodes())
     distance_graph = build_distance_graph_from_clerp(G, attr, progress=True, normalize=True)
-    groups, merged_G = greedy_grouping(G, distance_graph=distance_graph, attr=attr, num_groups=15)
+    # groups, merged_G = greedy_grouping(G, distance_graph=distance_graph, attr=attr, num_groups=15)
     # model = ReplacementModel.from_pretrained("google/gemma-2-2b", 'gemma', dtype=torch.bfloat16)
     # visualize_intervention_graph(G, prompt, attr, model = model)
     # print(f"Formed {len(groups)} clusters.")
@@ -168,12 +176,12 @@ if __name__ == "__main__":
     visualize_clusters(
         G,
         draw=True,
-        filename=f'demos/subgraphs/{name}_k_{top_k}_e_{edge_threshold}.png',
+        filename=f'demos/subgraphs/{name}_n_{node_threshold}_e_{edge_threshold}.png',
         label_fn=lambda node: attr[node].get('clerp') if attr[node].get('clerp') != "" else str(node)
     )
-    visualize_clusters(
-        merged_G,
-        draw=True,
-        filename=f'subgraphs/merged_{name}_k_{top_k}_e_{edge_threshold}.png',
-        label_fn=lambda tuple_node: " + ".join(attr[node].get('clerp') if attr[node].get('clerp') != "" else str(node) for node in tuple_node)
-    )
+    # visualize_clusters(
+    #     merged_G,
+    #     draw=True,
+    #     filename=f'subgraphs/merged_{name}_n_{node_threshold}_e_{edge_threshold}.png',
+    #     label_fn=lambda tuple_node: " + ".join(attr[node].get('clerp') if attr[node].get('clerp') != "" else str(node) for node in tuple_node)
+    # )
