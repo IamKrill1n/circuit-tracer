@@ -149,8 +149,10 @@ def create_graph_files(
     slug: str,
     output_path,
     scan=None,
-    node_threshold=0.8,
-    edge_threshold=0.98,
+    node_influence_threshold=0.8,
+    edge_influence_threshold=0.98,
+    node_relevance_threshold=0.8,
+    edge_relevance_threshold=0.98,
 ):
     from circuit_tracer.graph import Graph, prune_graph
 
@@ -176,15 +178,21 @@ def create_graph_files(
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     graph.to(device)
-    node_mask, edge_mask, cumulative_scores = (
-        el.cpu() for el in prune_graph(graph, node_threshold, edge_threshold)
+    node_mask, edge_mask, influence_scores, relevance_scores = (
+        el.cpu() for el in prune_graph(
+            graph,
+            node_influence_threshold,
+            edge_influence_threshold,
+            node_relevance_threshold,
+            edge_relevance_threshold,
+        )
     )
     graph.to("cpu")
 
     tokenizer = AutoTokenizer.from_pretrained(graph.cfg.tokenizer_name)
-    nodes = create_nodes(graph, node_mask, tokenizer, cumulative_scores)
+    nodes = create_nodes(graph, node_mask, tokenizer, influence_scores)
     used_nodes, used_edges = create_used_nodes_and_edges(graph, nodes, edge_mask)
-    model = build_model(graph, used_nodes, used_edges, slug, scan, node_threshold, tokenizer)
+    model = build_model(graph, used_nodes, used_edges, slug, scan, node_influence_threshold, tokenizer)
 
     # Write the output locally
     with open(os.path.join(output_path, f"{slug}.json"), "w") as f:

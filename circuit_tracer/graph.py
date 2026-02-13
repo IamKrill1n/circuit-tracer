@@ -158,6 +158,29 @@ def compute_edge_influence(pruned_matrix: torch.Tensor, logit_weights: torch.Ten
     edge_scores = normalized_pruned * pruned_influence[:, None]
     return edge_scores
 
+def compute_relevance(A: torch.Tensor, token_weights: torch.Tensor, max_iter: int = 1000):
+    current_relevance = token_weights @ A
+    relevance = current_relevance
+    iterations = 0
+    while current_relevance.any():
+        if iterations >= max_iter:
+            raise RuntimeError(
+                f"Relevance computation failed to converge after {iterations} iterations"
+            )
+        current_relevance = current_relevance @ A
+        relevance += current_relevance
+        iterations += 1
+    return relevance
+
+def compute_node_relevance(adjacency_matrix: torch.Tensor, token_weights: torch.Tensor):
+    return compute_relevance(normalize_matrix(adjacency_matrix.T), token_weights)
+
+def compute_edge_relevance(pruned_matrix: torch.Tensor, token_weights: torch.Tensor):
+    normalized_pruned = normalize_matrix(pruned_matrix.T) # (n, n)
+    pruned_relevance = compute_relevance(normalized_pruned, token_weights) # (1, n)
+    pruned_relevance += token_weights # (1, n)
+    edge_scores = normalized_pruned * pruned_relevance[:, None] # (n, n) * (1, n) -> (n, n)
+    return edge_scores
 
 def find_threshold(scores: torch.Tensor, threshold: float):
     # Find score threshold that keeps the desired fraction of total influence
@@ -175,7 +198,7 @@ class PruneResult(NamedTuple):
     cumulative_scores: torch.Tensor  # Tensor of cumulative influence scores for each node
 
 
-def prune_graph(
+def prune_graph_influence(
     graph: Graph, node_threshold: float = 0.8, edge_threshold: float = 0.98
 ) -> PruneResult:
     """Prunes a graph by removing nodes and edges with low influence on the output logits.
@@ -250,6 +273,109 @@ def prune_graph(
     final_scores[sorted_indices] = cumulative_scores
 
     return PruneResult(node_mask, edge_mask, final_scores)
+
+def prune_graph_relevance(
+    graph: Graph, node_threshold: float = 0.8, edge_threshold: float = 0.98
+) -> PruneResult:
+    """Prunes a graph by removing nodes and edges with low relevance to the input tokens.
+
+    Args:
+        graph: The graph to prune
+        node_threshold: Keep nodes that contribute to this fraction of total relevance
+        edge_threshold: Keep edges that contribute to this fraction of total relevance
+    Returns:
+        Tuple containing:
+        - node_mask: Boolean tensor indicating which nodes to keep
+        - edge_mask: Boolean tensor indicating which edges to keep
+        - cumulative_scores: Tensor of cumulative relevance scores for each node
+    """
+
+    if node_threshold > 1.0 or node_threshold < 0.0:
+        raise ValueError("node_threshold must be between 0.0 and 1.0")
+    if edge_threshold > 1.0 or edge_threshold < 0.0:
+        raise ValueError("edge_threshold must be between 0.0 and 1.0")
+
+    # Extract dimensions
+    n_tokens = len(graph.input_tokens)
+    n_logits = len(graph.logit_tokens)
+    n_features = len(graph.selected_features)
+
+    logit_weights = torch.zeros(
+        graph.adjacency_matrix.shape[0], device=graph.adjacency_matrix.device
+    )
+    logit_weights[-n_logits:] = graph.logit_probabilities
+
+    # Calculate node influence and apply threshold
+    node_influence = compute_node_relevance(graph.adjacency_matrix, logit_weights)
+    node_mask = node_influence >= find_threshold(node_influence, node_threshold)
+    # Always keep tokens and logits
+    node_mask[-n_logits - n_tokens :] = True
+
+    # Create pruned matrix with selected nodes
+    pruned_matrix = graph.adjacency_matrix.clone()
+    pruned_matrix[~node_mask] = 0
+    pruned_matrix[:, ~node_mask] = 0
+    # we could also do iterative pruning here (see below)
+
+    # Calculate edge influence and apply threshold
+    edge_scores = compute_edge_relevance(pruned_matrix, logit_weights)
+
+    edge_mask = edge_scores >= find_threshold(edge_scores.flatten(), edge_threshold)
+
+    old_node_mask = node_mask.clone()
+    # Ensure feature and error nodes have outgoing edges
+    node_mask[: -n_logits - n_tokens] &= edge_mask[:, : -n_logits - n_tokens].any(0)
+    # Ensure feature nodes have incoming edges
+    node_mask[:n_features] &= edge_mask[:n_features].any(1)
+
+    # iteratively prune until all nodes missing incoming / outgoing edges are gone
+    # (each pruning iteration potentially opens up new candidates for pruning)
+    # this should not take more than n_layers + 1 iterations
+    while not torch.all(node_mask == old_node_mask):
+        old_node_mask[:] = node_mask
+        edge_mask[~node_mask] = False
+        edge_mask[:, ~node_mask] = False
+
+        # Ensure feature and error nodes have outgoing edges
+        node_mask[: -n_logits - n_tokens] &= edge_mask[:, : -n_logits - n_tokens].any(0)
+        # Ensure feature nodes have incoming edges
+        node_mask[:n_features] &= edge_mask[:n_features].any(1)
+
+    # Calculate cumulative influence scores
+    sorted_scores, sorted_indices = torch.sort(node_influence, descending=True)
+    cumulative_scores = torch.cumsum(sorted_scores, dim=0) / torch.sum(sorted_scores)
+    final_scores = torch.zeros_like(node_influence)
+    final_scores[sorted_indices] = cumulative_scores
+
+    return PruneResult(node_mask, edge_mask, final_scores)
+
+def prune_graph(
+    graph: Graph, node_influence_threshold: float = 0.8, edge_influence_threshold: float = 0.98
+                , node_relevance_threshold: float = 0.8, edge_relevance_threshold: float = 0.98
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Prunes the graph using both influence and relevance metrics, returning masks for nodes and edges.
+
+    Args:
+        graph: The graph to prune
+        node_influence_threshold: Keep nodes that contribute to this fraction of total influence
+        edge_influence_threshold: Keep edges that contribute to this fraction of total influence
+        node_relevance_threshold: Keep nodes that contribute to this fraction of total relevance
+        edge_relevance_threshold: Keep edges that contribute to this fraction of total relevance
+    Returns:
+        Tuple containing:
+        - node_mask: Boolean tensor indicating which nodes to keep (intersection of influence and relevance masks
+        - edge_mask: Boolean tensor indicating which edges to keep (intersection of influence and relevance masks)
+        - influence_scores: Tensor of cumulative influence scores for each node
+        - relevance_scores: Tensor of cumulative relevance scores for each node
+    """
+    influence_result = prune_graph_influence(graph, node_influence_threshold, edge_influence_threshold)
+    relevance_result = prune_graph_relevance(graph, node_relevance_threshold, edge_relevance_threshold)
+
+    # Combine masks by taking the intersection (logical AND)
+    combined_node_mask = influence_result.node_mask & relevance_result.node_mask
+    combined_edge_mask = influence_result.edge_mask & relevance_result.edge_mask
+
+    return combined_node_mask, combined_edge_mask, influence_result.cumulative_scores, relevance_result.cumulative_scores
 
 def compute_graph_scores(graph: Graph) -> tuple[float, float]:
     """Compute metrics for evaluating how well the graph captures the model's computation.

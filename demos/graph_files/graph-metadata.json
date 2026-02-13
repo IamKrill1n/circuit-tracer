@@ -21,26 +21,6 @@
       "schema_version": 1
     },
     {
-      "slug": "dallas-austin",
-      "scan": "mntss/gemma-scope-transcoders",
-      "transcoder_list": [],
-      "prompt_tokens": [
-        "<bos>",
-        "Fact",
-        ":",
-        " The",
-        " capital",
-        " of",
-        " state",
-        " containing",
-        " Dallas",
-        " is"
-      ],
-      "prompt": "<bos>Fact: The capital of state containing Dallas is",
-      "node_threshold": 0.8,
-      "schema_version": 1
-    },
-    {
       "slug": "puppy-clt",
       "scan": "mntss/clt-llama-3.2-1b-524k",
       "transcoder_list": [],
@@ -60,6 +40,24 @@
         " to"
       ],
       "prompt": "<|begin_of_text|>The saying goes: Cat is to kitten as dog is to",
+      "node_threshold": 0.8,
+      "schema_version": 1
+    },
+    {
+      "slug": "dallas-austin",
+      "scan": "mntss/clt-llama-3.2-1b-524k",
+      "transcoder_list": [],
+      "prompt_tokens": [
+        "<|begin_of_text|>",
+        "The",
+        " capital",
+        " of",
+        " state",
+        " containing",
+        " Dallas",
+        " is"
+      ],
+      "prompt": "<|begin_of_text|>The capital of state containing Dallas is",
       "node_threshold": 0.8,
       "schema_version": 1
     }
