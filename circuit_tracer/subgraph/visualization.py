@@ -1,5 +1,5 @@
 from platform import node
-from circuit_tracer.subgraph.prune import prune_graph_pipeline
+# from circuit_tracer.subgraph.prune import prune_graph_pipeline
 from circuit_tracer.subgraph.utils import get_data_from_json, get_clerp
 from circuit_tracer.subgraph.grouping import greedy_grouping
 from circuit_tracer.subgraph.distance import build_distance_graph_from_clerp
@@ -9,6 +9,18 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import matplotlib.pyplot as plt  # type: ignore
 import torch
 import numpy as np
+
+def build_nx_graph(adj_matrix: torch.Tensor, node_ids: List[Any]) -> nx.DiGraph:
+    """Convert adjacency matrix and node ids into a NetworkX directed graph."""
+    G = nx.DiGraph()
+    n = adj_matrix.shape[0]
+    G.add_nodes_from(node_ids)
+    for i in range(n):
+        for j in range(n):
+            weight = adj_matrix[i, j].item()
+            if weight != 0:
+                G.add_edge(node_ids[j], node_ids[i], weight=weight)  # edge from src=j to tgt=i
+    return G
 
 def topological_layers(graph: nx.DiGraph) -> List[List[Any]]:
     """Return topological layers: each layer is a list of nodes that have no edges between them.
@@ -135,23 +147,11 @@ def visualize_clusters(
 
 if __name__ == "__main__":
     prompt = "The saying goes: Cat is to kitten as dog is to"
-    graph_path = "demos/graph_files/puppy-clt.json"
+    graph_path = "demos/graph_files/dallas-austin.json"
     adj, node_ids, attr, metadata = get_data_from_json(graph_path)
     name = graph_path.split('/')[-1].split('.')[0]
+    G = build_nx_graph(adj, node_ids)
     # top_k = 10
-    node_threshold = 0.8
-    edge_threshold = 0.98
-    mask = [0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0]
-
-    G, attr, R = prune_graph_pipeline(
-        json_path=graph_path,
-        mask=mask,
-        node_threshold=node_threshold,
-        edge_threshold=edge_threshold,
-        preprocess="abs",
-        norm_method="sum",
-        max_edges=100,
-    )
     # for node in G.nodes():
     #     print(node, attr[node].get('clerp', ''))
     
@@ -167,7 +167,7 @@ if __name__ == "__main__":
     # Dallas
 
     # distance_graph = np.random.rand(G.number_of_nodes(), G.number_of_nodes())
-    distance_graph = build_distance_graph_from_clerp(G, attr, progress=True, normalize=True)
+    # distance_graph = build_distance_graph_from_clerp(G, attr, progress=True, normalize=True)
     # groups, merged_G = greedy_grouping(G, distance_graph=distance_graph, attr=attr, num_groups=15)
     # model = ReplacementModel.from_pretrained("google/gemma-2-2b", 'gemma', dtype=torch.bfloat16)
     # visualize_intervention_graph(G, prompt, attr, model = model)
@@ -176,7 +176,7 @@ if __name__ == "__main__":
     visualize_clusters(
         G,
         draw=True,
-        filename=f'demos/subgraphs/{name}_n_{node_threshold}_e_{edge_threshold}.png',
+        filename=f'demos/subgraphs/{name}.png',
         label_fn=lambda node: attr[node].get('clerp') if attr[node].get('clerp') != "" else str(node)
     )
     # visualize_clusters(

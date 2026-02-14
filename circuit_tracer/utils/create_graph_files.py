@@ -149,10 +149,13 @@ def create_graph_files(
     slug: str,
     output_path,
     scan=None,
+    token_weights=None,
+    logit_weights : str = "target",
     node_influence_threshold=0.8,
     edge_influence_threshold=0.98,
     node_relevance_threshold=0.8,
     edge_relevance_threshold=0.98,
+    keep_all_tokens_and_logits=True
 ):
     from circuit_tracer.graph import Graph, prune_graph
 
@@ -181,10 +184,13 @@ def create_graph_files(
     node_mask, edge_mask, influence_scores, relevance_scores = (
         el.cpu() for el in prune_graph(
             graph,
+            token_weights,
+            logit_weights,
             node_influence_threshold,
             edge_influence_threshold,
             node_relevance_threshold,
             edge_relevance_threshold,
+            keep_all_tokens_and_logits=keep_all_tokens_and_logits
         )
     )
     graph.to("cpu")
