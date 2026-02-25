@@ -178,3 +178,4 @@ cython_debug/
 
 #Big files
 demos/graphs/
+demos/temp_graph_files/austin.json
