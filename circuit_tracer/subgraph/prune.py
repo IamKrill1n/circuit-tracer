@@ -1,9 +1,38 @@
 import math
 import torch
 from typing import Any, Dict, List, Tuple, Optional
-
+from circuit_tracer.graph import compute_node_influence, compute_edge_influence, compute_node_relevance, compute_edge_relevance, find_threshold
 from circuit_tracer.subgraph.utils import get_data_from_json
 import networkx as nx  # type: ignore
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _node_type(attr: Dict[str, Any], node: str) -> str:
+    return attr.get(node, {}).get("feature_type", "")
+
+
+def _is_target_logit(attr: Dict[str, Any], node: str) -> bool:
+    return attr.get(node, {}).get("is_target_logit", False)
+
+
+def _is_feature(attr: Dict[str, Any], node: str) -> bool:
+    t = _node_type(attr, node)
+    return t not in ("embedding", "logit", "mlp reconstruction error", "")
+
+
+def _is_error(attr: Dict[str, Any], node: str) -> bool:
+    return _node_type(attr, node) == "mlp reconstruction error"
+
+
+def _is_embedding(attr: Dict[str, Any], node: str) -> bool:
+    return _node_type(attr, node) == "embedding"
+
+
+def _is_logit(attr: Dict[str, Any], node: str) -> bool:
+    return _node_type(attr, node) == "logit"
 
 
 # ---------------------------------------------------------------------------
@@ -11,353 +40,426 @@ import networkx as nx  # type: ignore
 # ---------------------------------------------------------------------------
 
 def fix(G: nx.DiGraph, attr: Dict[str, Any]) -> nx.DiGraph:
-    """Keep only valid boundary nodes: sources=embedding, sinks=logit."""
+    """
+    Iteratively remove invalid nodes:
+      - sources must be embedding nodes
+      - only the target_logit node is a valid sink
+    """
+    target_logit = None
+    for n in list(G.nodes):
+        if _is_target_logit(attr, n):
+            target_logit = n
+            break
+
     while True:
         rm = set()
         for n in list(G.nodes):
-            t = attr.get(n, {}).get("feature_type")
-            if G.in_degree(n) == 0 and t != "embedding":
+            if G.in_degree(n) == 0 and not _is_embedding(attr, n):
                 rm.add(n)
-            if G.out_degree(n) == 0 and t != "logit":
+            if G.out_degree(n) == 0 and n != target_logit:
                 rm.add(n)
         if not rm:
             break
         G.remove_nodes_from(rm)
     return G
 
-def remove_error_nodes(
-    adj: torch.Tensor,
+
+# ---------------------------------------------------------------------------
+# 1. Mask token nodes
+# ---------------------------------------------------------------------------
+
+# def mask_tokens(
+#     adj: torch.Tensor,
+#     node_ids: List[str],
+#     attr: Dict[str, Any],
+#     mask: List[bool],
+# ) -> Tuple[torch.Tensor, List[str], Dict[str, Any]]:
+#     """
+#     Remove embedding nodes whose token position is masked out.
+
+#     Args:
+#         adj:      (n, n) adjacency, adj[target, source] = weight
+#         node_ids: node id strings aligned with adj rows/cols
+#         attr:     per-node attribute dicts
+#         mask:     mask[i]=True => keep embedding at position i
+
+#     Returns:
+#         adj, node_ids, attr with masked rows/cols removed
+#     """
+#     keep_idx: List[int] = []
+#     for i, nid in enumerate(node_ids):
+#         if _is_embedding(attr, nid):
+#             ctx = attr.get(nid, {}).get("ctx_idx", 0)
+#             if ctx < len(mask) and not mask[ctx]:
+#                 continue
+#         keep_idx.append(i)
+
+#     idx_t = torch.tensor(keep_idx, dtype=torch.long)
+#     adj = adj[idx_t][:, idx_t]
+#     node_ids = [node_ids[i] for i in keep_idx]
+#     attr = {nid: attr[nid] for nid in node_ids if nid in attr}
+#     return adj, node_ids, attr
+
+def _build_index_sets(
     node_ids: List[str],
     attr: Dict[str, Any],
-) -> Tuple[torch.Tensor, List[str], Dict[str, Any]]:
-    
-    keep_idx: List[int] = []
+) -> Dict[str, List[int]]:
+    """Return index sets for each node type."""
+    sets: Dict[str, List[int]] = {
+        "feature": [],
+        "error": [],
+        "embedding": [],
+        "logit": [],
+        "target_logit": [],
+    }
     for i, nid in enumerate(node_ids):
-        a = attr.get(nid, {})
-        if a.get("feature_type") == "mlp reconstruction error":
-            continue
-        keep_idx.append(i)
+        if _is_target_logit(attr, nid):
+            sets["target_logit"].append(i)
+        if _is_logit(attr, nid):
+            sets["logit"].append(i)
+        elif _is_embedding(attr, nid):
+            sets["embedding"].append(i)
+        elif _is_error(attr, nid):
+            sets["error"].append(i)
+        elif _is_feature(attr, nid):
+            sets["feature"].append(i)
+    return sets
 
-    idx_t = torch.tensor(keep_idx, dtype=torch.long)
-    adj = adj[idx_t][:, idx_t]
-    node_ids = [node_ids[i] for i in keep_idx]
-    attr = {nid: attr[nid] for nid in node_ids if nid in attr}
-    return adj, node_ids, attr
-
-
-# ---------------------------------------------------------------------------
-# 2. Normalize adjacency matrix
-# ---------------------------------------------------------------------------
-
-def normalize_graph(
-    adj: torch.Tensor,
-    preprocess: str = "abs",
-    norm_method: str = "sum",
-    max_edges: int = 100,
-) -> torch.Tensor:
-    """
-    Preprocess + row-normalize + optional top-k sparsification.
-    Used only for relevance scoring; original adj is kept for final graph.
-    """
-    adj = adj.clone()
-
-    # preprocess
-    if preprocess == "abs":
-        adj = adj.abs()
-    elif preprocess == "relu":
-        adj = torch.relu(adj)
-    elif preprocess == "none":
-        pass
-    else:
-        raise ValueError(f"Unknown preprocess={preprocess}")
-
-    # normalize
-    if norm_method == "sum":
-        adj = adj / adj.sum(dim=1, keepdim=True).clamp(min=1e-10)
-    elif norm_method == "none":
-        pass
-    else:
-        raise ValueError(f"Unknown norm_method={norm_method}")
-
-    # limit to max_edges per row
-    if max_edges is not None and max_edges > 0 and max_edges < adj.size(1):
-        _, topk_idx = torch.topk(adj, k=max_edges, dim=1)
-        m = torch.zeros_like(adj, dtype=torch.bool)
-        m.scatter_(1, topk_idx, True)
-        adj = adj.masked_fill(~m, 0.0)
-        if norm_method == "sum":
-            adj = adj / adj.sum(dim=1, keepdim=True).clamp(min=1e-10)
-
-    return adj
-
-
-# ---------------------------------------------------------------------------
-# 3. Build sparse nx.DiGraph from adjacency
-# ---------------------------------------------------------------------------
-
-def graph_from_adj(
+def prune_by_influence(
     adj: torch.Tensor,
     node_ids: List[str],
-) -> nx.DiGraph:
-    """
-    Build a DiGraph from adj where adj[target, source] = weight.
-    Edge direction: source -> target.
-    Only adds edges with weight > 0.
-    """
-    G = nx.DiGraph()
-    G.add_nodes_from(node_ids)
-    n = len(node_ids)
-    rows, cols = (adj > 0).nonzero(as_tuple=True)
-    for r, c in zip(rows.tolist(), cols.tolist()):
-        G.add_edge(node_ids[c], node_ids[r], weight=float(adj[r, c].item()))
-    return G
-
-
-# ---------------------------------------------------------------------------
-# 4. Compute relevance in log-space
-# ---------------------------------------------------------------------------
-
-def _logsumexp(vals: List[float]) -> float:
-    if not vals:
-        return float("-inf")
-    m = max(vals)
-    if m == float("-inf"):
-        return m
-    return m + math.log(sum(math.exp(v - m) for v in vals))
-
-
-def compute_relevance(
-    G: nx.DiGraph,
-    token_weights: Dict[str, float],
-    logit_weights: Dict[str, float],
-) -> Dict[str, float]:
-    """
-    Compute per-node relevance R[v] = F[v] * B[v]
-
-    F: accumulated weight of all source->v paths
-    B: accumulated weight of all v->target paths
-
-    Args:
-        G: normalized DiGraph (edges carry normalized weights)
-        token_weights: initial weights for tokens nodes
-        logit_weights: initial weights for logits nodes
-
-    Returns:
-        R: dict  node_id -> relevance score (in normal space)
-    """
-    if not nx.is_directed_acyclic_graph(G):
-        raise ValueError("Graph is not a DAG")
-    
-    order = list(nx.topological_sort(G))
-
-    # Initialize F and B with token/logit weights
-
-    F = token_weights.copy()
-    B = logit_weights.copy()
-
-    # -- Forward pass --
-    for v in order:
-        for u in G.predecessors(v):
-            w = float(G[u][v].get("weight", 0.0))
-            F[v] += w * F.get(u, 0.0)
-
-    # -- Backward pass --
-    for v in reversed(order):
-        for u in G.successors(v):
-            w = float(G[v][u].get("weight", 0.0))
-            B[v] += w * B.get(u, 0.0)
-
-    # -- Relevance --
-    R: Dict[str, float] = {}
-    for v in G.nodes():
-        f = F.get(v, 0.0)
-        b = B.get(v, 0.0)
-        R[v] = f * b
-    
-    return R
-
-
-# ---------------------------------------------------------------------------
-# 5. Find relevance threshold that keeps x% of total relevance
-# ---------------------------------------------------------------------------
-
-def find_threshold(
-    R: Dict[str, float],
-    keep_frac: float = 0.8,
-) -> float:
-    """
-    Return the minimum relevance value such that keeping all nodes with
-    relevance >= that value accounts for at least keep_frac of total relevance.
-
-    Args:
-        R: node_id -> relevance
-        keep_frac: fraction of total relevance to keep (e.g. 0.8 = 80%)
-
-    Returns:
-        cutoff: relevance threshold value
-    """
-    items = sorted(R.values(), reverse=True)
-    total = sum(items)
-    if total <= 0:
-        return 0.0
-    cumsum = 0.0
-    cutoff = 0.0
-    for v in items:
-        cumsum += v
-        cutoff = v
-        if cumsum / total >= keep_frac:
-            break
-    return cutoff
-
-
-# ---------------------------------------------------------------------------
-# 6. Prune graph  (returns nx.DiGraph with ORIGINAL edge weights)
-# ---------------------------------------------------------------------------
-
-def prune_graph(
-    G_original: nx.DiGraph,
     attr: Dict[str, Any],
-    R: Dict[str, float],
+    logit_weights: str,
     node_threshold: float = 0.8,
     edge_threshold: float = 0.98,
-) -> Tuple[nx.DiGraph, Dict[str, Any]]:
+    keep_all_tokens_and_logits: bool = True,
+) -> Tuple[torch.Tensor, torch.Tensor]:
     """
-    Prune nodes/edges by relevance, return graph with original weights.
+    Prune nodes/edges by backward influence (logit -> input).
 
     Args:
-        G_original: graph built from the raw (un-normalized) adjacency
-        attr: node attributes
-        R: per-node relevance scores (from compute_relevance on normalized graph)
-        node_threshold: keep nodes that cover this fraction of total relevance
-        edge_threshold: keep edges that cover this fraction of total edge relevance
+        adj:              raw adjacency matrix (n, n)
+        node_ids:         node id list
+        attr:             node attribute dict
+        logit_weights:    seed for influence; "probs" => use logit probs from attr;
+        node_threshold:   cumulative fraction of influence to keep
+        edge_threshold:   cumulative fraction of edge influence to keep
+        keep_all_tokens_and_logits: if True, keep all embeddings and all logits;
+                                     if False, keep all embeddings and only target logit
 
     Returns:
-        Pruned nx.DiGraph with original edge weights, and filtered attr
+        node_mask, edge_mask  (both boolean tensors)
     """
-    # -- Node pruning --
-    cutoff = find_threshold(R, keep_frac=node_threshold)
-    keep_nodes = {n for n, r in R.items() if r >= cutoff}
+    n = adj.shape[0]
+    idx = _build_index_sets(node_ids, attr)
 
-    # always keep boundary nodes
-    for n in G_original.nodes():
-        t = attr.get(n, {}).get("feature_type", "")
-        if t in ("embedding", "logit") or attr.get(n, {}).get("is_target_logit", False):
-            keep_nodes.add(n)
+    if logit_weights == "probs":
+        # default with logit probs
+        logit_weights = torch.zeros(n, device=adj.device)
+        for i in idx["logit"]:
+            nid = node_ids[i]
+            prob = attr.get(nid, {}).get("token_prob", 0.0)
+            logit_weights[i] = prob
+    elif logit_weights == 'target':
+        logit_weights = torch.zeros(n, device=adj.device)
+        for i in idx["target_logit"]:
+            logit_weights[i] = 1.0
 
-    H = G_original.subgraph(keep_nodes).copy()
+    # node influence
+    node_inf = compute_node_influence(adj, logit_weights)
+    node_mask = node_inf >= find_threshold(node_inf, node_threshold)
 
-    # -- Edge pruning by edge relevance = R_src * |w| * R_tgt --
-    edge_scores: List[Tuple[Tuple[str, str], float]] = []
-    for u, v, d in H.edges(data=True):
-        w = abs(float(d.get("weight", 0.0)))
-        score = R.get(u, 0.0) * w * R.get(v, 0.0)
-        edge_scores.append(((u, v), score))
+    # always keep embeddings
+    for i in idx["embedding"]:
+        node_mask[i] = True
 
-    if edge_scores:
-        edge_scores.sort(key=lambda x: x[1], reverse=True)
-        total_e = sum(s for _, s in edge_scores)
-        if total_e > 0:
-            cumsum = 0.0
-            keep_edges = set()
-            for edge, s in edge_scores:
-                keep_edges.add(edge)
-                cumsum += s
-                if cumsum / total_e >= edge_threshold:
-                    break
-            drop = [e for e, _ in edge_scores if e not in keep_edges]
-            H.remove_edges_from(drop)
+    if keep_all_tokens_and_logits:
+        # keep all logits
+        for i in idx["logit"]:
+            node_mask[i] = True
+    else:
+        # keep only target logit
+        for i in idx["target_logit"]:
+            node_mask[i] = True
 
-    # structural cleanup
-    fix(H, attr)
-    out_attr = {n: attr[n] for n in H.nodes() if n in attr}
-    return H, out_attr
+    # prune matrix
+    pruned = adj.clone()
+    pruned[~node_mask] = 0
+    pruned[:, ~node_mask] = 0
 
+    # edge influence
+    edge_scores = compute_edge_influence(pruned, logit_weights)
+    edge_mask = edge_scores >= find_threshold(edge_scores.flatten(), edge_threshold)
 
-# ---------------------------------------------------------------------------
-# 7. Full pipeline
-# ---------------------------------------------------------------------------
+    # iterative structural cleanup
+    feature_idx = torch.tensor(idx["feature"], dtype=torch.long, device=adj.device)
+    non_boundary = torch.tensor(idx["feature"] + idx["error"], dtype=torch.long, device=adj.device)
+
+    old = node_mask.clone()
+    # non-boundary must have outgoing edges
+    if len(non_boundary):
+        node_mask[non_boundary] &= edge_mask[:, non_boundary].any(0)
+    # features must have incoming edges
+    if len(feature_idx):
+        node_mask[feature_idx] &= edge_mask[feature_idx].any(1)
+
+    while not torch.all(node_mask == old):
+        old[:] = node_mask
+        edge_mask[~node_mask] = False
+        edge_mask[:, ~node_mask] = False
+        if len(non_boundary):
+            node_mask[non_boundary] &= edge_mask[:, non_boundary].any(0)
+        if len(feature_idx):
+            node_mask[feature_idx] &= edge_mask[feature_idx].any(1)
+
+    return node_mask, edge_mask
+
+def prune_by_relevance(
+    adj: torch.Tensor,
+    node_ids: List[str],
+    attr: Dict[str, Any],
+    token_weights: Optional[List[float]] = None,
+    node_threshold: float = 0.8,
+    edge_threshold: float = 0.98,
+    keep_all_tokens_and_logits: bool = True,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Prune nodes/edges by forward relevance (input -> logit).
+
+    Args:
+        adj:              raw adjacency matrix (n, n)
+        node_ids:         node id list
+        attr:             node attribute dict
+        token_weights:    relevance init weights for each token
+        node_threshold:   cumulative fraction of relevance to keep
+        edge_threshold:   cumulative fraction of edge relevance to keep
+        keep_all_tokens_and_logits: if True, keep all embeddings and all logits;
+                                     if False, keep all embeddings and only target logit
+
+    Returns:
+        node_mask, edge_mask  (both boolean tensors)
+    """
+    n = adj.shape[0]
+    idx = _build_index_sets(node_ids, attr)
+
+    if token_weights is None:
+        emb_weights = torch.zeros(n, device=adj.device)
+        n_emb = len(idx["embedding"])
+        for i in idx["embedding"]:
+            emb_weights[i] = 1.0 / max(n_emb, 1)
+    else:
+        emb_weights = torch.zeros(n, device=adj.device)
+        for i, id in enumerate(idx["embedding"]):
+            emb_weights[id] = token_weights[i]
+    # node relevance
+    node_rel = compute_node_relevance(adj, emb_weights)
+    node_mask = node_rel >= find_threshold(node_rel, node_threshold)
+
+    if keep_all_tokens_and_logits:
+        # keep all logits
+        for i in idx["logit"]:
+            node_mask[i] = True
+    else:
+        # keep only target logit
+        for i in idx["target_logit"]:
+            node_mask[i] = True
+
+    # prune matrix
+    pruned = adj.clone()
+    pruned[~node_mask] = 0
+    pruned[:, ~node_mask] = 0
+
+    # edge relevance
+    edge_scores = compute_edge_relevance(pruned, emb_weights)
+    edge_mask = edge_scores >= find_threshold(edge_scores.flatten(), edge_threshold)
+
+    # iterative structural cleanup
+    feature_idx = torch.tensor(idx["feature"], dtype=torch.long, device=adj.device)
+    non_boundary = torch.tensor(idx["feature"] + idx["error"], dtype=torch.long, device=adj.device)
+
+    old = node_mask.clone()
+    if len(non_boundary):
+        node_mask[non_boundary] &= edge_mask[:, non_boundary].any(0)
+    if len(feature_idx):
+        node_mask[feature_idx] &= edge_mask[feature_idx].any(1)
+
+    while not torch.all(node_mask == old):
+        old[:] = node_mask
+        edge_mask[~node_mask] = False
+        edge_mask[:, ~node_mask] = False
+        if len(non_boundary):
+            node_mask[non_boundary] &= edge_mask[:, non_boundary].any(0)
+        if len(feature_idx):
+            node_mask[feature_idx] &= edge_mask[feature_idx].any(1)
+
+    return node_mask, edge_mask
+
+def prune_combined(
+    adj: torch.Tensor,
+    node_ids: List[str],
+    attr: Dict[str, Any],
+    logit_weights: str,
+    token_weights: Optional[List[float]] = None,
+    node_influence_threshold: float = 0.8,
+    edge_influence_threshold: float = 0.98,
+    node_relevance_threshold: float = 0.8,
+    edge_relevance_threshold: float = 0.98,
+    keep_all_tokens_and_logits: bool = True,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Two-pass pruning on the raw adjacency matrix:
+      1. influence  (backward: logit -> sources)
+      2. relevance  (forward:  sources -> logit)
+      3. AND the two masks
+      4. iterative structural cleanup
+
+    Args:
+        keep_all_tokens_and_logits: if True, keep all embeddings and all logits;
+                                     if False, keep all embeddings and only target logit
+
+    Returns:
+        node_mask, edge_mask  (boolean tensors on the original adj indexing)
+    """
+    # Pass 1 – influence
+    inf_node, inf_edge = prune_by_influence(
+        adj, node_ids, attr,
+        logit_weights=logit_weights,
+        node_threshold=node_influence_threshold,
+        edge_threshold=edge_influence_threshold,
+        keep_all_tokens_and_logits=keep_all_tokens_and_logits,
+    )
+
+    # Pass 2 – relevance
+    rel_node, rel_edge = prune_by_relevance(
+        adj, node_ids, attr,
+        token_weights=token_weights,
+        node_threshold=node_relevance_threshold,
+        edge_threshold=edge_relevance_threshold,
+        keep_all_tokens_and_logits=keep_all_tokens_and_logits,
+    )
+
+    # AND combine
+    node_mask = inf_node & rel_node
+    edge_mask = inf_edge & rel_edge
+
+    # iterative cleanup on merged result
+    idx = _build_index_sets(node_ids, attr)
+    feature_idx = torch.tensor(idx["feature"], dtype=torch.long, device=adj.device)
+    non_boundary = torch.tensor(idx["feature"] + idx["error"], dtype=torch.long, device=adj.device)
+
+    old = node_mask.clone()
+    if len(non_boundary):
+        node_mask[non_boundary] &= edge_mask[:, non_boundary].any(0)
+    if len(feature_idx):
+        node_mask[feature_idx] &= edge_mask[feature_idx].any(1)
+
+    while not torch.all(node_mask == old):
+        old[:] = node_mask
+        edge_mask[~node_mask] = False
+        edge_mask[:, ~node_mask] = False
+        if len(non_boundary):
+            node_mask[non_boundary] &= edge_mask[:, non_boundary].any(0)
+        if len(feature_idx):
+            node_mask[feature_idx] &= edge_mask[feature_idx].any(1)
+
+    return node_mask, edge_mask
+
+def masks_to_digraph(
+    adj: torch.Tensor,
+    node_ids: List[str],
+    attr: Dict[str, Any],
+    node_mask: torch.Tensor,
+    edge_mask: torch.Tensor,
+) -> Tuple[nx.DiGraph, Dict[str, Any]]:
+    """
+    Build a sparse nx.DiGraph from the original adjacency and boolean masks.
+    Edges carry the **original** (un-normalized) weights.
+    """
+    G = nx.DiGraph()
+    kept = [i for i in range(len(node_ids)) if node_mask[i]]
+    for i in kept:
+        G.add_node(node_ids[i])
+
+    for i in kept:
+        for j in kept:
+            if edge_mask[i, j]:
+                w = float(adj[i, j].item())
+                if w != 0.0:
+                    # adj[target=i, source=j] -> edge j -> i
+                    G.add_edge(node_ids[j], node_ids[i], weight=w)
+
+    out_attr = {node_ids[i]: attr[node_ids[i]] for i in kept if node_ids[i] in attr}
+    return G, out_attr
 
 def prune_graph_pipeline(
     json_path: str,
-    token_weights:  
-    logit_weights:
-    node_threshold: float = 0.8,
-    edge_threshold: float = 0.98,
-    preprocess: str = "relu",
-    norm_method: str = "sum",
-    max_edges: int = 100,
-) -> Tuple[nx.DiGraph, Dict[str, Any], Dict[str, float]]:
+    logit_weights: str,
+    token_weights: Optional[List] = None,
+    node_influence_threshold: float = 0.8,
+    edge_influence_threshold: float = 0.98,
+    node_relevance_threshold: float = 0.8,
+    edge_relevance_threshold: float = 0.98,
+    keep_all_tokens_and_logits: bool = True,
+) -> Tuple[nx.DiGraph, Dict[str, Any], Dict[str, Any]]:
     """
-    Full pipeline:
-      1. get_data_from_json   -> raw adj, node_ids, attr, metadata
-      2. mask_tokens           -> remove unwanted embedding nodes
-      3. normalize_graph       -> normalized adj  (for scoring only)
-      4. graph_from_adj        -> nx.DiGraph from normalized adj
-      5. compute_relevance     -> per-node relevance R
-      6. graph_from_adj        -> nx.DiGraph from ORIGINAL adj
-      7. prune_graph           -> pruned graph with original weights
-
     Args:
-        json_path: path to the graph JSON file
-        mask: boolean list per token position; None keeps all tokens
-        node_threshold: fraction of total relevance to keep (e.g. 0.8)
-        edge_threshold: fraction of total edge relevance to keep
-        preprocess: 'relu', 'abs', or 'none'
-        norm_method: 'sum' or 'none'
-        max_edges: top-k incoming edges per node for normalization
+        json_path:                   path to the graph JSON
+        logit_weights:               (n,) seed for influence; None => logit probs;
+                                     'target' => target_logit=1
+        token_weights:               (n,) seed for relevance; None => uniform embeddings
+        node_influence_threshold:    cumulative influence fraction to keep
+        edge_influence_threshold:    cumulative edge-influence fraction to keep
+        node_relevance_threshold:    cumulative relevance fraction to keep
+        edge_relevance_threshold:    cumulative edge-relevance fraction to keep
+        keep_all_tokens_and_logits:  if True, keep all embeddings and all logits;
+                                     if False, keep all embeddings and only target logit
 
     Returns:
-        G_pruned: pruned nx.DiGraph with original edge weights
-        attr: pruned node attributes
-        R: full relevance dict (before pruning)
+        G:        pruned nx.DiGraph with original edge weights
+        attr:     filtered node attributes
+        metadata: original JSON metadata
     """
     # 1. Load
     adj, node_ids, attr, metadata = get_data_from_json(json_path)
-    print(f"Loaded graph: {len(node_ids)} nodes, {int((adj != 0).sum())} edges")
+    print(f"[1] Loaded: {len(node_ids)} nodes, {int((adj != 0).sum())} edges")
 
-    # 2. Mask tokens
-    if mask is not None:
-        adj, node_ids, attr = mask_tokens(adj, node_ids, attr, mask)
-        print(f"After masking: {len(node_ids)} nodes, {int((adj != 0).sum())} edges")
-
-    # 3. Normalize (used only for relevance scoring)
-    adj_norm = normalize_graph(adj, preprocess=preprocess, norm_method=norm_method, max_edges=max_edges)
-
-    # 4. Build normalized graph -> compute relevance
-    G_norm = graph_from_adj(adj_norm, node_ids)
-    fix(G_norm, attr)
-    R = compute_relevance(G_norm, attr)
-
-    cutoff = find_threshold(R, keep_frac=node_threshold)
-    n_kept = sum(1 for r in R.values() if r >= cutoff)
-    print(f"Relevance cutoff={cutoff:.6g}, keeping {n_kept}/{len(R)} nodes at {node_threshold:.0%}")
-
-    # 5. Build graph from ORIGINAL adjacency (only positive edges)
-    adj_orig = torch.relu(adj)  # keep sign convention consistent
-    G_original = graph_from_adj(adj_orig, node_ids)
-    fix(G_original, attr)
-
-    # 6. Prune using relevance scores, keep original weights
-    G_pruned, attr_pruned = prune_graph(
-        G_original, attr, R,
-        node_threshold=node_threshold,
-        edge_threshold=edge_threshold,
+    # 3+4+5. Combined influence + relevance pruning
+    node_mask, edge_mask = prune_combined(
+        adj, node_ids, attr,
+        logit_weights=logit_weights,
+        token_weights=token_weights,
+        node_influence_threshold=node_influence_threshold,
+        edge_influence_threshold=edge_influence_threshold,
+        node_relevance_threshold=node_relevance_threshold,
+        edge_relevance_threshold=edge_relevance_threshold,
+        keep_all_tokens_and_logits=keep_all_tokens_and_logits,
     )
 
-    print(f"Pruned graph: {G_pruned.number_of_nodes()} nodes, {G_pruned.number_of_edges()} edges")
-    return G_pruned, attr_pruned, R
+    n_nodes_kept = int(node_mask.sum().item())
+    n_edges_kept = int(edge_mask.sum().item())
+    print(f"[3] After influence+relevance: {n_nodes_kept}/{len(node_ids)} nodes, "
+          f"{n_edges_kept}/{int((adj != 0).sum())} edges")
+
+    # 6. Build nx.DiGraph with original weights
+    G, out_attr = masks_to_digraph(adj, node_ids, attr, node_mask, edge_mask)
+    # fix(G, out_attr)
+    print(f"[4] Final graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+
+    return G, out_attr, metadata
 
 if __name__ == "__main__":
-    mask = [0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0]
 
-    G, attr, R = prune_graph_pipeline(
-        json_path="demos/graph_files/puppy-clt.json",
-        mask=mask,
-        node_threshold=0.7,
-        edge_threshold=0.8,
-        preprocess="abs",
-        norm_method="sum",
-        max_edges=100,
+    G, attr, metadata = prune_graph_pipeline(
+        json_path="demos/temp_graph_files/austin.json",
+        logit_weights='target',
+        token_weights=[0, 0, 0, 0, 1/3, 0, 0, 1/3, 0, 1/3, 0],
+        node_influence_threshold=0.5,
+        edge_influence_threshold=0.7,
+        node_relevance_threshold=0.5,
+        edge_relevance_threshold=0.8,
+        keep_all_tokens_and_logits=False,
     )
 
-    
+    print("Subgraph has {} nodes and {} edges".format(G.number_of_nodes(), G.number_of_edges()))
+    for n in G.nodes(data=True):
+        print(n)

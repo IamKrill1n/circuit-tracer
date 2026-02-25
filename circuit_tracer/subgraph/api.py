@@ -1,7 +1,9 @@
 import os
 import requests
-from typing import Tuple
+from typing import Tuple, List, Optional
+from dotenv import load_dotenv
 
+load_dotenv()
 BASE_URL = "https://www.neuronpedia.org"
 
 
@@ -109,11 +111,59 @@ def generate_graph(
     return resp.status_code, resp.text
 
 
+def save_subgraph(
+    modelId: str,
+    slug: str,
+    displayName: str,
+    pinnedIds: List[str],
+    supernodes: Optional[List[List[str]]] = None,
+    clerps: Optional[List[str]] = None,
+    pruningThreshold: float = 0.8,
+    densityThreshold: float = 0.99,
+    overwriteId: str = "",
+) -> Tuple[int, str]:
+    """Save a subgraph to Neuronpedia.
+
+    Args:
+        modelId: Model identifier (e.g., "gemma-2-2b")
+        slug: Slug of the parent graph
+        displayName: Human-readable name for the subgraph
+        pinnedIds: List of node IDs to pin in the subgraph
+        supernodes: List of supernode groups, each is [label, node_id, ...]
+        clerps: List of custom clerp overrides
+        pruningThreshold: Pruning threshold used to produce this subgraph
+        densityThreshold: Density threshold used to produce this subgraph
+        overwriteId: If non-empty, overwrite an existing subgraph with this ID
+
+    Returns:
+        Tuple of (status_code, response_body)
+    """
+    url = f"{BASE_URL}/api/graph/subgraph/save"
+    headers = {
+        "Content-Type": "application/json",
+        "x-api-key": _get_api_key(),
+    }
+    payload = {
+        "modelId": modelId,
+        "slug": slug,
+        "displayName": displayName,
+        "pinnedIds": pinnedIds,
+        "supernodes": supernodes if supernodes is not None else [],
+        "clerps": clerps if clerps is not None else [],
+        "pruningThreshold": pruningThreshold,
+        "densityThreshold": densityThreshold,
+        "overwriteId": overwriteId,
+    }
+
+    resp = requests.post(url, headers=headers, json=payload, timeout=60)
+    return resp.status_code, resp.text
+
+
 if __name__ == "__main__":
     # Example: get feature
-    status, data = get_feature("gemma-2-2b", "10-clt-hp", 512)
-    print(f"Status: {status}")
-    print(data)
+    # status, data = get_feature("gemma-2-2b", "10-clt-hp", 512)
+    # print(f"Status: {status}")
+    # print(data)
     
     # Example: generate graph (uncomment to use)
     # status, data = generate_graph(
@@ -129,3 +179,15 @@ if __name__ == "__main__":
     # )
     # print(f"Status: {status}")
     # print(data)
+    # print(_get_api_key())
+    status, data = save_subgraph(
+        modelId="gemma-2-2b",
+        slug="my doggo graph",
+        displayName="test save subgraph",
+        pinnedIds=["2_15681_2", "E_2_0", "4_14735_2"],
+        supernodes=[["supernode", "4_14735_2", "19_9180_3"]],
+        pruningThreshold=0.8,
+        densityThreshold=0.99,
+    )
+    print(f"Status: {status}")
+    print(data)

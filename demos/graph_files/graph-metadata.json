@@ -2,22 +2,21 @@
   "graphs": [
     {
       "slug": "dallas-austin-llamma",
-      "scan": "mntss/clt-llama-3.2-1b-524k",
+      "scan": "mntss/gemma-scope-transcoders",
       "transcoder_list": [],
       "prompt_tokens": [
-        "<|begin_of_text|>",
+        "<bos>",
         "Fact",
         ":",
         " The",
         " capital",
         " of",
-        " the",
         " state",
         " containing",
         " Dallas",
         " is"
       ],
-      "prompt": "<|begin_of_text|>Fact: The capital of the state containing Dallas is",
+      "prompt": "<bos>Fact: The capital of state containing Dallas is",
       "node_threshold": 0.5,
       "schema_version": 1
     }

@@ -1,5 +1,5 @@
 from platform import node
-# from circuit_tracer.subgraph.prune import prune_graph_pipeline
+from circuit_tracer.subgraph.prune import prune_graph_pipeline
 from circuit_tracer.subgraph.utils import get_data_from_json, get_clerp
 from circuit_tracer.subgraph.grouping import greedy_grouping
 from circuit_tracer.subgraph.distance import build_distance_graph_from_clerp
@@ -147,10 +147,26 @@ def visualize_clusters(
 
 if __name__ == "__main__":
     prompt = "The saying goes: Cat is to kitten as dog is to"
-    graph_path = "demos/graph_files/dallas-austin.json"
+    graph_path = "demos/temp_graph_files/nobelcomesfromth-1761108237891_2025-10-22T04-46-53-163Z.json"
     adj, node_ids, attr, metadata = get_data_from_json(graph_path)
     name = graph_path.split('/')[-1].split('.')[0]
-    G = build_nx_graph(adj, node_ids)
+    mask = [0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0]
+
+    G, attr, metadata = prune_graph_pipeline(
+        json_path=graph_path,
+        mask=mask,
+        node_influence_threshold=0.5,
+        edge_influence_threshold=0.7,
+        node_relevance_threshold=0.5,
+        edge_relevance_threshold=0.7,
+    )
+
+    # Print top nodes
+    for node in list(G.nodes)[:10]:
+        clerp = attr.get(node, {}).get("clerp", "")
+        print(f"  {node}: {clerp[:60]}")
+
+    
     # top_k = 10
     # for node in G.nodes():
     #     print(node, attr[node].get('clerp', ''))

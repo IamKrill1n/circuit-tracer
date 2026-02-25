@@ -1,7 +1,7 @@
 from typing import NamedTuple
 
 import torch
-
+from circuit_tracer.subgraph.utils import get_data_from_json
 from circuit_tracer.utils.tl_nnsight_mapping import (
     convert_nnsight_config_to_transformerlens,
     UnifiedConfig,
@@ -120,6 +120,138 @@ class Graph:
         """
         d = torch.load(path, weights_only=False, map_location=map_location)
         return Graph(**d)
+    
+    # @staticmethod
+    # def from_json(path : str, map_location='cpu') -> "Graph":
+    #     """Load a graph from a .json file at the given path. The .json file should be in the format
+    #     output by the tracer, which contains all the necessary information to construct a Graph.
+
+    #     Args:
+    #         path (str): The path of the .json file to load
+
+    #     Returns:
+    #         Graph: the Graph loaded from the specified .json file
+    #     """
+    #     adj, node_ids, attr, metadata = get_data_from_json(path)
+
+    #     # ---- Extract metadata ----
+    #     input_string = metadata.get("prompt", "")
+    #     # prompt_tokens = metadata.get("prompt_tokens", [])
+    #     # input_tokens = torch.tensor(prompt_tokens)
+    #     scan = metadata.get("scan", None)
+
+    #     # ---- Classify nodes by type and collect info ----
+    #     feature_nodes = []   # (original_index, layer, ctx_idx, feature_idx, activation)
+    #     error_nodes = []     # (original_index, layer, ctx_idx)
+    #     embed_nodes = []     # (original_index, ctx_idx)
+    #     logit_nodes = []     # (original_index, vocab_idx, token_prob, is_target)
+
+    #     for i, nid in enumerate(node_ids):
+    #         a = attr[nid]
+    #         ftype = a.get("feature_type", "")
+    #         if ftype == "cross layer transcoder" or (
+    #             ftype not in ("embedding", "logit", "mlp reconstruction error", "") 
+    #             and "layer" in a
+    #         ):
+    #             feature_nodes.append((
+    #                 i,
+    #                 int(a.get("layer", 0)),
+    #                 int(a.get("ctx_idx", 0)),
+    #                 int(nid.split("_")[1]),  # nid = {layer}_{feature_idx}_{ctx_idx}
+    #                 float(a.get("activation", 0.0)),
+    #             ))
+    #         elif ftype == "mlp reconstruction error":
+    #             error_nodes.append((
+    #                 i,
+    #                 int(a.get("layer", 0)),
+    #                 int(a.get("ctx_idx", 0)),
+    #             ))
+    #         elif ftype == "embedding":
+    #             embed_nodes.append((
+    #                 i,
+    #                 int(a.get("ctx_idx", 0)),
+    #             ))
+    #         elif ftype == "logit":
+    #             logit_nodes.append((
+    #                 i,
+    #                 int(a.get("ctx_idx", 0)),
+    #                 float(a.get("token_prob", 0.0)),
+    #                 bool(a.get("is_target_logit", False)),
+    #             ))
+
+    #     # Sort to match expected ordering:
+    #     #   [features..., errors (layer-major, pos-minor), embeds (by pos), logits (target first)]
+    #     feature_nodes.sort(key=lambda x: (x[1], x[2], x[3]))  # layer, pos, feat_idx
+    #     error_nodes.sort(key=lambda x: (x[1], x[2]))           # layer, pos
+    #     embed_nodes.sort(key=lambda x: x[1])                   # pos
+    #     logit_nodes.sort(key=lambda x: -x[2])                  # descending probabilities
+
+    #     n_features = len(feature_nodes)
+    #     n_errors = len(error_nodes)
+    #     n_embeds = len(embed_nodes)
+    #     n_logits = len(logit_nodes)
+    #     n_total = n_features + n_errors + n_embeds + n_logits
+
+    #     # ---- Build permutation: old index -> new index ----
+    #     ordered = (
+    #         [f[0] for f in feature_nodes]
+    #         + [e[0] for e in error_nodes]
+    #         + [e[0] for e in embed_nodes]
+    #         + [l[0] for l in logit_nodes]
+    #     )
+    #     perm = torch.tensor(ordered, dtype=torch.long)
+
+    #     # ---- Reorder adjacency matrix ----
+    #     new_adj = adj[perm][:, perm]
+
+    #     # ---- Build active_features (n_features, 3): (layer, pos, feature_idx) ----
+    #     if n_features > 0:
+    #         active_features = torch.tensor(
+    #             [[f[1], f[2], f[3]] for f in feature_nodes],
+    #             dtype=torch.long,
+    #         )
+    #         activation_values = torch.tensor(
+    #             [f[4] for f in feature_nodes],
+    #             dtype=torch.float32,
+    #         )
+    #     else:
+    #         active_features = torch.zeros((0, 3), dtype=torch.long)
+    #         activation_values = torch.zeros(0, dtype=torch.float32)
+
+    #     # In the pruned JSON all features are already selected
+    #     selected_features = torch.arange(n_features, dtype=torch.long)
+
+    #     logit_probabilities = torch.tensor(
+    #         [l[2] for l in logit_nodes],
+    #         dtype=torch.float32,
+    #     )
+
+    #     cfg = UnifiedConfig(
+    #         n_layers=0,
+    #         d_model=0,
+    #         d_head=0,
+    #         n_heads=0,
+    #         d_mlp=0,
+    #         d_vocab=0,
+    #         tokenizer_name="",
+    #         model_name="",
+    #         original_architecture="",
+    #         n_key_value_heads=0,
+    #         dtype=torch.float32,
+    #     )
+
+    #     return Graph(
+    #         input_string=input_string,
+    #         input_tokens=None,
+    #         active_features=active_features,
+    #         adjacency_matrix=new_adj,
+    #         cfg=cfg,
+    #         logit_tokens=None,
+    #         logit_probabilities=logit_probabilities,
+    #         selected_features=selected_features,
+    #         activation_values=activation_values,
+    #         scan=scan,
+    #     )
 
 
 def normalize_matrix(matrix: torch.Tensor) -> torch.Tensor:
