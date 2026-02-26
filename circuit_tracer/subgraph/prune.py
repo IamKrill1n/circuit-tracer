@@ -400,13 +400,13 @@ def prune_graph_pipeline(
     node_relevance_threshold: float = 0.8,
     edge_relevance_threshold: float = 0.98,
     keep_all_tokens_and_logits: bool = True,
-) -> Tuple[nx.DiGraph, Dict[str, Any], Dict[str, Any]]:
+) -> Tuple[List[str], torch.Tensor, Dict[str, Any], Dict[str, Any]]:
     """
     Args:
         json_path:                   path to the graph JSON
-        logit_weights:               (n,) seed for influence; None => logit probs;
+        logit_weights:               seed for influence; "probs" => use logit probs from attr;
                                      'target' => target_logit=1
-        token_weights:               (n,) seed for relevance; None => uniform embeddings
+        token_weights:               seed for relevance; None => uniform embeddings
         node_influence_threshold:    cumulative influence fraction to keep
         edge_influence_threshold:    cumulative edge-influence fraction to keep
         node_relevance_threshold:    cumulative relevance fraction to keep
@@ -415,15 +415,17 @@ def prune_graph_pipeline(
                                      if False, keep all embeddings and only target logit
 
     Returns:
-        G:        pruned nx.DiGraph with original edge weights
-        attr:     filtered node attributes
-        metadata: original JSON metadata
+        kept_ids:     list of node_id strings for kept nodes
+        pruned_adj:   (k, k) adjacency matrix of the pruned subgraph (original weights),
+                      rows/cols aligned with kept_ids
+        attr:         filtered node attributes
+        metadata:     original JSON metadata
     """
     # 1. Load
     adj, node_ids, attr, metadata = get_data_from_json(json_path)
     print(f"[1] Loaded: {len(node_ids)} nodes, {int((adj != 0).sum())} edges")
 
-    # 3+4+5. Combined influence + relevance pruning
+    # 2. Combined influence + relevance pruning
     node_mask, edge_mask = prune_combined(
         adj, node_ids, attr,
         logit_weights=logit_weights,
@@ -435,31 +437,36 @@ def prune_graph_pipeline(
         keep_all_tokens_and_logits=keep_all_tokens_and_logits,
     )
 
-    n_nodes_kept = int(node_mask.sum().item())
-    n_edges_kept = int(edge_mask.sum().item())
-    print(f"[3] After influence+relevance: {n_nodes_kept}/{len(node_ids)} nodes, "
-          f"{n_edges_kept}/{int((adj != 0).sum())} edges")
+    # 3. Extract kept node_ids and compact adjacency matrix
+    kept_indices = node_mask.nonzero(as_tuple=True)[0]
+    kept_ids = [node_ids[i] for i in kept_indices.tolist()]
 
-    # 6. Build nx.DiGraph with original weights
-    G, out_attr = masks_to_digraph(adj, node_ids, attr, node_mask, edge_mask)
-    # fix(G, out_attr)
-    print(f"[4] Final graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+    pruned_adj = adj[kept_indices][:, kept_indices].clone()
+    kept_edge_mask = edge_mask[kept_indices][:, kept_indices]
+    pruned_adj[~kept_edge_mask] = 0.0
 
-    return G, out_attr, metadata
+    out_attr = {node_ids[i]: attr[node_ids[i]] for i in kept_indices.tolist() if node_ids[i] in attr}
+
+    print(f"[2] Pruned: {len(kept_ids)} nodes, {int((pruned_adj != 0).sum())} edges")
+
+    return kept_ids, pruned_adj, out_attr, metadata
+
 
 if __name__ == "__main__":
 
-    G, attr, metadata = prune_graph_pipeline(
+    kept_ids, pruned_adj, attr, metadata = prune_graph_pipeline(
         json_path="demos/temp_graph_files/austin.json",
         logit_weights='target',
         token_weights=[0, 0, 0, 0, 1/3, 0, 0, 1/3, 0, 1/3, 0],
-        node_influence_threshold=0.5,
+        node_influence_threshold=0.6,
         edge_influence_threshold=0.7,
-        node_relevance_threshold=0.5,
-        edge_relevance_threshold=0.8,
-        keep_all_tokens_and_logits=False,
+        node_relevance_threshold=0.6,
+        edge_relevance_threshold=0.7,
+        keep_all_tokens_and_logits=True,
     )
 
-    print("Subgraph has {} nodes and {} edges".format(G.number_of_nodes(), G.number_of_edges()))
-    for n in G.nodes(data=True):
-        print(n)
+    print(f"Kept {len(kept_ids)} nodes, {int((pruned_adj != 0).sum())} edges")
+    print(f"Pruned adj shape: {pruned_adj.shape}")
+    for nid in kept_ids[:10]:
+        clerp = attr.get(nid, {}).get("clerp", "")
+        print(f"  {nid}: {clerp[:60]}")

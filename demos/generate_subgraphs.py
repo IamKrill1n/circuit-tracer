@@ -1,58 +1,102 @@
 import os
 import json
-import networkx as nx
 
-from circuit_tracer.subgraph.pruning import trim_graph, mask_token
-from circuit_tracer.subgraph.visualization import visualize_clusters
-from circuit_tracer.subgraph.grouping import greedy_grouping, merge_nodes
-from circuit_tracer.subgraph.distance import build_distance_graph_from_clerp
-from circuit_tracer.subgraph.utils import get_data_from_json, get_clerp
+from circuit_tracer.subgraph.prune import prune_graph_pipeline
+from circuit_tracer.subgraph.api import save_subgraph
+from circuit_tracer.subgraph.utils import get_clerp
 
-def generate_subgraphs(out_path : str, graph_path: str, top_k: int, edge_threshold: float, include_clerp : bool, mask = None):
-    # Find subgraph
-    adj, node_ids, attr, metadata = get_data_from_json(graph_path)
 
-    G, attr = trim_graph(adj, node_ids, attr, top_k=top_k, edge_threshold=edge_threshold)
-    if mask is not None:
-        G, attr = mask_token(G, attr, mask=mask)
+def generate_subgraphs(
+    graph_path: str,
+    logit_weights: str = "target",
+    token_weights=None,
+    node_influence_threshold: float = 0.8,
+    edge_influence_threshold: float = 0.98,
+    node_relevance_threshold: float = 0.8,
+    edge_relevance_threshold: float = 0.98,
+    keep_all_tokens_and_logits: bool = False,
+    include_clerp: bool = False,
+    save: bool = False,
+    model_id: str = "",
+    slug: str = "",
+    display_name: str = "",
+):
+    """
+    Generate a subgraph from a graph JSON file.
 
-    print(f"Graph has {G.number_of_nodes()} nodes and {G.number_of_edges()} edges")
+    Args:
+        graph_path:                  path to the graph JSON file
+        logit_weights:               "target" or "probs"
+        token_weights:               per-token relevance weights; None => uniform
+        node_influence_threshold:    cumulative influence fraction to keep
+        edge_influence_threshold:    cumulative edge-influence fraction to keep
+        node_relevance_threshold:    cumulative relevance fraction to keep
+        edge_relevance_threshold:    cumulative edge-relevance fraction to keep
+        keep_all_tokens_and_logits:  keep all embeddings/logits or only target logit
+        include_clerp:               fetch clerp descriptions from API
+        save:                        upload subgraph to Neuronpedia
+        model_id:                    model identifier for save (e.g. "gemma-2-2b")
+        slug:                        parent graph slug for save
+        display_name:                display name for saved subgraph
+    """
+    # 1. Prune
+    kept_ids, pruned_adj, attr, metadata = prune_graph_pipeline(
+        json_path=graph_path,
+        logit_weights=logit_weights,
+        token_weights=token_weights,
+        node_influence_threshold=node_influence_threshold,
+        edge_influence_threshold=edge_influence_threshold,
+        node_relevance_threshold=node_relevance_threshold,
+        edge_relevance_threshold=edge_relevance_threshold,
+        keep_all_tokens_and_logits=keep_all_tokens_and_logits,
+    )
+
+    print(f"Subgraph has {len(kept_ids)} nodes, {int((pruned_adj != 0).sum())} edges")
+
+    # 2. Optionally fetch clerp descriptions
     if include_clerp:
         get_clerp(metadata, attr)
 
-    visualize_clusters(
-        G,
-        draw=True,
-        filename=f'{out_path}_k_{top_k}_e_{edge_threshold}.png',
-        label_fn=lambda node: attr[node].get('clerp') if attr[node].get('clerp') != "" else str(node)
-    )
+    # 3. Optionally save to Neuronpedia
+    if save:
+        _model_id = model_id or metadata.get("model_id", "")
+        _slug = slug or metadata.get("slug", "")
+        _display_name = display_name or f"subgraph-{os.path.basename(graph_path).split('.')[0]}"
 
-    # distance_graph = build_distance_graph_from_clerp(G, attr, progress=True, normalize=True)
-    # groups, merged_G = greedy_grouping(G, distance_graph=distance_graph, attr=attr, num_groups=15)
-    # print(f"Formed {len(groups)} clusters.")
-    # visualize_clusters(
-    #     merged_G,
-    #     draw=True,
-    #     filename=f'subgraphs/merged_{out_path}_k_{top_k}_e_{edge_threshold}.png',
-    #     label_fn=lambda tuple_node: " + ".join(attr[node].get('clerp') if attr[node].get('clerp') != "" else str(node) for node in tuple_node)
-    # )
+        if not _model_id or not _slug:
+            print("Warning: model_id and slug are required to save. Skipping save.")
+        else:
+            status, response = save_subgraph(
+                modelId=_model_id,
+                slug=_slug,
+                displayName=_display_name,
+                pinnedIds=kept_ids,
+                pruningThreshold=node_influence_threshold,
+                densityThreshold=edge_influence_threshold,
+            )
+            print(f"Save status: {status}")
+            print(response)
+
+    return kept_ids, pruned_adj, attr, metadata
+
 
 if __name__ == "__main__":
-    prompts = "<bos> <start_of_turn> user ⏎ Answer immediately: what's the capital of the state containing Dallas? <end_of_turn> ⏎ <start_of_turn> model ⏎"
-    mask = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0]
-    generate_subgraphs(graph_path = 'demos/graph_files/dallas-austin_gemma3.json', out_path = 'demos/subgraphs/dallas-austin_gemma3', top_k=5, edge_threshold=0.6, include_clerp = False, mask=None)
-    # graph_dir = "graph_files"
-    # out_dir = "subgraphs"
-    # os.makedirs(out_dir, exist_ok=True)
-    # top_k = 10
-    # for graph_file in os.listdir(graph_dir):
-    #     print(f"Processing {graph_file}...")
-    #     graph_path = os.path.join(graph_dir, graph_file)
-    #     name = graph_file.split('.')[0]
-    #     out_path=os.path.join(out_dir, name)
-    #     edge_threshold = 0.3
-    #     if os.path.exists(out_path + f"_k_{top_k}_e_{edge_threshold}.png"):
-    #         print(f"Subgraph for {graph_file} already exists, skipping...")
-    #         continue
-    #     mask = [0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0]
-    #     generate_subgraphs(out_path=out_path, graph_path=graph_path, top_k=top_k, edge_threshold=edge_threshold, mask=mask)
+    token_weights = [0, 0, 0, 0, 1/3, 0, 0, 1/3, 0, 1/3, 0]
+
+    kept_ids, pruned_adj, attr, metadata = generate_subgraphs(
+        graph_path="demos/temp_graph_files/austin.json",
+        logit_weights="target",
+        token_weights=token_weights,
+        node_influence_threshold=0.7,
+        edge_influence_threshold=0.7,
+        node_relevance_threshold=0.7,
+        edge_relevance_threshold=0.7,
+        keep_all_tokens_and_logits=True,
+        include_clerp=False,
+        save=True,
+    )
+
+    print(f"\nKept {len(kept_ids)} nodes:")
+    for nid in kept_ids[:15]:
+        clerp = attr.get(nid, {}).get("clerp", "")
+        print(f"  {nid}: {clerp[:60]}")
