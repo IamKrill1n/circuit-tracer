@@ -63,6 +63,7 @@ def generate_subgraphs(
         _slug = slug or metadata.get("slug", "")
         _display_name = display_name or f"subgraph-{os.path.basename(graph_path).split('.')[0]}"
 
+        print(f"{_model_id}, {_slug}, {_display_name}'")
         if not _model_id or not _slug:
             print("Warning: model_id and slug are required to save. Skipping save.")
         else:
@@ -81,7 +82,8 @@ def generate_subgraphs(
 
 
 if __name__ == "__main__":
-    token_weights = [0, 0, 0, 0, 1/3, 0, 0, 1/3, 0, 1/3, 0]
+    token_weights = [0.00198786, 0.03153391, 0.00083086, 0.01473883, 0.22338926, 0.00649094,
+  0.00222269, 0.01996207, 0.0052309, 0.67869559, 0.01491708]
 
     kept_ids, pruned_adj, attr, metadata = generate_subgraphs(
         graph_path="demos/temp_graph_files/austin.json",
@@ -89,9 +91,11 @@ if __name__ == "__main__":
         token_weights=token_weights,
         node_influence_threshold=0.7,
         edge_influence_threshold=0.7,
-        node_relevance_threshold=0.7,
+        node_relevance_threshold=0.6,
         edge_relevance_threshold=0.7,
         keep_all_tokens_and_logits=True,
+        model_id="gemma-2-2b",
+        display_name="Austin Subgraph",
         include_clerp=False,
         save=True,
     )

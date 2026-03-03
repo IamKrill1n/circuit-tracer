@@ -182,10 +182,17 @@ if __name__ == "__main__":
     # print(_get_api_key())
     status, data = save_subgraph(
         modelId="gemma-2-2b",
-        slug="my doggo graph",
+        slug="howmanylegsdoesa",
         displayName="test save subgraph",
-        pinnedIds=["2_15681_2", "E_2_0", "4_14735_2"],
-        supernodes=[["supernode", "4_14735_2", "19_9180_3"]],
+        pinnedIds=[
+            "2_15681_2",
+            "E_2_0",
+            "4_14735_2",
+            "E_5929_2",
+            "19_9180_3",
+            "27_6784_5"],
+        supernodes=[
+        ],
         pruningThreshold=0.8,
         densityThreshold=0.99,
     )

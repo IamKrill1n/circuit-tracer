@@ -147,19 +147,24 @@ def visualize_clusters(
 
 if __name__ == "__main__":
     prompt = "The saying goes: Cat is to kitten as dog is to"
-    graph_path = "demos/temp_graph_files/nobelcomesfromth-1761108237891_2025-10-22T04-46-53-163Z.json"
+    graph_path = "demos/temp_graph_files/austin.json"
     adj, node_ids, attr, metadata = get_data_from_json(graph_path)
     name = graph_path.split('/')[-1].split('.')[0]
-    mask = [0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0]
+    token_weights = [0.00198786, 0.03153391, 0.00083086, 0.01473883, 0.22338926, 0.00649094,
+  0.00222269, 0.01996207, 0.0052309, 0.67869559, 0.01491708]
 
-    G, attr, metadata = prune_graph_pipeline(
+    kept_ids, pruned_adj, attr, metadata = prune_graph_pipeline(
         json_path=graph_path,
-        mask=mask,
-        node_influence_threshold=0.5,
+        logit_weights="target",
+        token_weights=token_weights,
+        node_influence_threshold=0.6,
         edge_influence_threshold=0.7,
-        node_relevance_threshold=0.5,
+        node_relevance_threshold=0.6,
         edge_relevance_threshold=0.7,
+        keep_all_tokens_and_logits=False,
     )
+
+    G = build_nx_graph(pruned_adj, kept_ids)
 
     # Print top nodes
     for node in list(G.nodes)[:10]:
