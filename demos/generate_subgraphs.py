@@ -89,7 +89,7 @@ if __name__ == "__main__":
         graph_path="demos/temp_graph_files/austin.json",
         logit_weights="target",
         token_weights=token_weights,
-        node_influence_threshold=0.7,
+        node_influence_threshold=0.6,
         edge_influence_threshold=0.7,
         node_relevance_threshold=0.6,
         edge_relevance_threshold=0.7,

@@ -146,28 +146,30 @@ def visualize_clusters(
     return layers
 
 if __name__ == "__main__":
-    prompt = "The saying goes: Cat is to kitten as dog is to"
-    graph_path = "demos/temp_graph_files/austin.json"
+    prompt = "<start_of_turn>user⏎What is the capital of the state containing Dallas? Answer immediately.<end_of_turn>⏎<start_of_turn>model⏎Austin"
+    prompts_tokens = ["<start_of_turn>","user","⏎","What"," is"," the"," capital"," of"," the"," state"," containing"," Dallas","?"," Answer"," immediately",".","<end_of_turn>","⏎","<start_of_turn>","model","⏎"]
+    graph_path = "demos/temp_graph_files/dallas-austin-gs2-27b-it_2026-03-05T07-24-51-963Z.json"
     adj, node_ids, attr, metadata = get_data_from_json(graph_path)
     name = graph_path.split('/')[-1].split('.')[0]
-    token_weights = [0.00198786, 0.03153391, 0.00083086, 0.01473883, 0.22338926, 0.00649094,
-  0.00222269, 0.01996207, 0.0052309, 0.67869559, 0.01491708]
+    token_weights = [0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+#     token_weights = [0.00198786, 0.03153391, 0.00083086, 0.01473883, 0.22338926, 0.00649094,
+#   0.00222269, 0.01996207, 0.0052309, 0.67869559, 0.01491708]
 
     kept_ids, pruned_adj, attr, metadata = prune_graph_pipeline(
         json_path=graph_path,
         logit_weights="target",
         token_weights=token_weights,
         node_influence_threshold=0.6,
-        edge_influence_threshold=0.7,
+        edge_influence_threshold=0.8,
         node_relevance_threshold=0.6,
-        edge_relevance_threshold=0.7,
+        edge_relevance_threshold=0.8,
         keep_all_tokens_and_logits=False,
     )
 
     G = build_nx_graph(pruned_adj, kept_ids)
 
     # Print top nodes
-    for node in list(G.nodes)[:10]:
+    for node in list(G.nodes):
         clerp = attr.get(node, {}).get("clerp", "")
         print(f"  {node}: {clerp[:60]}")
 

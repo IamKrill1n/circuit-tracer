@@ -165,6 +165,18 @@ if __name__ == "__main__":
     # print(f"Status: {status}")
     # print(data)
     
+    # Example: generate auto-interpretation
+    status, data = generate_autointerp(
+        modelId="gemma-2-2b",
+        layer="10-clt-hp",
+        index=512,
+        explanationModelName="gemini-2.5-flash",
+        explanationType="oai_token-act-pair"
+    )
+    print(f"Status: {status}")
+    print(data)
+
+
     # Example: generate graph (uncomment to use)
     # status, data = generate_graph(
     #     modelId="gemma-2-2b",
@@ -180,21 +192,21 @@ if __name__ == "__main__":
     # print(f"Status: {status}")
     # print(data)
     # print(_get_api_key())
-    status, data = save_subgraph(
-        modelId="gemma-2-2b",
-        slug="howmanylegsdoesa",
-        displayName="test save subgraph",
-        pinnedIds=[
-            "2_15681_2",
-            "E_2_0",
-            "4_14735_2",
-            "E_5929_2",
-            "19_9180_3",
-            "27_6784_5"],
-        supernodes=[
-        ],
-        pruningThreshold=0.8,
-        densityThreshold=0.99,
-    )
-    print(f"Status: {status}")
-    print(data)
+    # status, data = save_subgraph(
+    #     modelId="gemma-2-2b",
+    #     slug="howmanylegsdoesa",
+    #     displayName="test save subgraph",
+    #     pinnedIds=[
+    #         "2_15681_2",
+    #         "E_2_0",
+    #         "4_14735_2",
+    #         "E_5929_2",
+    #         "19_9180_3",
+    #         "27_6784_5"],
+    #     supernodes=[
+    #     ],
+    #     pruningThreshold=0.8,
+    #     densityThreshold=0.99,
+    # )
+    # print(f"Status: {status}")
+    # print(data)
