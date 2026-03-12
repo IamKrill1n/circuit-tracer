@@ -93,7 +93,7 @@ if __name__ == "__main__":
         edge_influence_threshold=0.7,
         node_relevance_threshold=0.6,
         edge_relevance_threshold=0.7,
-        keep_all_tokens_and_logits=True,
+        keep_all_tokens_and_logits=False,
         model_id="gemma-2-2b",
         display_name="Austin Subgraph",
         include_clerp=False,
@@ -101,6 +101,6 @@ if __name__ == "__main__":
     )
 
     print(f"\nKept {len(kept_ids)} nodes:")
-    for nid in kept_ids[:15]:
+    for nid in kept_ids:
         clerp = attr.get(nid, {}).get("clerp", "")
         print(f"  {nid}: {clerp[:60]}")

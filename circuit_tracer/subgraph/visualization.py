@@ -148,30 +148,60 @@ def visualize_clusters(
 if __name__ == "__main__":
     prompt = "<start_of_turn>user⏎What is the capital of the state containing Dallas? Answer immediately.<end_of_turn>⏎<start_of_turn>model⏎Austin"
     prompts_tokens = ["<start_of_turn>","user","⏎","What"," is"," the"," capital"," of"," the"," state"," containing"," Dallas","?"," Answer"," immediately",".","<end_of_turn>","⏎","<start_of_turn>","model","⏎"]
-    graph_path = "demos/temp_graph_files/dallas-austin-gs2-27b-it_2026-03-05T07-24-51-963Z.json"
+    # graph_path = "demos/temp_graph_files/dallas-austin-gs2-27b-it_2026-03-05T07-24-51-963Z.json"
+    graph_path = 'demos/temp_graph_files/austin.json'
     adj, node_ids, attr, metadata = get_data_from_json(graph_path)
     name = graph_path.split('/')[-1].split('.')[0]
-    token_weights = [0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    # token_weights = [0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 #     token_weights = [0.00198786, 0.03153391, 0.00083086, 0.01473883, 0.22338926, 0.00649094,
 #   0.00222269, 0.01996207, 0.0052309, 0.67869559, 0.01491708]
 
-    kept_ids, pruned_adj, attr, metadata = prune_graph_pipeline(
-        json_path=graph_path,
-        logit_weights="target",
-        token_weights=token_weights,
-        node_influence_threshold=0.6,
-        edge_influence_threshold=0.8,
-        node_relevance_threshold=0.6,
-        edge_relevance_threshold=0.8,
-        keep_all_tokens_and_logits=False,
-    )
+    # kept_ids, pruned_adj, attr, metadata = prune_graph_pipeline(
+    #     json_path=graph_path,
+    #     logit_weights="target",
+    #     token_weights=token_weights,
+    #     node_influence_threshold=0.6,
+    #     edge_influence_threshold=0.8,
+    #     node_relevance_threshold=0.6,
+    #     edge_relevance_threshold=0.8,
+    #     keep_all_tokens_and_logits=False,
+    # )
 
-    G = build_nx_graph(pruned_adj, kept_ids)
+    # Sweep relevance thresholds to see how the graph changes
+    num_nodes = []
+    for node_relevance_threshold in np.linspace(0.1, 0.9, 5):
+        # for edge_relevance_threshold in np.linspace(0.1, 0.9, 5):
+        print(f"Node relevance threshold: {node_relevance_threshold:.2f}, Edge relevance threshold: 0.95")
+        kept_ids, pruned_adj, attr, metadata = prune_graph_pipeline(
+            json_path=graph_path,
+            logit_weights="target",
+            token_weights=None,
+            node_influence_threshold=0.8,
+            edge_influence_threshold=0.95,
+            node_relevance_threshold=node_relevance_threshold,
+            edge_relevance_threshold=0.95,
+            keep_all_tokens_and_logits=False,
+        )
 
-    # Print top nodes
-    for node in list(G.nodes):
-        clerp = attr.get(node, {}).get("clerp", "")
-        print(f"  {node}: {clerp[:60]}")
+        num_nodes_i = len(kept_ids)
+        num_edges = (pruned_adj != 0).sum().item()
+        print(f"Kept {num_nodes_i} nodes and {num_edges} edges after pruning.")
+        num_nodes.append(num_nodes_i)
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(np.linspace(0.1, 0.9, 5), num_nodes, marker='o')
+    plt.title("Number of Nodes Kept vs Node Relevance Threshold")
+    plt.xlabel("Node Relevance Threshold")
+    plt.ylabel("Number of Nodes Kept")
+    plt.grid()
+    plt.savefig(f'demos/plots/{name}_node_relevance_sweep.png', bbox_inches="tight")
+    print(f"Saved node relevance sweep plot to demos/plots/{name}_node_relevance_sweep.png")
+    # G = build_nx_graph(pruned_adj, kept_ids)
+
+    # # Print top nodes
+    # for node in list(G.nodes):
+    #     clerp = attr.get(node, {}).get("clerp", "")
+    #     print(f"  {node}: {clerp[:60]}")
 
     
     # top_k = 10
@@ -196,12 +226,12 @@ if __name__ == "__main__":
     # visualize_intervention_graph(G, prompt, attr, model = model)
     # print(f"Formed {len(groups)} clusters.")
 
-    visualize_clusters(
-        G,
-        draw=True,
-        filename=f'demos/subgraphs/{name}.png',
-        label_fn=lambda node: attr[node].get('clerp') if attr[node].get('clerp') != "" else str(node)
-    )
+    # visualize_clusters(
+    #     G,
+    #     draw=True,
+    #     filename=f'demos/subgraphs/{name}.png',
+    #     label_fn=lambda node: attr[node].get('clerp') if attr[node].get('clerp') != "" else str(node)
+    # )
     # visualize_clusters(
     #     merged_G,
     #     draw=True,
