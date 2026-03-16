@@ -2,6 +2,7 @@ import os
 import requests
 from typing import Tuple, List, Optional
 from dotenv import load_dotenv
+import json
 
 load_dotenv()
 BASE_URL = "https://www.neuronpedia.org"
@@ -161,20 +162,22 @@ def save_subgraph(
 
 if __name__ == "__main__":
     # Example: get feature
-    # status, data = get_feature("gemma-2-2b", "10-clt-hp", 512)
+    status, data = get_feature("gemma-2-2b", "1-clt-hp", 89326)
+    print(f"Status: {status}")
+    dict_data = json.loads(data)
+    print(dict_data['explanations'])
+    # print(dict_data['vector'])
+    # print(dict_data['neuron_alignment_indices'])
+    # Example: generate auto-interpretation
+    # status, data = generate_autointerp(
+    #     modelId="gemma-2-2b",
+    #     layer="10-clt-hp",
+    #     index=512,
+    #     explanationModelName="gemini-2.5-flash",
+    #     explanationType="oai_token-act-pair"
+    # )
     # print(f"Status: {status}")
     # print(data)
-    
-    # Example: generate auto-interpretation
-    status, data = generate_autointerp(
-        modelId="gemma-2-2b",
-        layer="10-clt-hp",
-        index=512,
-        explanationModelName="gemini-2.5-flash",
-        explanationType="oai_token-act-pair"
-    )
-    print(f"Status: {status}")
-    print(data)
 
 
     # Example: generate graph (uncomment to use)
