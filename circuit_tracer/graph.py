@@ -265,8 +265,8 @@ def compute_influence(A: torch.Tensor, logit_weights: torch.Tensor, max_iter: in
     # But it's faster / more efficient to compute logit_weights @ A + logit_weights @ A^2
     # as follows:
 
-    current_influence = logit_weights @ A
-    # current_influence = logit_weights.clone()
+    # current_influence = logit_weights @ A
+    current_influence = logit_weights.clone()
     influence = current_influence
     iterations = 0
     while current_influence.any():
@@ -292,7 +292,8 @@ def compute_edge_influence(pruned_matrix: torch.Tensor, logit_weights: torch.Ten
     return edge_scores
 
 def compute_relevance(A: torch.Tensor, emb_weights: torch.Tensor, max_iter: int = 1000):
-    current_relevance = emb_weights @ A
+    # current_relevance = emb_weights @ A
+    current_relevance = emb_weights.clone()
     relevance = current_relevance
     iterations = 0
     while current_relevance.any():
