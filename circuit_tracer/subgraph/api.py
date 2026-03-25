@@ -1,16 +1,10 @@
 import os
 import requests
 from typing import Tuple, List, Optional
-from dotenv import load_dotenv
+from circuit_tracer.subgraph.config import NEURONPEDIA_API_KEY, HUGGINGFACE_API_KEY, GENAI_API_KEY
 import json
 
-load_dotenv()
 BASE_URL = "https://www.neuronpedia.org"
-
-
-def _get_api_key() -> str:
-    """Retrieve API key from environment."""
-    return str(os.getenv("NEURONPEDIA_API_KEY", ""))
 
 
 def get_feature(modelId: str, layer: str, index: int) -> Tuple[int, str]:
@@ -25,7 +19,7 @@ def get_feature(modelId: str, layer: str, index: int) -> Tuple[int, str]:
         Tuple of (status_code, response_body)
     """
     url = f"{BASE_URL}/api/feature/{modelId}/{layer}/{index}"
-    headers = {"x-api-key": _get_api_key()}
+    headers = {"x-api-key": NEURONPEDIA_API_KEY}
     
     resp = requests.get(url, headers=headers, timeout=30)
     return resp.status_code, resp.text
@@ -53,7 +47,7 @@ def generate_autointerp(
     url = f"{BASE_URL}/api/explanation/generate"
     headers = {
         "Content-Type": "application/json",
-        "x-api-key": _get_api_key()
+        "x-api-key": NEURONPEDIA_API_KEY
     }
     payload = {
         "modelId": modelId,
@@ -142,8 +136,9 @@ def save_subgraph(
     url = f"{BASE_URL}/api/graph/subgraph/save"
     headers = {
         "Content-Type": "application/json",
-        "x-api-key": _get_api_key(),
+        "x-api-key": NEURONPEDIA_API_KEY
     }
+    print(headers)
     payload = {
         "modelId": modelId,
         "slug": slug,
@@ -160,12 +155,13 @@ def save_subgraph(
     return resp.status_code, resp.text
 
 
-if __name__ == "__main__":
+# if __name__ == "__main__":
+    # print(_get_api_key())
     # Example: get feature
-    status, data = get_feature("gemma-2-2b", "1-clt-hp", 89326)
-    print(f"Status: {status}")
-    dict_data = json.loads(data)
-    print(dict_data['explanations'])
+    # status, data = get_feature("gemma-2-2b", "1-clt-hp", 89326)
+    # print(f"Status: {status}")
+    # dict_data = json.loads(data)
+    # print(dict_data['explanations'])
     # print(dict_data['vector'])
     # print(dict_data['neuron_alignment_indices'])
     # Example: generate auto-interpretation
@@ -197,19 +193,26 @@ if __name__ == "__main__":
     # print(_get_api_key())
     # status, data = save_subgraph(
     #     modelId="gemma-2-2b",
-    #     slug="howmanylegsdoesa",
+    #     slug="my doggo graph",
     #     displayName="test save subgraph",
-    #     pinnedIds=[
+    #     pinnedIds = [
     #         "2_15681_2",
     #         "E_2_0",
     #         "4_14735_2",
     #         "E_5929_2",
     #         "19_9180_3",
-    #         "27_6784_5"],
+    #         "27_6784_5"
+    #     ],
     #     supernodes=[
+    #         [
+    #         "supernode",
+    #         "4_14735_2",
+    #         "19_9180_3"
+    #         ]
     #     ],
     #     pruningThreshold=0.8,
     #     densityThreshold=0.99,
+        
     # )
     # print(f"Status: {status}")
     # print(data)

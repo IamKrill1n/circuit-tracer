@@ -14,7 +14,7 @@ def normalize_text(text):
     text = re.sub(r'[^a-z0-9\s]', '', text)
     return text
 
-def heuristic_classify(node_id: str, clerp, top_tokens, top_next_tokens, top_logits, act_density):
+def heuristic_classify(clerp, top_tokens, top_next_tokens, top_logits):
     """Classify a single feature to 3 types: input, abstract, output
     Input features represent tokens or other low-level properties of the input, usually act as detectors
     Output features promote certain next tokens when activated eg say something
@@ -79,31 +79,36 @@ def heuristic_classify(node_id: str, clerp, top_tokens, top_next_tokens, top_log
 
 def classify_features(
     node_ids: List[str],
-    modelId: str,
-    source_set: str
+    attr: Dict[str, Any],
+    metadata: Dict[str, Any]
 ):
     """Classify features into different types
     Args:
         node_ids: List of node IDs to classify
-        modelId: Model identifier (e.g., "gemma-2-2b")
-        attr: Additional attributes
+        attr: Dictionary of node attributes
+        metadata: Dictionary of graph metadata
     """
 
     feature_type = {}
-
+    modelId = metadata.get("scan", "")
+    source_set = metadata['info'].get("neuronpedia_source_set", "")
     # Get info for each node and classify
     for node in node_ids:
+        if attr[node].get("feature_type") == 'embedding':
+            feature_type[node] = "embedding"
+            continue
+        elif attr[node].get("feature_type") == 'logit':
+            feature_type[node] = "logit"
+            continue
+
         # node_ids are in the format {layer}_{node_id}_{ctx_id}
         layer, index = node.split("_")[:2]
         index = int(index)
-        if modelId == "gemma-2-2b":
-            layer = layer + "-" + source_set
-        else:
-            raise ValueError(f"Unsupported modelId: {modelId}")
-        
-        status, data = get_feature(modelId = modelId, layer=layer, index=index)
+        layer = layer + "-" + source_set
+        # print(layer)
+        status, data = get_feature(modelId=modelId, layer=layer, index=index)
         if status != 200:
-            print(f"Failed to get feature for node {node}: {data}")
+            print(f"Failed node={node} modelId={modelId} layer={layer} status={status} body={data[:200]}")
             continue
 
         json_data = json.loads(data)
@@ -111,13 +116,14 @@ def classify_features(
         act_density = json_data.get("frac_nonzero", 0)
         # remove too frequently activated features
         if act_density > 0.1:
+            feature_type[node] = "trash"
             continue
         top_activations = json_data.get("activations")[:10]
         top_tokens = [prompt['tokens'][prompt['maxValueTokenIndex']] for prompt in top_activations]
         top_next_tokens = [prompt['tokens'][prompt['maxValueTokenIndex'] + 1] for prompt in top_activations]
         top_logits = json_data.get("pos_str", [])
 
-        feature_type[node] = heuristic_classify(node, clerp, top_tokens, top_next_tokens, top_logits, act_density)
+        feature_type[node] = heuristic_classify(clerp, top_tokens, top_next_tokens, top_logits)
 
         # print("Clerp: ", clerp)
         # print("Top tokens: ", top_tokens)
@@ -129,11 +135,11 @@ def classify_features(
     
 
 
-if __name__ == "__main__":
-    # print(normalize_text("_Dallas"))
-    node_ids = ["25_9974_1"]
-    modelId = "gemma-2-2b"
-    # source_set = "clt-hp"
-    source_set = "gemmascope-transcoder-16k"
-    feature_types = classify_features(node_ids, modelId, source_set)
-    print(feature_types)
+# if __name__ == "__main__":
+#     # print(normalize_text("_Dallas"))
+#     node_ids = ["25_9974_1"]
+#     modelId = "gemma-2-2b"
+#     source_set = "clt-hp"
+#     # source_set = "gemmascope-transcoder-16k"
+#     feature_types = classify_features(node_ids, attr={"25_9974_1": {"feature_type": "cross layer transcoder"}}, metadata={"scan": modelId, "neuronpedia_source_set": source_set})
+#     print(feature_types)

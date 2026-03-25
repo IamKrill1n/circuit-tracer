@@ -4,7 +4,8 @@ import json
 from circuit_tracer.subgraph.prune import prune_graph_pipeline
 from circuit_tracer.subgraph.api import save_subgraph
 from circuit_tracer.subgraph.utils import get_clerp
-
+# from dotenv import load_dotenv
+# load_dotenv()
 
 def generate_subgraphs(
     graph_path: str,
@@ -15,7 +16,6 @@ def generate_subgraphs(
     node_relevance_threshold: float = 0.8,
     edge_relevance_threshold: float = 0.98,
     keep_all_tokens_and_logits: bool = False,
-    include_clerp: bool = False,
     save: bool = False,
     model_id: str = "",
     slug: str = "",
@@ -33,7 +33,6 @@ def generate_subgraphs(
         node_relevance_threshold:    cumulative relevance fraction to keep
         edge_relevance_threshold:    cumulative edge-relevance fraction to keep
         keep_all_tokens_and_logits:  keep all embeddings/logits or only target logit
-        include_clerp:               fetch clerp descriptions from API
         save:                        upload subgraph to Neuronpedia
         model_id:                    model identifier for save (e.g. "gemma-2-2b")
         slug:                        parent graph slug for save
@@ -53,11 +52,7 @@ def generate_subgraphs(
 
     print(f"Subgraph has {len(kept_ids)} nodes, {int((pruned_adj != 0).sum())} edges")
 
-    # 2. Optionally fetch clerp descriptions
-    if include_clerp:
-        get_clerp(metadata, attr)
-
-    # 3. Optionally save to Neuronpedia
+    # 2. Optionally save to Neuronpedia
     if save:
         _model_id = model_id or metadata.get("model_id", "")
         _slug = slug or metadata.get("slug", "")
@@ -84,19 +79,18 @@ def generate_subgraphs(
 if __name__ == "__main__":
     token_weights = [0.00198786, 0.03153391, 0.00083086, 0.01473883, 0.22338926, 0.00649094,
   0.00222269, 0.01996207, 0.0052309, 0.67869559, 0.01491708]
-
+    
     kept_ids, pruned_adj, attr, metadata = generate_subgraphs(
         graph_path="demos/temp_graph_files/austin.json",
         logit_weights="target",
         token_weights=token_weights,
         node_influence_threshold=0.6,
-        edge_influence_threshold=0.7,
-        node_relevance_threshold=0.6,
-        edge_relevance_threshold=0.7,
+        edge_influence_threshold=0.95,
+        node_relevance_threshold=0.8,
+        edge_relevance_threshold=0.9,
         keep_all_tokens_and_logits=False,
         model_id="gemma-2-2b",
         display_name="Austin Subgraph",
-        include_clerp=False,
         save=True,
     )
 

@@ -208,30 +208,7 @@ if __name__ == "__main__":
     # for node in list(G.nodes):
     #     clerp = attr.get(node, {}).get("clerp", "")
     #     print(f"  {node}: {clerp[:60]}")
-
     
-    # top_k = 10
-    # for node in G.nodes():
-    #     print(node, attr[node].get('clerp', ''))
-    
-
-    # Russian
-    # attr['18_868_11']['clerp'] = 'say a country'
-    # attr['20_15360_11']['clerp'] = 'say a country'
-    # attr['17_14546_11']['clerp'] = 'abstract: country'
-    # attr['18_8149_11']['clerp'] = 'abstract: area and size'
-    # attr['15_16322_11']['clerp'] = 'abstract: sequencing/comparison'
-    # attr['19_11557_11']['clerp'] = 'say Russian'
-
-    # Dallas
-
-    # distance_graph = np.random.rand(G.number_of_nodes(), G.number_of_nodes())
-    # distance_graph = build_distance_graph_from_clerp(G, attr, progress=True, normalize=True)
-    # groups, merged_G = greedy_grouping(G, distance_graph=distance_graph, attr=attr, num_groups=15)
-    # model = ReplacementModel.from_pretrained("google/gemma-2-2b", 'gemma', dtype=torch.bfloat16)
-    # visualize_intervention_graph(G, prompt, attr, model = model)
-    # print(f"Formed {len(groups)} clusters.")
-
     # visualize_clusters(
     #     G,
     #     draw=True,
