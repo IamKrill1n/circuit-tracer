@@ -56,11 +56,11 @@ def heuristic_classify(clerp, top_tokens, top_next_tokens, top_logits):
     # Count the number of same tokens in top next tokens
     next_token_counts = {}
     for token in top_next_tokens:
-        if token not in next_token_counts:
+        if token not in next_token_counts and token != "":
             next_token_counts[token] = 0
         next_token_counts[token] += 1
     most_common_next_token, count = max(next_token_counts.items(), key=lambda x: x[1])
-    if count > 0.5 * len(top_next_tokens):
+    if count > 0.7 * len(top_next_tokens):
         return "output"
 
     # Count the number of same logits in top logits
@@ -118,9 +118,10 @@ def classify_features(
         if act_density > 0.1:
             feature_type[node] = "trash"
             continue
-        top_activations = json_data.get("activations")[:10]
+        top_activations = json_data.get("activations", [])[:10]
         top_tokens = [prompt['tokens'][prompt['maxValueTokenIndex']] for prompt in top_activations]
-        top_next_tokens = [prompt['tokens'][prompt['maxValueTokenIndex'] + 1] for prompt in top_activations]
+        top_next_tokens = [prompt['tokens'][prompt['maxValueTokenIndex'] + 1] if prompt['maxValueTokenIndex'] + 1 < len(prompt['tokens']) else "" for prompt in top_activations]
+        
         top_logits = json_data.get("pos_str", [])
 
         feature_type[node] = heuristic_classify(clerp, top_tokens, top_next_tokens, top_logits)
