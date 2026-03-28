@@ -1,71 +1,64 @@
 import os
 import json
 import re
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Sequence, Union
 
 from google import genai
 from google.genai import types
+from circuit_tracer.subgraph.config import GENAI_API_KEY
 
-from dotenv import load_dotenv
-
-load_dotenv()
+# - Input: features that activate on a single narrow concept
+# - Abstract: features that activate on higher level concept
+# - Output: features that promote certain tokens
+# - Trash: syntactic features or not relevant features
 
 SYSTEM_PROMPT = """You are a meticulous AI researcher. You are experimenting on a language model, which you find several features activating inside the model for a given prompt. Your job is to group similar activating features together.
 
 You are given a list of features activating on a prompt. These features are 
-classify into these types:
-- Input: features that activate on a single narrow concept
-- Abstract: features that activate on higher level concept
-- Output: features that promote certain tokens
-- Trash: syntactic features or not relevant features
+classify into four types: Detector, Abstractor, Concluder
 
-Cluster these features into groups with similar meaning within the context of the prompt. Do not group features of different types together. Label each group a short name in the format {Features' type}: {name}.
+They will be written in the format {node_id}: {label} ({type}), where node_id is a unique identifier for the feature, label is a short description of the feature, and type is one of the types above.
+
+Cluster these features into groups with similar meaning within the context of the prompt. Do not group features of different types together.
+Label each group with a descriptive name that captures the common theme of the features in that group.
+For examples, if you have features that all activate on concepts related to cities, you might group them together and label the group "city-related concepts". If you have features that seem to promote certain output tokens, you might label them "say something".
 
 Write the result as a JSON list of objects, where each object has:
-- "label": the group label string in format "{type}: {name}"
+- "label": the group label string in format "{type}: {label}"
 - "node_ids": list of node_id strings belonging to this group
 
 Return ONLY the JSON list, no other text."""
 
 
-def _get_gemini_key() -> str:
-    return str(os.getenv("GEMINI_API_KEY", ""))
+def _get_gemini_api_key() -> str:
+    # runtime lookup (works for both names)
+    return GENAI_API_KEY
+
+def _normalize_prompts(prompts: Union[str, Sequence[str], None]) -> str:
+    if prompts is None:
+        return ""
+    if isinstance(prompts, str):
+        return prompts.strip()
+    cleaned = [p.strip() for p in prompts if isinstance(p, str) and p.strip()]
+    return "\n".join(cleaned)
 
 
 def _format_features_for_prompt(
     node_ids: List[str],
-    attr: Dict[str, Any],
-    prompt: str = "",
+    labels: Dict[str, Any],
+    prompts: Union[str, Sequence[str], None] = None,
 ) -> str:
     """Format feature list into a readable string for the LLM."""
-    lines = []
-    if prompt:
-        lines.append(f"Prompt: {prompt!r}\n")
+    lines: List[str] = []
+    prompt_text = _normalize_prompts(prompts)
+    if prompt_text:
+        lines.append(f"Prompt:\n{prompt_text}\n")
     lines.append("Features:")
     lines.append("-" * 60)
-
     for nid in node_ids:
-        a = attr.get(nid, {})
-        ftype = a.get("feature_type", "unknown")
-
-        # Skip embeddings and logits — they are not features to cluster
-        if ftype in ("embedding", "logit"):
+        if nid not in labels:
             continue
-
-        clerp = a.get("clerp", "")
-        layer = a.get("layer", "?")
-        ctx_idx = a.get("ctx_idx", "?")
-        activation = a.get("activation", 0.0)
-
-        line = f"  node_id: {nid}"
-        line += f"  | layer: {layer}"
-        line += f"  | pos: {ctx_idx}"
-        if activation:
-            line += f"  | act: {activation:.3f}"
-        if clerp:
-            line += f"  | description: {clerp}"
-        lines.append(line)
-
+        lines.append(f"{nid}: {labels[nid]}")
     return "\n".join(lines)
 
 
@@ -89,36 +82,40 @@ def _parse_response(response_text: str) -> List[Dict[str, Any]]:
     except json.JSONDecodeError as e:
         raise ValueError(f"Failed to parse Gemini response as JSON: {e}\nResponse: {response_text}")
 
-
 def group_features(
     node_ids: List[str],
-    attr: Dict[str, Any],
-    prompt: str = "",
+    labels: Dict[str, Any],
+    prompts: Union[str, Sequence[str], None] = None,
     model_name: str = "gemini-2.5-flash",
     temperature: float = 0.2,
 ) -> List[Dict[str, Any]]:
     """
-    Use Gemini to cluster feature nodes into semantic groups.
+    Group features into semantic clusters.
 
     Args:
-        node_ids:    list of node_id strings (features to cluster)
-        attr:        per-node attribute dicts (must contain clerp for meaningful results)
-        prompt:      the original model prompt (for context)
-        model_name:  Gemini model to use
-        temperature: sampling temperature
+        node_ids: list of feature node ids
+        labels: mapping node_id -> "label (type)"
+        prompts: prompt string or list of prompt strings for context
+        model_name: Gemini model name
+        temperature: generation temperature
 
     Returns:
-        List of dicts, each with:
-          - "label": str, e.g. "Input: dog-related concepts"
-          - "node_ids": List[str], node IDs in this group
+        List[{"label": str, "node_ids": List[str]}]
     """
-    api_key = _get_gemini_key()
+    if not node_ids:
+        return []
+    if not labels:
+        raise ValueError("labels cannot be empty")
+    missing = [nid for nid in node_ids if nid not in labels]
+    if missing:
+        raise ValueError(f"labels missing node_ids: {missing[:5]}")
+
+    api_key = _get_gemini_api_key()
     if not api_key:
-        raise ValueError("GEMINI_API_KEY not set in environment")
+        raise ValueError("Set GEMINI_API_KEY (or GENAI_API_KEY) in environment")
 
     client = genai.Client(api_key=api_key)
-
-    user_message = _format_features_for_prompt(node_ids, attr, prompt)
+    user_message = _format_features_for_prompt(node_ids, labels, prompts)
 
     response = client.models.generate_content(
         model=model_name,
@@ -128,9 +125,7 @@ def group_features(
         ),
         contents=user_message,
     )
-
-    clusters = _parse_response(response.text)
-    return clusters
+    return _parse_response(response.text)
 
 
 def clusters_to_supernodes(clusters: List[Dict[str, Any]]) -> List[List[str]]:
@@ -153,33 +148,22 @@ def clusters_to_supernodes(clusters: List[Dict[str, Any]]) -> List[List[str]]:
     return supernodes
 
 
+def grouping_pipeline(
+    node_ids: List[str],
+    labels: Dict[str, Any],
+    prompts: Union[str, Sequence[str], None] = None,
+) -> List[Dict[str, Any]]:
+    """Pipeline entrypoint: input node_ids + labels + prompts -> clusters."""
+    return group_features(node_ids=node_ids, labels=labels, prompts=prompts)
+
+
 if __name__ == "__main__":
-    from circuit_tracer.subgraph.utils import get_data_from_json, get_clerp
-
-    json_path = "demos/graph_files/dallas-austin_gemma3.json"
-    _, node_ids, attr, metadata = get_data_from_json(json_path)
-
-    # Fetch clerp descriptions for meaningful grouping
-    get_clerp(metadata, attr)
-
-    prompt = metadata.get("prompt", "")
-
-    # Filter to feature nodes only
-    feature_ids = [
-        nid for nid in node_ids
-        if attr.get(nid, {}).get("feature_type", "")
-        not in ("embedding", "logit", "mlp reconstruction error", "")
-    ]
-
-    print(f"Clustering {len(feature_ids)} features...")
-    clusters = group_features(feature_ids, attr, prompt=prompt)
-
-    for c in clusters:
-        print(f"\n{c['label']}:")
-        for nid in c["node_ids"]:
-            clerp = attr.get(nid, {}).get("clerp", "")
-            print(f"  {nid}: {clerp[:70]}")
-
-    # Convert to supernodes format for save_subgraph
-    supernodes = clusters_to_supernodes(clusters)
-    print(f"\n{len(supernodes)} supernodes ready for save_subgraph")
+    node_ids = ["16_89970_9", "20_44686_9", "20_44686_10", "22_11998_10"]
+    labels = {
+        "16_89970_9": "Texas (detector)",
+        "20_44686_9": "Texas (abstractor)",
+        "20_44686_10": "capital (abstractor)",
+        "22_11998_10": "say Austin (concluder)",
+    }
+    prompts = ["What is the capital of Texas?"]
+    print(grouping_pipeline(node_ids, labels, prompts))
