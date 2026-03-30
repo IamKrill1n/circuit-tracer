@@ -1,171 +1,216 @@
-import os
 import json
 import re
-from typing import Any, Dict, List, Sequence, Tuple, Union
+from typing import Any, Dict, List
 
 from google import genai
 from google.genai import types
+
 from circuit_tracer.subgraph.config import get_env
 
-# - Input: features that activate on a single narrow concept
-# - Abstract: features that activate on higher level concept
-# - Output: features that promote certain tokens
-# - Trash: syntactic features or not relevant features
+SYSTEM_PROMPT = """
+You are a meticulous AI researcher.
 
-SYSTEM_PROMPT = """You are a meticulous AI researcher. You are experimenting on a language model, which you find several features activating inside the model for a given prompt. Your job is to group similar activating features together.
+Task:
+Cluster activated features by semantic similarity, using the given prompt as context.
 
-You are given a list of features activating on a prompt. These features are 
-classify into four types: Input feature, Abstract feature, Output feature
+Rules:
+1) Never mix different feature types in the same cluster.
+2) Allowed types: "Input", "Abstract", "Output".
+3) Use feature meaning from label + prompt context.
+4) Keep clusters coherent and specific.
+5) Every feature_id must appear in exactly one cluster.
+6) Output must be valid JSON only (no markdown, no extra text).
 
-They will be written in the format {node_id}-{label}-{type}, where node_id is a unique identifier for the feature, label is a short description of the feature, and type is one of the types above.
+Input format:
+{
+  "prompt": "<string>",
+  "features": [
+    {"id": "<string>", "label": "<string>", "type": "Input|Abstract|Output"}
+  ],
+  "few_shots": [
+    {
+      "input": {
+        "prompt": "<string>",
+        "features": [...]
+      },
+      "output": [
+        {"label": "<short cluster label>", "type": "<type>", "node_ids": ["id1", "id2"]}
+      ]
+    }
+  ]
+}
 
-Cluster these features into groups with similar meaning within the context of the prompt. Do not group features of different types together.
-Label each group with a short description, based on the labels of the features in that group.
+Output format:
+[
+  {
+    "label": "<short cluster label>",
+    "type": "Input|Abstract|Output",
+    "node_ids": ["<feature_id>", "..."]
+  }
+]
+"""
 
-
-Write the result as a JSON list of objects, where each object has:
-- "label": the group label in string format
-- "type": the feature type Input feature, Abstract feature, Output feature
-- "node_ids": list of node_id strings belonging to this group
-
-Return ONLY the JSON list, no other text."""
+DEFAULT_FEW_SHOTS: List[Dict[str, Any]] = [
+    {
+        "input": {
+            "prompt": "Fact: The capital of the state containing Dallas is",
+            "features": [
+                {"id": "0", "label": "Dallas", "type": "Input"},
+                {"id": "1", "label": "Texas legal matters", "type": "Abstract"},
+                {"id": "2", "label": "Texas legal contexts", "type": "Abstract"},
+                {"id": "3", "label": "Texas", "type": "Abstract"},
+                {"id": "4", "label": "Texas related", "type": "Abstract"},
+                {"id": "5", "label": "capital", "type": "Input"},
+                {"id": "6", "label": "capital", "type": "Abstract"},
+                {"id": "7", "label": "say Austin", "type": "Output"},
+            ],
+        },
+        "output": [
+            {"label": "Dallas", "type": "Input", "node_ids": ["0"]},
+            {"label": "capital", "type": "Input", "node_ids": ["5"]},
+            {"label": "capital", "type": "Abstract", "node_ids": ["6"]},
+            {"label": "Texas", "type": "Abstract", "node_ids": ["3", "4"]},
+            {"label": "Texas legal contexts", "type": "Abstract", "node_ids": ["1", "2"]},
+            {"label": "say Austin", "type": "Output", "node_ids": ["7"]},
+        ],
+    }
+]
 
 
 def _get_gemini_api_key() -> str:
-    # Runtime lookup (not cached at import time)
     return (get_env("GEMINI_API_KEY") or get_env("GENAI_API_KEY") or "").strip()
 
 
-# def _normalize_prompts(prompts: Union[str, Sequence[str], None]) -> str:
-#     if prompts is None:
-#         return ""
-#     if isinstance(prompts, str):
-#         return prompts.strip()
-#     cleaned = [p.strip() for p in prompts if isinstance(p, str) and p.strip()]
-#     return "\n".join(cleaned)
+def _normalize_type(ftype: str) -> str:
+    t = (ftype or "").strip().lower()
+    mapping = {
+        "input": "Input",
+        "abstract": "Abstract",
+        "output": "Output",
+    }
+    if t not in mapping:
+        raise ValueError(f"Invalid feature type: {ftype}")
+    return mapping[t]
 
 
-def _format_features_for_prompt(
+def _build_payload(
     node_ids: List[str],
-    labels: List[str],
-    feature_types: List[str],
+    labels: Dict[str, str],
+    feature_types: Dict[str, str],
     prompt: str,
-) -> str:
-    """Format feature list into a readable string for the LLM."""
-    lines: List[str] = []
-    lines.append(f"Prompt: {prompt}")
-    lines.append("Features:")
-    for i, nid in enumerate(node_ids):
-        lines.append(f"{nid}-{labels[i]}-{feature_types[i]}")
-    return "\n".join(lines)
+    few_shots: List[Dict[str, Any]],
+) -> tuple[Dict[str, Any], Dict[str, str]]:
+    num_to_node: Dict[str, str] = {}
+    features: List[Dict[str, str]] = []
+
+    for i, node_id in enumerate(node_ids):
+        if node_id not in labels:
+            raise ValueError(f"Missing label for node_id={node_id}")
+        if node_id not in feature_types:
+            raise ValueError(f"Missing feature_type for node_id={node_id}")
+
+        numeric_id = str(i)
+        num_to_node[numeric_id] = node_id
+        features.append(
+            {
+                "id": numeric_id,
+                "label": labels[node_id],  # supports whitespace
+                "type": _normalize_type(feature_types[node_id]),
+            }
+        )
+
+    payload = {
+        "prompt": prompt,
+        "features": features,
+        "few_shots": few_shots,
+    }
+    return payload, num_to_node
 
 
 def _parse_response(response_text: str) -> List[Dict[str, Any]]:
-    """Parse the JSON list from Gemini's response."""
-    # Try to extract JSON from markdown code block
     match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", response_text, re.DOTALL)
     if match:
         response_text = match.group(1).strip()
 
-    # Try to find a JSON array
     match = re.search(r"\[.*\]", response_text, re.DOTALL)
     if match:
         response_text = match.group(0)
 
-    try:
-        clusters = json.loads(response_text)
-        if not isinstance(clusters, list):
-            raise ValueError("Expected a JSON list")
-        return clusters
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Failed to parse Gemini response as JSON: {e}\nResponse: {response_text}")
+    data = json.loads(response_text)
+    if not isinstance(data, list):
+        raise ValueError("Expected JSON list response")
+    return data
 
-def group_features(
-    node_ids: List[str],
-    labels: List[str],
-    feature_types: List[str],
-    prompt: str,
-    model_name: str = "gemini-2.5-flash",
-    temperature: float = 1,
+
+def _cluster_with_llm(
+    payload: Dict[str, Any],
+    model_name: str,
+    temperature: float,
 ) -> List[Dict[str, Any]]:
-    """
-    Group features into semantic clusters.
-
-    Args:
-        node_ids: list of feature node ids
-        labels: mapping node_id -> "label (type)"
-        prompts: prompt string or list of prompt strings for context
-        model_name: Gemini model name
-        temperature: generation temperature
-
-    Returns:
-        List[{"label": str, "node_ids": List[str]}]
-    """
-
     api_key = _get_gemini_api_key()
     if not api_key:
         raise ValueError("Set GEMINI_API_KEY (or GENAI_API_KEY) in environment")
 
     client = genai.Client(api_key=api_key)
-    user_message = _format_features_for_prompt(node_ids, labels, feature_types, prompt)
+    user_message = json.dumps(payload, ensure_ascii=False, indent=2)
 
-    response = client.models.generate_content(
-        model=model_name,
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-            temperature=temperature,
-        ),
-        contents=user_message,
-    )
+    if model_name.startswith("gemini"):
+        response = client.models.generate_content(
+            model=model_name,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                temperature=temperature,
+            ),
+            contents=user_message,
+        )
+    else:
+        response = client.models.generate_content(
+            model=model_name,
+            contents=SYSTEM_PROMPT + "\n\n" + user_message,
+            config=types.GenerateContentConfig(temperature=temperature),
+        )
+
     return _parse_response(response.text)
-
-
-def clusters_to_supernodes(clusters: List[Dict[str, Any]]) -> List[List[str]]:
-    """
-    Convert cluster dicts from group_features into the supernode format
-    expected by save_subgraph: [[label, node_id1, node_id2, ...], ...]
-
-    Args:
-        clusters: output of group_features
-
-    Returns:
-        List of supernodes, each is [label, node_id, node_id, ...]
-    """
-    supernodes = []
-    for cluster in clusters:
-        label = cluster.get("label", "unknown")
-        nids = cluster.get("node_ids", [])
-        if len(nids) >= 2:  # only create supernodes with 2+ members
-            supernodes.append([label] + nids)
-    return supernodes
 
 
 def grouping_pipeline(
     node_ids: List[str],
-    labels: List[str],
-    feature_types: List[str],
+    labels: Dict[str, str],
+    feature_types: Dict[str, str],
     prompt: str,
-) -> List[Dict[str, Any]]:
-    """Pipeline entrypoint: input node_ids + labels + prompts -> clusters."""
-    return group_features(node_ids=node_ids, labels=labels, feature_types=feature_types, prompt=prompt)
+    model_name: str = "gemini-2.5-flash",
+    temperature: float = 0.2,
+    few_shots: List[Dict[str, Any]] | None = None,
+) -> List[List[str]]:
+    """
+    Output:
+      supernodes = [[group_label, node_id1, node_id2, ...], ...]
+    """
+    if not node_ids:
+        return []
 
+    payload, num_to_node = _build_payload(
+        node_ids=node_ids,
+        labels=labels,
+        feature_types=feature_types,
+        prompt=prompt,
+        few_shots=few_shots if few_shots is not None else DEFAULT_FEW_SHOTS,
+    )
 
-if __name__ == "__main__":
-    # print(bool(_get_gemini_api_key()))
-    node_ids = ["16_89970_9", "20_44686_9", "20_44686_10", "20_20300_10", "22_11998_10"]
-    labels = [
-        "Texas",
-        "Texas",
-        "capital",
-        "Texas related",
-        "say Austin",
-    ]
-    feature_types = [
-        "input",
-        "abstract",
-        "abstract",
-        "abstract",
-        "output",
-    ]
-    prompt = "Fact: The capital of the state containing Texas is"
-    print(grouping_pipeline(node_ids, labels, feature_types, prompt))
+    clusters = _cluster_with_llm(payload, model_name=model_name, temperature=temperature)
+
+    supernodes: List[List[str]] = []
+    for c in clusters:
+        group_label = str(c.get("label", "unknown"))
+        cluster_ids = c.get("node_ids", [])
+        if not isinstance(cluster_ids, list):
+            continue
+
+        mapped_ids = [num_to_node[str(x)] for x in cluster_ids if str(x) in num_to_node]
+        if len(mapped_ids) >= 2:
+            supernodes.append([group_label] + mapped_ids)
+
+    return supernodes
+
+# if __name__ == '__main__':
+#     pass
