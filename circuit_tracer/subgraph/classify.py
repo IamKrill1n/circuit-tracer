@@ -1,4 +1,5 @@
 from circuit_tracer.subgraph.api import get_feature
+from circuit_tracer.subgraph.config import get_env
 from typing import List, Dict, Any
 import json
 import re
@@ -133,7 +134,173 @@ def classify_features(
 
     return feature_type
 
-    
+
+# ---------------------------------------------------------------------------
+# LLM-based classification using OpenAI
+# ---------------------------------------------------------------------------
+
+_CLASSIFY_SYSTEM_PROMPT = """\
+You are an expert AI interpretability researcher classifying features from a \
+language model's attribution graph.
+
+## Task
+Given a list of features, classify each one into exactly one category, or mark \
+it as "trash" if it should be discarded.
+
+## Categories
+- **Input**: Detects specific input tokens, character patterns, or low-level \
+syntactic properties. Acts as a surface-level detector (e.g. "the word Dallas", \
+"uppercase letter", "token at position 3").
+- **Abstract**: Represents a high-level semantic concept, topic, or abstract \
+relationship that helps the model reason (e.g. "Texas geography", \
+"capital cities", "US states").
+- **Output**: Promotes or steers specific next tokens when activated \
+(e.g. "say Austin", "predict city name").
+- **trash**: Discard this feature. Use for:
+  - Pure syntactic/positional artifacts unrelated to meaning
+  - Features with no clear semantic content
+  - Irrelevant or noise features that do not contribute to the reasoning chain
+
+## Input format
+```json
+{
+  "features": [
+    {"id": "<node_id>", "label": "<feature description>", "hint": "<raw feature type>"}
+  ]
+}
+```
+
+## Output format (strict JSON only — no markdown, no explanation)
+```json
+{"<node_id>": "Input" | "Abstract" | "Output" | "trash", ...}
+```
+
+Rules:
+1. Every feature id must appear in the output.
+2. Output must be a single valid JSON object mapping id -> category.
+3. Be conservative with "trash" — only discard clearly syntactic or irrelevant features.
+"""
+
+_VALID_CLASSES = {"Input", "Abstract", "Output", "trash"}
+
+
+def _get_openai_api_key() -> str:
+    return (get_env("OPENAI_API_KEY") or "").strip()
+
+
+def classify_features_with_llm(
+    node_ids: List[str],
+    labels: Dict[str, str],
+    feature_types: Dict[str, str],
+    model: str = "gpt-4o",
+    temperature: float = 0.1,
+) -> Dict[str, str]:
+    """Classify features into Input / Abstract / Output using an OpenAI LLM.
+
+    This replaces or supplements the heuristic ``classify_features`` step.
+    The ``frac_nonzero < 10%`` density filter should already have been applied
+    upstream (inside ``classify_features``); the LLM additionally discards
+    syntactic or irrelevant features.
+
+    Args:
+        node_ids: Ordered list of node IDs to classify (only CLT / feature
+            nodes; embedding and logit nodes should be excluded).
+        labels: Mapping from node_id to its human-readable clerp description.
+        feature_types: Mapping from node_id to its raw feature-type hint
+            (e.g. "cross layer transcoder", "input", "abstract", …).  Used as
+            a soft hint for the LLM.
+        model: OpenAI model name (default "gpt-4o").
+        temperature: Sampling temperature (low values give more deterministic
+            results; default 0.1).
+
+    Returns:
+        Dict mapping node_id -> "Input" | "Abstract" | "Output".
+        Nodes classified as "trash" are **omitted** from the result.
+
+    Raises:
+        ValueError: If the OpenAI API key is not set or the response cannot be
+            parsed.
+    """
+    try:
+        from openai import OpenAI  # lazy import to keep the module loadable
+    except ImportError as exc:
+        raise ImportError(
+            "openai package is required for classify_features_with_llm. "
+            "Install it with: pip install openai"
+        ) from exc
+
+    api_key = _get_openai_api_key()
+    if not api_key:
+        raise ValueError(
+            "OPENAI_API_KEY is not set. Add it to your .env file or environment."
+        )
+
+    if not node_ids:
+        return {}
+
+    # Build the feature list for the LLM
+    features = [
+        {
+            "id": nid,
+            "label": labels.get(nid, ""),
+            "hint": feature_types.get(nid, ""),
+        }
+        for nid in node_ids
+    ]
+    user_message = json.dumps({"features": features}, ensure_ascii=False, indent=2)
+
+    client = OpenAI(api_key=api_key)
+    response = client.chat.completions.create(
+        model=model,
+        temperature=temperature,
+        messages=[
+            {"role": "system", "content": _CLASSIFY_SYSTEM_PROMPT},
+            {"role": "user", "content": user_message},
+        ],
+    )
+
+    raw = response.choices[0].message.content or ""
+    result = _parse_classify_response(raw, node_ids)
+    return result
+
+
+def _parse_classify_response(
+    response_text: str,
+    node_ids: List[str],
+) -> Dict[str, str]:
+    """Parse the LLM JSON response and return only the valid, non-trash entries."""
+    # Strip optional markdown fences
+    match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", response_text, re.DOTALL)
+    if match:
+        response_text = match.group(1).strip()
+
+    # Extract the first JSON object
+    match = re.search(r"\{.*\}", response_text, re.DOTALL)
+    if match:
+        response_text = match.group(0)
+
+    data = json.loads(response_text)
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"Expected a JSON object from the LLM, got: {type(data).__name__}"
+        )
+
+    node_id_set = set(node_ids)
+    out: Dict[str, str] = {}
+    for node_id, label in data.items():
+        if node_id not in node_id_set:
+            continue
+        label = str(label).strip()
+        if label not in _VALID_CLASSES:
+            # Try case-insensitive normalisation
+            normalised = label.capitalize()
+            if normalised not in _VALID_CLASSES:
+                continue
+            label = normalised
+        if label == "trash":
+            continue
+        out[node_id] = label
+    return out
 
 
 # if __name__ == "__main__":
