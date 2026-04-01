@@ -307,20 +307,19 @@ def classify_features_with_llm(
     if not features:
         return result
 
-    user_message = json.dumps({"features": features}, ensure_ascii=False, indent=2)
-
     client = OpenAI(api_key=api_key)
-    response = client.chat.completions.create(
-        model=model,
-        temperature=temperature,
-        messages=[
-            {"role": "system", "content": _CLASSIFY_SYSTEM_PROMPT},
-            {"role": "user", "content": user_message},
-        ],
-    )
-
-    raw = response.choices[0].message.content or ""
-    result.update(_parse_classify_response(raw, llm_ids))
+    for feature, nid in zip(features, llm_ids, strict=True):
+        user_message = json.dumps({"features": [feature]}, ensure_ascii=False, indent=2)
+        response = client.chat.completions.create(
+            model=model,
+            temperature=temperature,
+            messages=[
+                {"role": "system", "content": _CLASSIFY_SYSTEM_PROMPT},
+                {"role": "user", "content": user_message},
+            ],
+        )
+        raw = response.choices[0].message.content or ""
+        result.update(_parse_classify_response(raw, [nid]))
     return result
 
 
