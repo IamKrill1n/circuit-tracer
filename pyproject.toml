@@ -16,6 +16,7 @@ dependencies = [
     "seaborn>=0.13.2",
     "tokenizers>=0.21.0",
     "torch>=2.0.0",
+    "openai>=1.0.0",
     "tqdm>=4.60.0",
     "transformer-lens>=2.16.0",
     "transformers>=4.56.0,<=4.57.3",
