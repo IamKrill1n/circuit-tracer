@@ -62,12 +62,6 @@ for i, node_id in enumerate(kept_ids):
 
 # print(attr['1_89326_9'])
 
-# Step 1: heuristic classify via Neuronpedia (applies frac_nonzero < 10% filter)
-# feature_types_heuristic = classify_features(kept_ids, attr, metadata)
-
-# Step 2: LLM-based classify using OpenAI
-# Build labels (clerp descriptions) and raw type hints from attr
-labels = {nid: attr[nid].get("clerp", "") for nid in kept_ids}
-raw_types = {nid: attr[nid].get("feature_type", "") for nid in kept_ids}
-feature_types = classify_features_with_llm(kept_ids, labels, raw_types)
+# LLM-based classify using OpenAI
+feature_types = classify_features_with_llm(kept_ids, attr, metadata)
 print(feature_types)

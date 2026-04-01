@@ -143,29 +143,43 @@ _CLASSIFY_SYSTEM_PROMPT = """\
 You are an expert AI interpretability researcher classifying features from a \
 language model's attribution graph.
 
-## Task
-Given a list of features, classify each one into exactly one category, or mark \
-it as "trash" if it should be discarded.
+Each feature comes with:
+- **label**: short natural-language auto-interpretation (clerp)
+- **top_tokens**: input tokens that most strongly activate this feature
+- **top_next_tokens**: tokens that follow those activations in context
+- **top_logits**: output vocabulary tokens most promoted by this feature
+- **act_density**: fraction of inputs that activate this feature (already \
+pre-filtered to ≤ 10%)
+
+Use all available fields together to classify each feature.
 
 ## Categories
 - **Input**: Detects specific input tokens, character patterns, or low-level \
-syntactic properties. Acts as a surface-level detector (e.g. "the word Dallas", \
-"uppercase letter", "token at position 3").
-- **Abstract**: Represents a high-level semantic concept, topic, or abstract \
-relationship that helps the model reason (e.g. "Texas geography", \
-"capital cities", "US states").
-- **Output**: Promotes or steers specific next tokens when activated \
-(e.g. "say Austin", "predict city name").
+syntactic properties. Acts as a surface-level detector. Signal: label matches \
+top_tokens (e.g. "the word Dallas" with top_tokens all being "Dallas").
+- **Abstract**: Represents a high-level semantic concept, topic, or reasoning \
+relationship. Signal: label is conceptual and top_tokens/top_logits are diverse \
+(e.g. "Texas geography", "capital cities").
+- **Output**: Promotes or steers specific next tokens when activated. Signal: \
+label starts with "say", or top_next_tokens / top_logits are concentrated on \
+one token (e.g. "say Austin", top_logits: ["Austin", "Austin", "Austin", ...]).
 - **trash**: Discard this feature. Use for:
-  - Pure syntactic/positional artifacts unrelated to meaning
-  - Features with no clear semantic content
-  - Irrelevant or noise features that do not contribute to the reasoning chain
+  - Pure positional or syntactic artifacts with no semantic content
+  - Features with empty, generic, or meaningless descriptions
+  - Noise features that clearly do not contribute to the reasoning chain
 
 ## Input format
 ```json
 {
   "features": [
-    {"id": "<node_id>", "label": "<feature description>", "hint": "<raw feature type>"}
+    {
+      "id": "<node_id>",
+      "label": "<clerp description>",
+      "top_tokens": ["<tok1>", ...],
+      "top_next_tokens": ["<tok1>", ...],
+      "top_logits": ["<tok1>", ...],
+      "act_density": 0.032
+    }
   ]
 }
 ```
@@ -190,32 +204,28 @@ def _get_openai_api_key() -> str:
 
 def classify_features_with_llm(
     node_ids: List[str],
-    labels: Dict[str, str],
-    feature_types: Dict[str, str],
+    attr: Dict[str, Any],
+    metadata: Dict[str, Any],
     model: str = "gpt-4o",
     temperature: float = 0.1,
 ) -> Dict[str, str]:
     """Classify features into Input / Abstract / Output using an OpenAI LLM.
 
-    This replaces or supplements the heuristic ``classify_features`` step.
-    The ``frac_nonzero < 10%`` density filter should already have been applied
-    upstream (inside ``classify_features``); the LLM additionally discards
-    syntactic or irrelevant features.
+    Mirrors the same interface as ``classify_features`` so the two can be used
+    interchangeably.  Fetches Neuronpedia data for each CLT feature node
+    (same API calls as the heuristic version), applies the frac_nonzero > 10%
+    density pre-filter, then sends the richer context to the LLM.
 
     Args:
-        node_ids: Ordered list of node IDs to classify (only CLT / feature
-            nodes; embedding and logit nodes should be excluded).
-        labels: Mapping from node_id to its human-readable clerp description.
-        feature_types: Mapping from node_id to its raw feature-type hint
-            (e.g. "cross layer transcoder", "input", "abstract", …).  Used as
-            a soft hint for the LLM.
+        node_ids: Ordered list of node IDs to classify.
+        attr: Dictionary of node attributes.
+        metadata: Dictionary of graph metadata.
         model: OpenAI model name (default "gpt-4o").
-        temperature: Sampling temperature (low values give more deterministic
-            results; default 0.1).
+        temperature: Sampling temperature (default 0.1).
 
     Returns:
-        Dict mapping node_id -> "Input" | "Abstract" | "Output".
-        Nodes classified as "trash" are **omitted** from the result.
+        Dict mapping node_id -> "Input" | "Abstract" | "Output" | "embedding" |
+        "logit".  Nodes classified as "trash" are **omitted**.
 
     Raises:
         ValueError: If the OpenAI API key is not set or the response cannot be
@@ -238,15 +248,65 @@ def classify_features_with_llm(
     if not node_ids:
         return {}
 
-    # Build the feature list for the LLM
-    features = [
-        {
+    modelId = metadata.get("scan", "")
+    source_set = metadata['info'].get("neuronpedia_source_set", "")
+
+    result: Dict[str, str] = {}
+
+    # Pass through embedding / logit nodes unchanged, collect CLT nodes for LLM
+    clt_ids = []
+    for nid in node_ids:
+        ftype = attr[nid].get("feature_type", "")
+        if ftype == "embedding":
+            result[nid] = "embedding"
+        elif ftype == "logit":
+            result[nid] = "logit"
+        else:
+            clt_ids.append(nid)
+
+    if not clt_ids:
+        return result
+
+    # Fetch Neuronpedia data, apply density pre-filter, build LLM feature list
+    features = []
+    llm_ids = []
+    for nid in clt_ids:
+        layer, index = nid.split("_")[:2]
+        layer_str = layer + "-" + source_set
+        status, data = get_feature(modelId=modelId, layer=layer_str, index=int(index))
+        if status != 200:
+            print(f"Failed node={nid} modelId={modelId} layer={layer_str} status={status} body={data[:200]}")
+            continue
+
+        json_data = json.loads(data)
+        act_density = json_data.get("frac_nonzero", 0)
+        if act_density > 0.1:
+            result[nid] = "trash"
+            continue
+
+        explanations = json_data.get("explanations", [])
+        clerp = explanations[0].get("description", "") if explanations else attr[nid].get("clerp", "")
+        top_activations = json_data.get("activations", [])[:10]
+        top_tokens = [p["tokens"][p["maxValueTokenIndex"]] for p in top_activations]
+        top_next_tokens = [
+            p["tokens"][p["maxValueTokenIndex"] + 1]
+            if p["maxValueTokenIndex"] + 1 < len(p["tokens"]) else ""
+            for p in top_activations
+        ]
+
+        features.append({
             "id": nid,
-            "label": labels.get(nid, ""),
-            "hint": feature_types.get(nid, ""),
-        }
-        for nid in node_ids
-    ]
+            "label": clerp,
+            "top_tokens": top_tokens,
+            "top_next_tokens": [t for t in top_next_tokens if t],
+            "top_logits": json_data.get("pos_str", [])[:10],
+            "act_density": round(act_density, 4),
+        })
+        llm_ids.append(nid)
+
+    if not features:
+        return result
+
     user_message = json.dumps({"features": features}, ensure_ascii=False, indent=2)
 
     client = OpenAI(api_key=api_key)
@@ -260,7 +320,7 @@ def classify_features_with_llm(
     )
 
     raw = response.choices[0].message.content or ""
-    result = _parse_classify_response(raw, node_ids)
+    result.update(_parse_classify_response(raw, llm_ids))
     return result
 
 
