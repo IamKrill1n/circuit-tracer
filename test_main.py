@@ -16,29 +16,29 @@ from scipy.special import softmax
 model_name = os.getenv("HF_MODEL_NAME", "google/gemma-2-2b-it")
 hf_token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_KEY")
 
-tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True, token=hf_token)
-model = AutoModelForCausalLM.from_pretrained(model_name, token=hf_token, torch_dtype="auto")
-if torch.cuda.is_available():
-    model = model.cuda()
-# set model decoder to true
-model.config.is_decoder = True
-# ensure task_specific_params is initialized (avoid NoneType assignment error)
-if model.config.task_specific_params is None:
-    model.config.task_specific_params = {}
-# set text-generation params under task_specific_params
-model.config.task_specific_params["text-generation"] = {
-    "do_sample": False, # set to False for deterministic output
-    "max_new_tokens": 1, # set to 1 for single-token generation
-    "temperature": 0, # set to 0 for deterministic output
-    # "no_repeat_ngram_siz e": 2, 
-}
-explainer = shap.Explainer(model, tokenizer)
-prompts = ['Fact: The capital of the state containing Dallas is']
+# tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True, token=hf_token)
+# model = AutoModelForCausalLM.from_pretrained(model_name, token=hf_token, torch_dtype="auto")
+# if torch.cuda.is_available():
+#     model = model.cuda()
+# # set model decoder to true
+# model.config.is_decoder = True
+# # ensure task_specific_params is initialized (avoid NoneType assignment error)
+# if model.config.task_specific_params is None:
+#     model.config.task_specific_params = {}
+# # set text-generation params under task_specific_params
+# model.config.task_specific_params["text-generation"] = {
+#     "do_sample": False, # set to False for deterministic output
+#     "max_new_tokens": 1, # set to 1 for single-token generation
+#     "temperature": 0, # set to 0 for deterministic output
+#     # "no_repeat_ngram_siz e": 2, 
+# }
+# explainer = shap.Explainer(model, tokenizer)
+# prompts = ['Fact: The capital of the state containing Dallas is']
 
-shap_values = explainer(prompts)
-print(shap_values.values.squeeze())
-token_weights = softmax(shap_values.values.squeeze())
-print(token_weights)
+# shap_values = explainer(prompts)
+# print(shap_values.values.squeeze())
+# token_weights = softmax(shap_values.values.squeeze())
+# print(token_weights)
 
 json_path = "demos/temp_graph_files/austin.json"
 source_set = 'clt-hp' #'clt-hp' # gemmascope-transcoder-16k
@@ -56,11 +56,11 @@ kept_ids, pruned_adj, node_inf, node_rel, attr, metadata = prune_graph_pipeline(
     keep_all_tokens_and_logits=False,
 )
 
-print(len(kept_ids))
+# print(len(kept_ids))
 for i, node_id in enumerate(kept_ids):
     print(node_id, attr[node_id].get("clerp", ""), node_inf[i].item(), node_rel[i].item())
 
-print(attr['1_89326_9'])
+# print(attr['1_89326_9'])
 
 # Step 1: heuristic classify via Neuronpedia (applies frac_nonzero < 10% filter)
 # feature_types_heuristic = classify_features(kept_ids, attr, metadata)
