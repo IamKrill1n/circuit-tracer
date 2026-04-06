@@ -73,6 +73,39 @@ DEFAULT_FEW_SHOTS: List[Dict[str, Any]] = [
             {"label": "Texas legal contexts", "type": "Abstract", "node_ids": ["1", "2"]},
             {"label": "say Austin", "type": "Output", "node_ids": ["7"]},
         ],
+    },
+    {
+        "input": {
+            "prompt": "calc: 36+59=",
+            "features": [
+                {"id": "0", "label": "36", "type": "Input"},
+                {"id": "1", "label": "59", "type": "Input"},
+                {"id": "2", "label": "+", "type": "Input"},
+                {"id": "3", "label": "~36", "type": "Abstract"},
+                {"id": "4", "label": "_6", "type": "Input"},
+                {"id": "5", "label": "_6+_9->_5", "type": "Output"},
+                {"id": "6", "label": "say 5", "type": "Output"},
+                {"id": "7", "label": "sum=_5", "type": "Output"},
+                {"id": "8", "label": "~80", "type": "Abstract"},
+                {"id": "9", "label": "~100", "type": "Abstract"},
+                {"id": "10", "label": "~90", "type": "Abstract"},
+                {"id": "11", "label": "sum=~92", "type": "Output"},
+                {"id": "12", "label": "sum=~95", "type": "Output"},
+                {"id": "13", "label": "~59", "type": "Abstract"},
+            ]
+        },
+        "output": [
+            {"label": "36", "type": "Input", "node_ids": ["0"]},
+            {"label": "59", "type": "Input", "node_ids": ["1"]},
+            {"label": "+", "type": "Input", "node_ids": ["2"]},
+            {"label": "~36", "type": "Abstract", "node_ids": ["3"]},
+            {"label": "~59", "type": "Abstract", "node_ids": ["13"]},
+            {"label": "look up table", "type": "Abstract", "node_ids": ["8", "9", "10"]},
+            {"label": "_6", "type": "Input", "node_ids": ["4"]},
+            {"label": "say _5", "type": "Output", "node_ids": ["5", "6", "7"]},
+            {"label": "sum=~92", "type": "Output", "node_ids": ["11"]},
+            {"label": "sum=~95", "type": "Output", "node_ids": ["12"]},
+        ]
     }
 ]
 
