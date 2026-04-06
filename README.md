@@ -6,24 +6,19 @@ Original Readme below
 Path: `circuit_tracer/subgraph`
 
 - `api.py` — High-level API to load features and generate attribution graphs.
-- `pruning.py` — Pruning utilities to extract a focused subgraph (work in progress). Current strategy:
-  - top-k node selection
-  - trim low-weight edges
-  - mask unimportant tokens
-  Idea: uses better link analysis algs to find important topological nodes, then uses LLM to classify and remove uninteresting nodes (like syntactics nodes).
-- `grouping.py` — Group similar nodes into supernodes (work in progress). Uses a path-reserved greedy grouping heuristic. Idea to improve: use LLM again? instead of Bert embeddings of autointerp explanations.
-- `visualization.py` — Functions to render and export subgraph visualizations.
+- `prune.py` — Prune algorithm using influence and relevance
+- `grouping.py` — old greedy grouping alg
+- `distance.py` — old distance caculation for greedy grouping
+- `visualization.py` — old visualization using Networkx, for better visualization submit the subgraph to neuronpedia
 - `utils.py` — Helper utilities for graph manipulation and automatic interpretation of features. (only if available on Neuronpedia)
 
 ## Experiments
+`demos/subgraph_demo.ipynb` — current pipeline + todo list
+1. Download the graph on Neuronpedia
+2. Prune graph
+3. Classify feature nodes
+4. Group
 
-- Prompt source: `demos/prompts.txt` (prompts follow the pattern: "The saying goes: ... is to ... as ... is to ...").
-- Generate graphs: `demos/generate_new_graphs.py` — produces JSON/graph files saved to `graph_files/`.
-- Find subgraphs: `demos/generate_subgraphs.py` — runs pruning/grouping pipeline to create pruned subgraphs for analysis, saved to `subgraphs/`
-
-## Notes
-`demos/graph_files` and `demos/subgraphs` contains quick experiments graphs/subgraphs. 
-`demos/attribute_demo.ipynb` is only used to generate attribution graphs of custom models and clts.
 
 
 This library implements tools for finding circuits using features from (cross-layer) MLP transcoders, as originally introduced by [Ameisen et al. (2025)](https://transformer-circuits.pub/2025/attribution-graphs/methods.html) and [Lindsey et al. (2025)](https://transformer-circuits.pub/2025/attribution-graphs/biology.html).
