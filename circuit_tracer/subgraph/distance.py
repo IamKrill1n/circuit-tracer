@@ -216,10 +216,10 @@ def build_graph_from_distance(distance_graph: np.ndarray, threshold: float = 0.0
     return G
 
 
-if __name__ == "__main__":
-    graph_path = "demos/graph_files/factthelargestco-1755767633671_2025-09-26T13-34-02-113Z.json"
-    G, attr = trim_graph(graph_path, crit="edge_weight", edge_weight_threshold=3)
-    print(f"Created graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
-    print("Nodes:", list(G.nodes(data=False))[:5])
-    distance_graph = build_distance_graph_from_clerp(G, attr, progress=True, normalize=True)
-    print(distance_graph)
+# if __name__ == "__main__":
+#     graph_path = "demos/graph_files/factthelargestco-1755767633671_2025-09-26T13-34-02-113Z.json"
+#     G, attr = trim_graph(graph_path, crit="edge_weight", edge_weight_threshold=3)
+#     print(f"Created graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
+#     print("Nodes:", list(G.nodes(data=False))[:5])
+#     distance_graph = build_distance_graph_from_clerp(G, attr, progress=True, normalize=True)
+#     print(distance_graph)
