@@ -66,11 +66,11 @@ def generate_graph(
     prompt: str,
     slug: str,
     sourceSetName: str,
-    desiredLogitProb: float = 0.95,
-    edgeThreshold: float = 0.85,
-    maxFeatureNodes: int = 5000,
-    maxNLogits: int = 10,
-    nodeThreshold: float = 0.8
+    desiredLogitProb: float = 0.99,
+    edgeThreshold: float = 1,
+    maxFeatureNodes: int = 10000,
+    maxNLogits: int = 15,
+    nodeThreshold: float = 1
 ) -> Tuple[int, str]:
     """Generate an attribution graph via the Neuronpedia API.
     
