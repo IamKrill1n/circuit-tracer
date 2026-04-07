@@ -1,4 +1,5 @@
 from circuit_tracer.subgraph.api import get_feature
+from circuit_tracer.subgraph.config import get_env
 from typing import List, Dict, Any
 import json
 import re
@@ -133,7 +134,232 @@ def classify_features(
 
     return feature_type
 
-    
+
+# ---------------------------------------------------------------------------
+# LLM-based classification using OpenAI
+# ---------------------------------------------------------------------------
+
+_CLASSIFY_SYSTEM_PROMPT = """\
+You are an expert AI interpretability researcher classifying features from a \
+language model's attribution graph.
+
+Each feature comes with:
+- **label**: short natural-language auto-interpretation (clerp)
+- **top_tokens**: input tokens that most strongly activate this feature
+- **top_next_tokens**: tokens that follow those activations in context
+- **top_logits**: output vocabulary tokens most promoted by this feature
+- **act_density**: fraction of inputs that activate this feature (already \
+pre-filtered to ≤ 10%)
+
+Use all available fields together to classify each feature.
+
+## Categories
+- **Input**: Detects specific input tokens, character patterns, or low-level \
+syntactic properties. Acts as a surface-level detector. Signal: label matches \
+top_tokens (e.g. "the word Dallas" with top_tokens all being "Dallas").
+- **Abstract**: Represents a high-level semantic concept, topic, or reasoning \
+relationship. Signal: label is conceptual and top_tokens/top_logits are diverse \
+(e.g. "Texas geography", "capital cities").
+- **Output**: Promotes or steers specific next tokens when activated. Signal: \
+label starts with "say", or top_next_tokens / top_logits are concentrated on \
+one token (e.g. "say Austin", top_logits: ["Austin", "Austin", "Austin", ...]).
+- **trash**: Discard this feature. Use for:
+  - Pure positional or syntactic artifacts with no semantic content
+  - Features with empty, generic, or meaningless descriptions
+  - Noise features that clearly do not contribute to the reasoning chain
+
+## Input format
+```json
+{
+  "features": [
+    {
+      "id": "<node_id>",
+      "label": "<clerp description>",
+      "top_tokens": ["<tok1>", ...],
+      "top_next_tokens": ["<tok1>", ...],
+      "top_logits": ["<tok1>", ...],
+      "act_density": 0.032
+    }
+  ]
+}
+```
+
+## Output format (strict JSON only — no markdown, no explanation)
+```json
+{"<node_id>": "Input" | "Abstract" | "Output" | "trash", ...}
+```
+
+Rules:
+1. Every feature id must appear in the output.
+2. Output must be a single valid JSON object mapping id -> category.
+3. Be conservative with "trash" — only discard clearly syntactic or irrelevant features.
+"""
+
+_VALID_CLASSES = {"Input", "Abstract", "Output", "trash"}
+
+
+def _get_openai_api_key() -> str:
+    return (get_env("OPENAI_API_KEY") or "").strip()
+
+
+def classify_features_with_llm(
+    node_ids: List[str],
+    attr: Dict[str, Any],
+    metadata: Dict[str, Any],
+    model: str = "gpt-4o",
+    temperature: float = 0.1,
+) -> Dict[str, str]:
+    """Classify features into Input / Abstract / Output using an OpenAI LLM.
+
+    Mirrors the same interface as ``classify_features`` so the two can be used
+    interchangeably.  Fetches Neuronpedia data for each CLT feature node
+    (same API calls as the heuristic version), applies the frac_nonzero > 10%
+    density pre-filter, then sends the richer context to the LLM.
+
+    Args:
+        node_ids: Ordered list of node IDs to classify.
+        attr: Dictionary of node attributes.
+        metadata: Dictionary of graph metadata.
+        model: OpenAI model name (default "gpt-4o").
+        temperature: Sampling temperature (default 0.1).
+
+    Returns:
+        Dict mapping node_id -> "Input" | "Abstract" | "Output" | "embedding" |
+        "logit".  Nodes classified as "trash" are **omitted**.
+
+    Raises:
+        ValueError: If the OpenAI API key is not set or the response cannot be
+            parsed.
+    """
+    try:
+        from openai import OpenAI  # lazy import to keep the module loadable
+    except ImportError as exc:
+        raise ImportError(
+            "openai package is required for classify_features_with_llm. "
+            "Install it with: pip install openai"
+        ) from exc
+
+    api_key = _get_openai_api_key()
+    if not api_key:
+        raise ValueError(
+            "OPENAI_API_KEY is not set. Add it to your .env file or environment."
+        )
+
+    if not node_ids:
+        return {}
+
+    modelId = metadata.get("scan", "")
+    source_set = metadata['info'].get("neuronpedia_source_set", "")
+
+    result: Dict[str, str] = {}
+
+    # Pass through embedding / logit nodes unchanged, collect CLT nodes for LLM
+    clt_ids = []
+    for nid in node_ids:
+        ftype = attr[nid].get("feature_type", "")
+        if ftype == "embedding":
+            result[nid] = "embedding"
+        elif ftype == "logit":
+            result[nid] = "logit"
+        else:
+            clt_ids.append(nid)
+
+    if not clt_ids:
+        return result
+
+    # Fetch Neuronpedia data, apply density pre-filter, build LLM feature list
+    features = []
+    llm_ids = []
+    for nid in clt_ids:
+        layer, index = nid.split("_")[:2]
+        layer_str = layer + "-" + source_set
+        status, data = get_feature(modelId=modelId, layer=layer_str, index=int(index))
+        if status != 200:
+            print(f"Failed node={nid} modelId={modelId} layer={layer_str} status={status} body={data[:200]}")
+            continue
+
+        json_data = json.loads(data)
+        act_density = json_data.get("frac_nonzero", 0)
+        if act_density > 0.1:
+            result[nid] = "trash"
+            continue
+
+        explanations = json_data.get("explanations", [])
+        clerp = explanations[0].get("description", "") if explanations else attr[nid].get("clerp", "")
+        top_activations = json_data.get("activations", [])[:10]
+        top_tokens = [p["tokens"][p["maxValueTokenIndex"]] for p in top_activations]
+        top_next_tokens = [
+            p["tokens"][p["maxValueTokenIndex"] + 1]
+            if p["maxValueTokenIndex"] + 1 < len(p["tokens"]) else ""
+            for p in top_activations
+        ]
+
+        features.append({
+            "id": nid,
+            "label": clerp,
+            "top_tokens": top_tokens,
+            "top_next_tokens": [t for t in top_next_tokens if t],
+            "top_logits": json_data.get("pos_str", [])[:10],
+            "act_density": round(act_density, 4),
+        })
+        llm_ids.append(nid)
+
+    if not features:
+        return result
+
+    client = OpenAI(api_key=api_key)
+    for feature, nid in zip(features, llm_ids, strict=True):
+        user_message = json.dumps({"features": [feature]}, ensure_ascii=False, indent=2)
+        response = client.chat.completions.create(
+            model=model,
+            temperature=temperature,
+            messages=[
+                {"role": "system", "content": _CLASSIFY_SYSTEM_PROMPT},
+                {"role": "user", "content": user_message},
+            ],
+        )
+        raw = response.choices[0].message.content or ""
+        result.update(_parse_classify_response(raw, [nid]))
+    return result
+
+
+def _parse_classify_response(
+    response_text: str,
+    node_ids: List[str],
+) -> Dict[str, str]:
+    """Parse the LLM JSON response and return only the valid, non-trash entries."""
+    # Strip optional markdown fences
+    match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", response_text, re.DOTALL)
+    if match:
+        response_text = match.group(1).strip()
+
+    # Extract the first JSON object
+    match = re.search(r"\{.*\}", response_text, re.DOTALL)
+    if match:
+        response_text = match.group(0)
+
+    data = json.loads(response_text)
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"Expected a JSON object from the LLM, got: {type(data).__name__}"
+        )
+
+    node_id_set = set(node_ids)
+    out: Dict[str, str] = {}
+    for node_id, label in data.items():
+        if node_id not in node_id_set:
+            continue
+        label = str(label).strip()
+        if label not in _VALID_CLASSES:
+            # Try case-insensitive normalisation
+            normalised = label.capitalize()
+            if normalised not in _VALID_CLASSES:
+                continue
+            label = normalised
+        if label == "trash":
+            continue
+        out[node_id] = label
+    return out
 
 
 # if __name__ == "__main__":
