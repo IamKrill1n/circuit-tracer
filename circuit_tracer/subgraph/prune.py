@@ -1,6 +1,7 @@
 # graph.prune_graph for json files
 import logging
 from typing import Any, Dict, List, Tuple, Optional, Literal, NamedTuple
+from dataclasses import dataclass
 
 import torch
 
@@ -21,6 +22,22 @@ class PruneResult(NamedTuple):
     edge_mask: torch.Tensor  # Boolean tensor indicating which edges to keep
     cumulative_scores: torch.Tensor  # Tensor of cumulative scores for each node
 
+@dataclass
+class PruneGraph:
+    kept_ids: List[str]
+    pruned_adj: torch.Tensor
+    node_influence: torch.Tensor
+    node_relevance: torch.Tensor
+    attr: Dict[str, Any]
+    metadata: Dict[str, Any]
+
+    @property
+    def num_nodes(self) -> int:
+        return len(self.kept_ids)
+
+    def num_edges(self) -> int:
+        return int((self.pruned_adj != 0).sum().item())
+        return int((self.pruned_adj != 0).sum().item())
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -306,7 +323,7 @@ def prune_graph_pipeline(
     node_relevance_threshold: float = 0.8,
     edge_relevance_threshold: float = 0.98,
     keep_all_tokens_and_logits: bool = True,
-) -> Tuple[List[str], torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, Any], Dict[str, Any]]:
+) -> PruneGraph:
     _validate_threshold("node_influence_threshold", node_influence_threshold)
     _validate_threshold("edge_influence_threshold", edge_influence_threshold)
     _validate_threshold("node_relevance_threshold", node_relevance_threshold)
@@ -336,7 +353,14 @@ def prune_graph_pipeline(
     out_attr = {nid: attr[nid] for nid in kept_ids}
     logger.info("Pruned graph: %d nodes, %d edges", len(kept_ids), int((pruned_adj != 0).sum().item()))
 
-    return kept_ids, pruned_adj, node_inf, node_rel, out_attr, metadata
+    return PruneGraph(
+        kept_ids,
+        pruned_adj,
+        node_inf,
+        node_rel,
+        out_attr,
+        metadata
+    )
 
 
 # if __name__ == "__main__":

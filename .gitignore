@@ -180,3 +180,4 @@ cython_debug/
 demos/graphs/
 demos/temp_graph_files/austin.json
 demos/temp_graph_files/austin_plt.json
+demos/temp_graph_files/refusal_example.json
