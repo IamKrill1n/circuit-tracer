@@ -20,3 +20,4 @@ NEURONPEDIA_API_KEY = get_env("NEURONPEDIA_API_KEY", "")
 HUGGINGFACE_API_KEY = get_env("HUGGINGFACE_API_KEY", "")
 # Support both names for Gemini
 GENAI_API_KEY = get_env("GEMINI_API_KEY", "") or get_env("GENAI_API_KEY", "")
+OPENAI_API_KEY = get_env("OPENAI_API_KEY", "")
