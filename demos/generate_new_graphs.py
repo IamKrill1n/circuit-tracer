@@ -34,10 +34,10 @@ def download_graph(
     model_id: str = DEFAULT_MODEL,
     source_set: str = DEFAULT_SOURCE_SET,
     desired_logit_prob: float = 0.99,
-    edge_threshold: float = 1,
+    edge_threshold: float = 0.98,
     max_feature_nodes: int = 10000,
     max_n_logits: int = 15,
-    node_threshold: float = 1,
+    node_threshold: float = 0.95,
 ):
     if not prompt or not slug or not out_path:
         raise ValueError("Missing prompt, slug, or output path.")
