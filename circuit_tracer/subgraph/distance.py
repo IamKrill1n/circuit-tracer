@@ -195,26 +195,6 @@ def build_distance_graph_from_decoder_vector(
     np.fill_diagonal(distance_graph, 0.0)
     return distance_graph
 
-def build_graph_from_distance(distance_graph: np.ndarray, threshold: float = 0.0) -> nx.Graph:
-    """
-    Build a graph from a distance matrix, applying a threshold to create edges.
-
-    Args:
-        distance_graph: np.ndarray shape (N, N), the distance matrix
-        threshold:      float, if distance < threshold, create an edge
-
-    Returns:
-        G: nx.Graph, the resulting graph
-    """
-    G = nx.Graph()
-    N = distance_graph.shape[0]
-    for i in range(N):
-        for j in range(i + 1, N):
-            dist = distance_graph[i, j]
-            if dist < threshold:
-                G.add_edge(i, j, weight=dist)
-    return G
-
 
 # if __name__ == "__main__":
 #     graph_path = "demos/graph_files/factthelargestco-1755767633671_2025-09-26T13-34-02-113Z.json"
