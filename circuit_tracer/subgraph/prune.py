@@ -1,9 +1,11 @@
 # graph.prune_graph for json files
 import logging
 from typing import Any, Dict, List, Tuple, Optional, Literal, NamedTuple
+from api import get_feature
 from dataclasses import dataclass
 
 import torch
+import json
 
 from circuit_tracer.graph import (
     compute_node_influence,
@@ -117,6 +119,18 @@ def _build_index_sets(
         elif _is_feature(attr, nid):
             sets["feature"].append(i)
     return sets
+
+def remove_dangling_nodes(node_mask: torch.Tensor, edge_mask: torch.Tensor, feature_idx: torch.Tensor, non_boundary: torch.Tensor) -> torch.Tensor:
+    old = node_mask.clone()
+    while not torch.all(node_mask == old):
+        old[:] = node_mask
+        edge_mask[~node_mask] = False
+        edge_mask[:, ~node_mask] = False
+        if len(non_boundary):
+            node_mask[non_boundary] &= edge_mask[:, non_boundary].any(0)
+        if len(feature_idx):
+            node_mask[feature_idx] &= edge_mask[feature_idx].any(1)
+    return node_mask
 
 def prune_by_influence(
     adj: torch.Tensor,
@@ -323,6 +337,9 @@ def prune_graph_pipeline(
     node_relevance_threshold: float = 0.8,
     edge_relevance_threshold: float = 0.98,
     keep_all_tokens_and_logits: bool = True,
+    filter_act_density: bool = False,
+    act_density_lb: float = 2e-5,
+    act_density_ub: float = 0.1,
 ) -> PruneGraph:
     _validate_threshold("node_influence_threshold", node_influence_threshold)
     _validate_threshold("edge_influence_threshold", edge_influence_threshold)
@@ -345,6 +362,39 @@ def prune_graph_pipeline(
 
     kept_indices = node_mask.nonzero(as_tuple=True)[0]
     kept_ids = [node_ids[i] for i in kept_indices.tolist()]
+
+    
+    if filter_act_density:
+        modelId = metadata.get("scan", "")
+        source_set = metadata['info'].get("neuronpedia_source_set", "")
+        for node_id in kept_ids:
+            if attr[node_id].get("feature_type") != 'cross layer transcoder':
+                continue
+
+            # node_ids are in the format {layer}_{node_id}_{ctx_id}
+            layer, index = node_id.split("_")[:2]
+            index = int(index)
+            layer = layer + "-" + source_set
+            # print(layer)
+            status, data = get_feature(modelId=modelId, layer=layer, index=index)
+            if status != 200:
+                print(f"Failed node={node_id} modelId={modelId} layer={layer} status={status} body={data[:200]}")
+                continue
+
+            json_data = json.loads(data)
+            clerp = json_data.get("explanations", [])[0].get("description", "") 
+            act_density = json_data.get("frac_nonzero", 0)
+            if attr[node_id].get("clerp", "") == "":
+                attr[node_id]['clerp'] = clerp
+            # remove too frequently activated features
+            if act_density > act_density_ub or act_density < act_density_lb:
+                idx = node_ids.index(node_id)
+                node_mask[idx] = False
+                edge_mask[idx, :] = False
+                edge_mask[:, idx] = False
+
+        kept_indices = node_mask.nonzero(as_tuple=True)[0]
+        kept_ids = [node_ids[i] for i in kept_indices.tolist()]
 
     pruned_adj = adj[kept_indices][:, kept_indices].clone()
     kept_edge_mask = edge_mask[kept_indices][:, kept_indices]
