@@ -3,7 +3,7 @@ import time
 import torch
 from circuit_tracer.subgraph.api import get_feature, generate_autointerp
 import networkx as nx
-
+from typing import Any, Dict, List, Tuple, Optional, Literal, NamedTuple
 
 def get_data_from_json(json_path: str):
     with open(json_path, "r") as f:
@@ -31,6 +31,53 @@ def get_data_from_json(json_path: str):
 
     return adj_matrix, node_ids, attr, metadata
 
+def _node_type(attr: Dict[str, Any], node: str) -> str:
+    return attr.get(node, {}).get("feature_type", "")
+
+
+def _is_target_logit(attr: Dict[str, Any], node: str) -> bool:
+    return attr.get(node, {}).get("is_target_logit", False)
+
+
+def _is_feature(attr: Dict[str, Any], node: str) -> bool:
+    t = _node_type(attr, node)
+    return t not in ("embedding", "logit", "mlp reconstruction error", "")
+
+
+def _is_error(attr: Dict[str, Any], node: str) -> bool:
+    return _node_type(attr, node) == "mlp reconstruction error"
+
+
+def _is_embedding(attr: Dict[str, Any], node: str) -> bool:
+    return _node_type(attr, node) == "embedding"
+
+
+def _is_logit(attr: Dict[str, Any], node: str) -> bool:
+    return _node_type(attr, node) == "logit"
+
+def _build_index_sets(
+    node_ids: List[str],
+    attr: Dict[str, Any],
+) -> Dict[str, List[int]]:
+    sets: Dict[str, List[int]] = {
+        "feature": [],
+        "error": [],
+        "embedding": [],
+        "logit": [],
+        "target_logit": [],
+    }
+    for i, nid in enumerate(node_ids):
+        if _is_target_logit(attr, nid):
+            sets["target_logit"].append(i)
+        if _is_logit(attr, nid):
+            sets["logit"].append(i)
+        elif _is_embedding(attr, nid):
+            sets["embedding"].append(i)
+        elif _is_error(attr, nid):
+            sets["error"].append(i)
+        elif _is_feature(attr, nid):
+            sets["feature"].append(i)
+    return sets
 
 def get_clerp(metadata: dict, attr: dict, generate_missing: bool = True, retry_delay: float = 1.0):
     '''
