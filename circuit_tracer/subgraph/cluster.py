@@ -1,185 +1,293 @@
 from __future__ import annotations
 
-import json
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Tuple
+
 import torch
-import torch.nn.functional as F
 
 from circuit_tracer.subgraph.prune import PruneGraph
+from circuit_tracer.subgraph.utils import _is_embedding, _is_fixed, _is_logit, _parse_layer
 
 
-def _default_candidates(pg: PruneGraph) -> List[str]:
-    out = []
-    for nid in pg.kept_ids:
-        t = pg.attr.get(nid, {}).get("feature_type", "")
-        if t == "cross layer transcoder":
-            out.append(nid)
+def _cosine_norm(matrix: torch.Tensor) -> torch.Tensor:
+    diag = torch.sqrt(torch.diag(matrix).clamp(min=1e-8))
+    return matrix / diag.unsqueeze(1) / diag.unsqueeze(0)
+
+
+def _compute_mediation_penalty(
+    adj: torch.Tensor,
+    layers: list[int],
+    mediation_penalty: float,
+) -> torch.Tensor:
+    """
+    Penalize similarity(i, j) when there exists k with layer_i < layer_k < layer_j
+    and i -> k -> j path, which tends to create cycle-prone merges.
+    """
+    n = adj.shape[0]
+    if mediation_penalty >= 1.0:
+        return torch.ones((n, n), dtype=adj.dtype, device=adj.device)
+
+    layer_t = torch.tensor(layers, dtype=torch.float32, device=adj.device)
+    a = (adj > 0).float()
+    penalty = torch.ones((n, n), dtype=adj.dtype, device=adj.device)
+
+    unique_layers = sorted(set(layers))
+    for lk in unique_layers:
+        k_mask = (layer_t == float(lk)).float()
+        if k_mask.sum() == 0:
+            continue
+
+        # has_ik[i,k] and has_kj[k,j]
+        has_ik = a * k_mask.unsqueeze(0)
+        has_kj = k_mask.unsqueeze(1) * a
+
+        # exists k with i->k and k->j for each (i,j)
+        mediated = (has_ik @ has_kj) > 0
+
+        li_lt_lk = layer_t.unsqueeze(1) < float(lk)
+        lj_gt_lk = layer_t.unsqueeze(0) > float(lk)
+        between = li_lt_lk & lj_gt_lk
+        mark = mediated & between
+        penalty[mark] = mediation_penalty
+
+    penalty.fill_diagonal_(1.0)
+    return penalty
+
+
+def compute_similarity(
+    prune_graph: PruneGraph,
+    alpha: float = 0.5,
+    beta: float = 0.5,
+    mediation_penalty: float = 0.1,
+) -> torch.Tensor:
+    """Compute node similarity from shared in/out neighbors, weighted by act/inf."""
+    kept_ids = prune_graph.kept_ids
+    attr = prune_graph.attr
+
+    # Match structure_grouping convention: sender-indexed adjacency.
+    adj = prune_graph.pruned_adj.clone().float().T
+
+    act_t = torch.tensor(
+        [float(attr.get(n, {}).get("activation", 0.0) or 0.0) for n in kept_ids],
+        dtype=torch.float32,
+        device=adj.device,
+    )
+    inf_t = torch.tensor(
+        [float(attr.get(n, {}).get("influence", 0.0) or 0.0) for n in kept_ids],
+        dtype=torch.float32,
+        device=adj.device,
+    )
+
+    act_norm = act_t / (act_t.max() + 1e-8)
+    inf_norm = inf_t / (inf_t.max() + 1e-8)
+    w = torch.diag(alpha * act_norm + beta * inf_norm)
+
+    s_out_cos = _cosine_norm(adj @ w @ adj.T)
+    s_in_cos = _cosine_norm(adj.T @ w @ adj)
+    s = (0.5 * s_out_cos + 0.5 * s_in_cos).clamp(0.0, 1.0)
+
+    layers = [_parse_layer(attr, n) for n in kept_ids]
+    if mediation_penalty < 1.0:
+        p = _compute_mediation_penalty(adj=adj, layers=layers, mediation_penalty=mediation_penalty)
+        s = (s * p).clamp(0.0, 1.0)
+
+    return s
+
+
+def _cluster_similarity(cl_a: list[int], cl_b: list[int], sim: torch.Tensor) -> float:
+    vals = sim[cl_a][:, cl_b]
+    return float(vals.mean().item()) if vals.numel() else -1.0
+
+
+def _layer_span(cluster_idx: list[int], layers: list[int]) -> int:
+    lv = [layers[i] for i in cluster_idx]
+    return max(lv) - min(lv)
+
+
+def _split_cluster_by_boundary(cluster: list[str], boundary_layer: int, attr: dict[str, dict]) -> list[list[str]]:
+    left = [n for n in cluster if _parse_layer(attr, n) < boundary_layer]
+    right = [n for n in cluster if _parse_layer(attr, n) >= boundary_layer]
+    out: list[list[str]] = []
+    if left:
+        out.append(left)
+    if right:
+        out.append(right)
     return out
 
 
-def _edge_signature(adj: torch.Tensor, idx: int, cand_idx: torch.Tensor) -> torch.Tensor:
-    out_vec = adj[idx, cand_idx]
-    in_vec = adj[cand_idx, idx]
-    sig = torch.cat([out_vec, in_vec], dim=0)
-    return sig
-
-
-def _build_similarity_matrix(adj_sub: torch.Tensor) -> torch.Tensor:
-    x = F.normalize(adj_sub, p=2, dim=1, eps=1e-12)
-    sim = x @ x.T
-    sim.fill_diagonal_(1.0)
-    return sim
-
-
-class _DSU:
-    def __init__(self, n: int, layers: List[Optional[int]]):
-        self.parent = list(range(n))
-        self.size = [1] * n
-        self.min_layer = [l if l is not None else 10**9 for l in layers]
-        self.max_layer = [l if l is not None else -(10**9) for l in layers]
-        self.has_known_layer = [l is not None for l in layers]
-
-    def find(self, x: int) -> int:
-        while self.parent[x] != x:
-            self.parent[x] = self.parent[self.parent[x]]
-            x = self.parent[x]
-        return x
-
-    def can_union(self, a: int, b: int, max_diff: int) -> bool:
-        ra, rb = self.find(a), self.find(b)
-        if ra == rb:
-            return False
-        has_layer = self.has_known_layer[ra] and self.has_known_layer[rb]
-        if not has_layer:
-            return True
-        new_min = min(self.min_layer[ra], self.min_layer[rb])
-        new_max = max(self.max_layer[ra], self.max_layer[rb])
-        return (new_max - new_min) <= max_diff
-
-    def union(self, a: int, b: int) -> bool:
-        ra, rb = self.find(a), self.find(b)
-        if ra == rb:
-            return False
-        if self.size[ra] < self.size[rb]:
-            ra, rb = rb, ra
-        self.parent[rb] = ra
-        self.size[ra] += self.size[rb]
-        self.min_layer[ra] = min(self.min_layer[ra], self.min_layer[rb])
-        self.max_layer[ra] = max(self.max_layer[ra], self.max_layer[rb])
-        self.has_known_layer[ra] = self.has_known_layer[ra] or self.has_known_layer[rb]
-        return True
-
-
-def _cluster_label(cluster_nodes: List[str], attr: Dict[str, Any], i: int) -> str:
-    clerps = [attr.get(n, {}).get("clerp", "").strip() for n in cluster_nodes]
-    clerps = [c for c in clerps if c]
-    if not clerps:
-        return f"cluster_{i+1}"
-    first = sorted(clerps, key=len)[0]
-    return first[:80]
-
-
-def cluster_supernodes_by_edge_similarity(
-    pruned_graph: PruneGraph,
-    candidate_node_ids: Optional[List[str]] = None,
-    similarity_threshold: float = 0.85,
-    max_layer_diff: Optional[int] = None,
-    include_singletons: bool = False,
-) -> List[List[str]]:
+def _resolve_layer_interleaving(clusters: list[list[str]], attr: dict[str, dict]) -> list[list[str]]:
     """
-    Cluster nodes by edge-weight similarity with iterative layer-diff sweep.
+    Split interleaving/containment ranges until no layer-range conflicts remain.
+    """
+    changed = True
+    while changed:
+        changed = False
+        for i in range(len(clusters)):
+            if changed:
+                break
+            a = clusters[i]
+            a_layers = [_parse_layer(attr, n) for n in a]
+            a_lo, a_hi = min(a_layers), max(a_layers)
+
+            for j in range(i + 1, len(clusters)):
+                b = clusters[j]
+                b_layers = [_parse_layer(attr, n) for n in b]
+                b_lo, b_hi = min(b_layers), max(b_layers)
+
+                # interleaving: a_lo < b_lo < a_hi < b_hi (or symmetric)
+                a_wraps_b_boundary = a_lo < b_lo < a_hi < b_hi
+                b_wraps_a_boundary = b_lo < a_lo < b_hi < a_hi
+                # containment
+                a_contains_b = a_lo < b_lo and b_hi < a_hi
+                b_contains_a = b_lo < a_lo and a_hi < b_hi
+
+                if a_wraps_b_boundary or a_contains_b:
+                    replacement = _split_cluster_by_boundary(a, b_lo, attr)
+                    clusters = clusters[:i] + replacement + clusters[i + 1 :]
+                    changed = True
+                    break
+
+                if b_wraps_a_boundary or b_contains_a:
+                    replacement = _split_cluster_by_boundary(b, a_lo, attr)
+                    clusters = clusters[:j] + replacement + clusters[j + 1 :]
+                    changed = True
+                    break
+
+    clusters.sort(key=lambda c: min(_parse_layer(attr, n) for n in c))
+    return clusters
+
+
+def _merge_to_budget(clusters: list[list[str]], attr: dict[str, dict], max_sn: int) -> list[list[str]]:
+    """Greedily merge layer-adjacent clusters until budget is met."""
+    while len(clusters) > max_sn:
+        best_i = -1
+        best_gap = float("inf")
+        for i in range(len(clusters) - 1):
+            hi_i = max(_parse_layer(attr, n) for n in clusters[i])
+            lo_j = min(_parse_layer(attr, n) for n in clusters[i + 1])
+            gap = abs(lo_j - hi_i)
+            if gap < best_gap:
+                best_gap = gap
+                best_i = i
+
+        if best_i < 0:
+            break
+
+        merged = clusters[best_i] + clusters[best_i + 1]
+        clusters = clusters[:best_i] + [merged] + clusters[best_i + 2 :]
+
+    return clusters
+
+
+def _name_middle_supernodes(clusters: list[list[str]], attr: dict[str, dict]) -> dict[str, list[str]]:
+    clusters = sorted(clusters, key=lambda c: min(_parse_layer(attr, n) for n in c))
+    return {f"SN_{i}": members for i, members in enumerate(clusters)}
+
+
+def cluster_graph(
+    prune_graph: PruneGraph,
+    target_k: int = 7,
+    max_layer_span: int = 4,
+    max_sn: int | None = None,
+    alpha: float = 0.5,
+    beta: float = 0.5,
+    mediation_penalty: float = 0.1,
+) -> list[list[str]]:
+    """
+    Cluster a pruned attribution graph into supernodes.
+
+    Args:
+        prune_graph: Output of `prune_graph_pipeline`.
+        target_k: Target number of middle supernodes.
+        max_layer_span: Maximum allowed layer span within a middle supernode.
+        max_sn: Optional hard cap on number of middle supernodes.
+        alpha: Similarity weighting coefficient for activation.
+        beta: Similarity weighting coefficient for influence.
+        mediation_penalty: Penalty factor for mediated non-adjacent pairs.
 
     Returns:
-        supernodes in Neuronpedia format:
-        [
-          ["label", "node_id_a", "node_id_b", ...],
-          ...
-        ]
+        List of supernodes where each supernode is a list of node ids.
+        Embedding/logit nodes are returned as singleton supernodes.
     """
-    if candidate_node_ids is None:
-        candidate_node_ids = _default_candidates(pruned_graph)
+    kept_ids = prune_graph.kept_ids
+    attr = prune_graph.attr
 
-    if not candidate_node_ids:
+    if not kept_ids:
         return []
 
-    id_to_idx = {nid: i for i, nid in enumerate(pruned_graph.kept_ids)}
-    valid_nodes = [nid for nid in candidate_node_ids if nid in id_to_idx]
-    if len(valid_nodes) <= 1:
-        if include_singletons and valid_nodes:
-            return [[_cluster_label(valid_nodes, pruned_graph.attr, 0), valid_nodes[0]]]
-        return []
+    sim = compute_similarity(
+        prune_graph,
+        alpha=alpha,
+        beta=beta,
+        mediation_penalty=mediation_penalty,
+    )
 
-    cand_idx = torch.tensor([id_to_idx[n] for n in valid_nodes], dtype=torch.long, device=pruned_graph.pruned_adj.device)
-    m = len(valid_nodes)
+    middle_idx = [i for i, nid in enumerate(kept_ids) if not _is_fixed(attr, nid)]
+    middle_ids = [kept_ids[i] for i in middle_idx]
+    layers = [_parse_layer(attr, n) for n in middle_ids]
 
-    # Build per-node edge signatures against candidate set: [out_edges || in_edges]
-    sigs = []
-    for i in range(m):
-        sig = _edge_signature(pruned_graph.pruned_adj, int(cand_idx[i].item()), cand_idx)
-        sigs.append(sig)
-    sig_mat = torch.stack(sigs, dim=0)  # [m, 2m]
+    if not middle_ids:
+        fixed_only = [[nid] for nid in kept_ids]
+        return fixed_only
 
-    sim = _build_similarity_matrix(sig_mat).detach().cpu()
+    # Start with singleton clusters in middle-node local index space.
+    clusters: list[list[int]] = [[i] for i in range(len(middle_ids))]
+    target_k = max(1, min(target_k, len(clusters)))
 
-    layers = [int(pruned_graph.attr[nid].get('layer')) for nid in valid_nodes]
-    known_layers = [l for l in layers if l is not None]
-    if max_layer_diff is None:
-        max_layer_diff = max(0, (max(known_layers) - min(known_layers))) if known_layers else 0
+    # Greedy agglomerative merge under layer-span constraint.
+    while len(clusters) > target_k:
+        best: tuple[float, int, int] | None = None
 
-    # Candidate pairs sorted by similarity desc
-    pairs: List[Tuple[float, int, int]] = []
-    for i in range(m):
-        for j in range(i + 1, m):
-            s = float(sim[i, j].item())
-            if s >= similarity_threshold:
-                pairs.append((s, i, j))
-    pairs.sort(key=lambda x: x[0], reverse=True)
+        for i in range(len(clusters)):
+            for j in range(i + 1, len(clusters)):
+                merged_idx = clusters[i] + clusters[j]
+                if _layer_span(merged_idx, layers) > max_layer_span:
+                    continue
 
-    dsu = _DSU(m, layers)
+                sim_score = _cluster_similarity(
+                    [middle_idx[x] for x in clusters[i]],
+                    [middle_idx[x] for x in clusters[j]],
+                    sim,
+                )
 
-    # Sweep allowed layer difference: 0..max_layer_diff
-    for diff in range(max_layer_diff + 1):
-        changed = True
-        while changed:
-            changed = False
-            for s, i, j in pairs:
-                if dsu.can_union(i, j, max_diff=diff):
-                    if dsu.union(i, j):
-                        changed = True
+                if best is None or sim_score > best[0]:
+                    best = (sim_score, i, j)
 
-    groups: Dict[int, List[str]] = defaultdict(list)
-    for i, nid in enumerate(valid_nodes):
-        groups[dsu.find(i)].append(nid)
+        if best is None:
+            # No further legal merge under constraints.
+            break
 
-    clusters = list(groups.values())
-    clusters.sort(key=lambda g: (-len(g), g[0]))
+        _, i_best, j_best = best
+        merged = clusters[i_best] + clusters[j_best]
+        clusters = [c for k, c in enumerate(clusters) if k not in (i_best, j_best)] + [merged]
 
-    supernodes: List[List[str]] = []
-    for i, g in enumerate(clusters):
-        if not include_singletons and len(g) == 1:
-            continue
-        label = _cluster_label(g, pruned_graph.attr, i)
-        supernodes.append([label, *g])
+    middle_clusters = [[middle_ids[i] for i in c] for c in clusters]
+    middle_clusters = _resolve_layer_interleaving(middle_clusters, attr)
 
+    if max_sn is not None:
+        middle_clusters = _merge_to_budget(middle_clusters, attr, max_sn=max_sn)
+
+    # Keep deterministic naming order for middle SNs, but return member lists only.
+    named_middle = _name_middle_supernodes(middle_clusters, attr)
+
+    emb_singletons = [[nid] for nid in kept_ids if _is_embedding(attr, nid)]
+    logit_singletons = [[nid] for nid in kept_ids if _is_logit(attr, nid)]
+
+    supernodes = list(named_middle.values()) + emb_singletons + logit_singletons
     return supernodes
 
-if __name__ == "__main__":
-    prune_graph = torch.load("demos/subgraph/austin_clt.pt")
-    print(type(prune_graph))
-    prune_graph = PruneGraph(
-        kept_ids=prune_graph["kept_ids"],
-        pruned_adj=prune_graph["pruned_adj"],
-        node_influence=prune_graph["node_inf"],
-        node_relevance=prune_graph["node_rel"],
-        attr=prune_graph["attr"],
-        metadata=prune_graph["metadata"],
-    )
-    # print(prune_graph)
-    supernodes = cluster_supernodes_by_edge_similarity(
-        pruned_graph=prune_graph, # your result from prune_graph_pipeline
-        similarity_threshold=0.82,
-        max_layer_diff=3,
-        include_singletons=False
-    )
-    print(supernodes)
+
+def cluster_graph_with_labels(
+    prune_graph: PruneGraph,
+    **kwargs,
+) -> list[list[str]]:
+    """
+    Convenience wrapper for Neuronpedia-style format:
+    [[label, node_id, ...], ...]
+    """
+    raw = cluster_graph(prune_graph, **kwargs)
+    out: list[list[str]] = []
+    for i, members in enumerate(raw):
+        if len(members) == 1:
+            continue
+        out.append([f"cluster_{i}", *members])
+    return out

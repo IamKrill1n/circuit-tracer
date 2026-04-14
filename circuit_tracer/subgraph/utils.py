@@ -49,11 +49,37 @@ def _is_error(attr: Dict[str, Any], node: str) -> bool:
 
 
 def _is_embedding(attr: Dict[str, Any], node: str) -> bool:
-    return _node_type(attr, node) == "embedding"
+    # Embedding nodes may appear as explicit type or id prefix like E_*
+    if node.startswith("E"):
+        return True
+    return "embedding" in str(_node_type(attr, node)).lower()
 
 
 def _is_logit(attr: Dict[str, Any], node: str) -> bool:
-    return _node_type(attr, node) == "logit"
+    node_attr = attr.get(node, {})
+    if node_attr.get("is_target_logit") or node_attr.get("is_logit"):
+        return True
+    return "logit" in str(_node_type(attr, node)).lower()
+
+
+def _is_fixed(attr: Dict[str, Any], node: str) -> bool:
+    return _is_embedding(attr, node) or _is_logit(attr, node)
+
+
+def _parse_layer(attr: Dict[str, Any], node: str) -> int:
+    """Parse layer index from node id/attributes with robust fallbacks."""
+    node_attr = attr.get(node, {})
+    layer_val = node_attr.get("layer")
+    if isinstance(layer_val, int):
+        return layer_val
+    if isinstance(layer_val, str) and layer_val.isdigit():
+        return int(layer_val)
+    if node.startswith("E"):
+        return -1
+    try:
+        return int(node.split("_")[0])
+    except (ValueError, IndexError):
+        return 10_000
 
 def _build_index_sets(
     node_ids: List[str],

@@ -41,6 +41,69 @@ class PruneGraph:
     def num_edges(self) -> int:
         return int((self.pruned_adj != 0).sum().item())
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "kept_ids": self.kept_ids,
+            "pruned_adj": self.pruned_adj,
+            "node_influence": self.node_influence,
+            "node_relevance": self.node_relevance,
+            "attr": self.attr,
+            "metadata": self.metadata,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, Any]) -> "PruneGraph":
+        required = {
+            "kept_ids",
+            "pruned_adj",
+            "node_influence",
+            "node_relevance",
+            "attr",
+            "metadata",
+        }
+        missing = required - set(payload.keys())
+        if missing:
+            raise ValueError(f"Invalid PruneGraph payload. Missing keys: {sorted(missing)}")
+        return cls(
+            kept_ids=payload["kept_ids"],
+            pruned_adj=payload["pruned_adj"],
+            node_influence=payload["node_influence"],
+            node_relevance=payload["node_relevance"],
+            attr=payload["attr"],
+            metadata=payload["metadata"],
+        )
+
+
+def save_prune_graph(prune_graph: PruneGraph, output_path: str) -> None:
+    """
+    Save a PruneGraph to a .pt file.
+
+    Args:
+        prune_graph: PruneGraph object to serialize.
+        output_path: Destination path (typically ending with .pt).
+    """
+    torch.save(prune_graph.to_dict(), output_path)
+
+
+def load_prune_graph(
+    input_path: str,
+    map_location: Optional[str | torch.device] = "cpu",
+) -> PruneGraph:
+    """
+    Load a PruneGraph from a .pt file produced by `save_prune_graph`.
+
+    Args:
+        input_path: Path to the .pt file.
+        map_location: Device mapping passed to torch.load.
+    """
+    payload = torch.load(input_path, map_location=map_location)
+    if isinstance(payload, PruneGraph):
+        return payload
+    if not isinstance(payload, dict):
+        raise ValueError(f"Invalid payload type in {input_path}: {type(payload)}")
+    return PruneGraph.from_dict(payload)
+
+
 
 def _validate_threshold(name: str, value: float) -> None:
     if not (0.0 <= value <= 1.0):
