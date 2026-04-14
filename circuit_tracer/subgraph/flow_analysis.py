@@ -85,7 +85,7 @@ def build_supernode_graph(
             if w != 0.0:
                 sn_adj[i, j] = w
 
-    logit_idx = [i for i, nid in enumerate(kept_ids) if _is_logit(nid, attr)]
+    logit_idx = [i for i, nid in enumerate(kept_ids) if _is_logit(attr, nid)]
     sn_inf = np.zeros(k, dtype=np.float64)
     if logit_idx:
         for i, src in enumerate(sn_members_idx):

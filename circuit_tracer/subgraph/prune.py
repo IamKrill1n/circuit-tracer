@@ -38,6 +38,7 @@ class PruneGraph:
     def num_nodes(self) -> int:
         return len(self.kept_ids)
 
+    @property
     def num_edges(self) -> int:
         return int((self.pruned_adj != 0).sum().item())
 
