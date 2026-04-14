@@ -1,7 +1,6 @@
-import os
 import requests
-from typing import Tuple, List, Optional
-from circuit_tracer.subgraph.config import NEURONPEDIA_API_KEY, HUGGINGFACE_API_KEY, GENAI_API_KEY
+from typing import Tuple, List, Optional, Any
+from circuit_tracer.subgraph.config import NEURONPEDIA_API_KEY
 import json
 
 BASE_URL = "https://www.neuronpedia.org"
@@ -155,7 +154,88 @@ def save_subgraph(
     return resp.status_code, resp.text
 
 
-# if __name__ == "__main__":
+def steer_logits(
+    modelId: str,
+    prompt: str,
+    features: List[dict[str, Any]],
+    sourceSetName: Optional[str] = None,
+    nTokens: int = 1,
+    topK: int = 5,
+    freezeAttention: bool = True,
+    temperature: float = 0.0,
+    freqPenalty: float = 0.0,
+    seed: Optional[int] = 16,
+    steeredOutputOnly: bool = False,
+) -> Tuple[int, str]:
+    """Steer model logits via Neuronpedia's `/api/steer-logits` endpoint.
+
+    Args:
+        modelId: Model identifier.
+        prompt: Input prompt to continue from.
+        features: Steering features list with objects shaped like:
+            {
+              "layer": int,
+              "index": int,
+              "token_active_position": int,
+              "steer_position": Optional[int],
+              "steer_generated_tokens": bool,
+              "delta": Optional[float],
+              "ablate": bool,
+            }
+        sourceSetName: Optional source set name.
+        nTokens: Number of completion tokens to generate.
+        topK: Number of top logits returned per token.
+        freezeAttention: Whether to freeze attention during generation.
+        temperature: Sampling temperature.
+        freqPenalty: Frequency penalty.
+        seed: Optional random seed.
+        steeredOutputOnly: If True, only returns steered output.
+
+    Returns:
+        Tuple of (status_code, response_body)
+    """
+    url = f"{BASE_URL}/api/steer-logits"
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "modelId": modelId,
+        "sourceSetName": sourceSetName,
+        "prompt": prompt,
+        "features": features,
+        "nTokens": nTokens,
+        "topK": topK,
+        "freezeAttention": freezeAttention,
+        "temperature": temperature,
+        "freqPenalty": freqPenalty,
+        "seed": seed,
+        "steeredOutputOnly": steeredOutputOnly,
+    }
+
+    resp = requests.post(url, headers=headers, json=payload, timeout=120)
+    return resp.status_code, resp.text
+
+
+if __name__ == "__main__":
+    features = [
+        {
+            "layer": 20,
+            "index": 15589,
+            "token_active_position": 9,
+            "steer_position": 9,
+            "steer_generated_tokens": False,
+            "delta": -1.0,
+            "ablate": False,
+        }
+    ]
+    status, data = steer_logits(
+        modelId="gemma-2-2b",
+        prompt="Fact: The capital of the state containing Dallas is",
+        features=features,
+        sourceSetName="clt-hp",
+        nTokens=1,
+        topK=5,
+    )
+    print(f"Status: {status}")
+    print(data)
     # print(_get_api_key())
     # Example: get feature
     # status, data = get_feature("gemma-2-2b", "1-clt-hp", 89326)
