@@ -347,7 +347,8 @@ def prune_graph_pipeline(
     
     if filter_act_density:
         modelId = metadata.get("scan", "")
-        source_set = metadata['info'].get("neuronpedia_source_set", "")
+        info = metadata.get("info", {})
+        source_set = info.get("neuronpedia_source_set") or info.get("source_urls", [""])[0].split("/")[-1]
         for node_id in kept_ids:
             if attr[node_id].get("feature_type") != 'cross layer transcoder':
                 continue

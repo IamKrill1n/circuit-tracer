@@ -215,3 +215,6 @@ def get_clerp(metadata: dict, attr: dict, generate_missing: bool = True, retry_d
         print(f"Using fallback clerp for {node}")
 
 
+if '__main__' == __name__:
+    adj_matrix, node_ids, attr, metadata = get_data_from_json("demos/temp_graph_files/austin_clt.json")
+    print(metadata)
