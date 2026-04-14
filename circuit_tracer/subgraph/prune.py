@@ -1,7 +1,8 @@
 # graph.prune_graph for json files
 import logging
 from typing import Any, Dict, List, Tuple, Optional, Literal, NamedTuple
-from api import get_feature
+from circuit_tracer.subgraph.utils import _build_index_sets
+from circuit_tracer.subgraph.api import get_feature
 from dataclasses import dataclass
 
 import torch
@@ -39,34 +40,6 @@ class PruneGraph:
 
     def num_edges(self) -> int:
         return int((self.pruned_adj != 0).sum().item())
-        return int((self.pruned_adj != 0).sum().item())
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _node_type(attr: Dict[str, Any], node: str) -> str:
-    return attr.get(node, {}).get("feature_type", "")
-
-
-def _is_target_logit(attr: Dict[str, Any], node: str) -> bool:
-    return attr.get(node, {}).get("is_target_logit", False)
-
-
-def _is_feature(attr: Dict[str, Any], node: str) -> bool:
-    t = _node_type(attr, node)
-    return t not in ("embedding", "logit", "mlp reconstruction error", "")
-
-
-def _is_error(attr: Dict[str, Any], node: str) -> bool:
-    return _node_type(attr, node) == "mlp reconstruction error"
-
-
-def _is_embedding(attr: Dict[str, Any], node: str) -> bool:
-    return _node_type(attr, node) == "embedding"
-
-
-def _is_logit(attr: Dict[str, Any], node: str) -> bool:
-    return _node_type(attr, node) == "logit"
 
 
 def _validate_threshold(name: str, value: float) -> None:
@@ -96,40 +69,23 @@ def _validate_inputs(
         raise ValueError("token_weights must be a list of floats if provided")
 
 
-def _build_index_sets(
-    node_ids: List[str],
-    attr: Dict[str, Any],
-) -> Dict[str, List[int]]:
-    sets: Dict[str, List[int]] = {
-        "feature": [],
-        "error": [],
-        "embedding": [],
-        "logit": [],
-        "target_logit": [],
-    }
-    for i, nid in enumerate(node_ids):
-        if _is_target_logit(attr, nid):
-            sets["target_logit"].append(i)
-        if _is_logit(attr, nid):
-            sets["logit"].append(i)
-        elif _is_embedding(attr, nid):
-            sets["embedding"].append(i)
-        elif _is_error(attr, nid):
-            sets["error"].append(i)
-        elif _is_feature(attr, nid):
-            sets["feature"].append(i)
-    return sets
-
 def remove_dangling_nodes(node_mask: torch.Tensor, edge_mask: torch.Tensor, feature_idx: torch.Tensor, non_boundary: torch.Tensor) -> torch.Tensor:
+    # Iteratively remove nodes that become dangling after edge removals.
     old = node_mask.clone()
     while not torch.all(node_mask == old):
         old[:] = node_mask
+        # remove edges touching removed nodes
         edge_mask[~node_mask] = False
         edge_mask[:, ~node_mask] = False
-        if len(non_boundary):
+        # features that are non-boundary should have at least one incoming edge
+        if feature_idx.numel() > 0 and non_boundary.numel() > 0:
             node_mask[non_boundary] &= edge_mask[:, non_boundary].any(0)
-        if len(feature_idx):
             node_mask[feature_idx] &= edge_mask[feature_idx].any(1)
+        else:
+            if non_boundary.numel() > 0:
+                node_mask[non_boundary] &= edge_mask[:, non_boundary].any(0)
+            if feature_idx.numel() > 0:
+                node_mask[feature_idx] &= edge_mask[feature_idx].any(1)
     return node_mask
 
 def prune_by_influence(
@@ -174,24 +130,11 @@ def prune_by_influence(
 
     edge_scores = compute_edge_influence(pruned, logits_seed)
     edge_mask = edge_scores >= find_threshold(edge_scores.flatten(), edge_threshold)
-
     feature_idx = torch.tensor(idx["feature"], dtype=torch.long, device=adj.device)
     non_boundary = torch.tensor(idx["feature"] + idx["error"], dtype=torch.long, device=adj.device)
 
-    old = node_mask.clone()
-    if len(non_boundary):
-        node_mask[non_boundary] &= edge_mask[:, non_boundary].any(0)
-    if len(feature_idx):
-        node_mask[feature_idx] &= edge_mask[feature_idx].any(1)
-
-    while not torch.all(node_mask == old):
-        old[:] = node_mask
-        edge_mask[~node_mask] = False
-        edge_mask[:, ~node_mask] = False
-        if len(non_boundary):
-            node_mask[non_boundary] &= edge_mask[:, non_boundary].any(0)
-        if len(feature_idx):
-            node_mask[feature_idx] &= edge_mask[feature_idx].any(1)
+    # Use helper to iteratively remove dangling nodes after edge masking
+    node_mask = remove_dangling_nodes(node_mask, edge_mask, feature_idx, non_boundary)
 
     # Calculate cumulative influence scores
     sorted_scores, sorted_indices = torch.sort(node_inf, descending=True)
@@ -248,24 +191,11 @@ def prune_by_relevance(
 
     edge_scores = compute_edge_relevance(pruned, emb_weights)
     edge_mask = edge_scores >= find_threshold(edge_scores.flatten(), edge_threshold)
-
     feature_idx = torch.tensor(idx["feature"], dtype=torch.long, device=adj.device)
     non_boundary = torch.tensor(idx["feature"] + idx["error"], dtype=torch.long, device=adj.device)
 
-    old = node_mask.clone()
-    if len(non_boundary):
-        node_mask[non_boundary] &= edge_mask[:, non_boundary].any(0)
-    if len(feature_idx):
-        node_mask[feature_idx] &= edge_mask[feature_idx].any(1)
-
-    while not torch.all(node_mask == old):
-        old[:] = node_mask
-        edge_mask[~node_mask] = False
-        edge_mask[:, ~node_mask] = False
-        if len(non_boundary):
-            node_mask[non_boundary] &= edge_mask[:, non_boundary].any(0)
-        if len(feature_idx):
-            node_mask[feature_idx] &= edge_mask[feature_idx].any(1)
+    # Use helper to iteratively remove dangling nodes after edge masking
+    node_mask = remove_dangling_nodes(node_mask, edge_mask, feature_idx, non_boundary)
 
     # Calculate cumulative relevance scores
     sorted_scores, sorted_indices = torch.sort(node_rel, descending=True)
@@ -309,21 +239,8 @@ def prune_combined(
     idx = _build_index_sets(node_ids, attr)
     feature_idx = torch.tensor(idx["feature"], dtype=torch.long, device=adj.device)
     non_boundary = torch.tensor(idx["feature"] + idx["error"], dtype=torch.long, device=adj.device)
-
-    old = node_mask.clone()
-    if len(non_boundary):
-        node_mask[non_boundary] &= edge_mask[:, non_boundary].any(0)
-    if len(feature_idx):
-        node_mask[feature_idx] &= edge_mask[feature_idx].any(1)
-
-    while not torch.all(node_mask == old):
-        old[:] = node_mask
-        edge_mask[~node_mask] = False
-        edge_mask[:, ~node_mask] = False
-        if len(non_boundary):
-            node_mask[non_boundary] &= edge_mask[:, non_boundary].any(0)
-        if len(feature_idx):
-            node_mask[feature_idx] &= edge_mask[feature_idx].any(1)
+    # Use helper to iteratively remove dangling nodes after combining masks
+    node_mask = remove_dangling_nodes(node_mask, edge_mask, feature_idx, non_boundary)
 
     return node_mask, edge_mask, node_inf[node_mask], node_rel[node_mask]
 
@@ -393,8 +310,14 @@ def prune_graph_pipeline(
                 edge_mask[idx, :] = False
                 edge_mask[:, idx] = False
 
-        kept_indices = node_mask.nonzero(as_tuple=True)[0]
-        kept_ids = [node_ids[i] for i in kept_indices.tolist()]
+    # after removing nodes due to activation density, remove any newly-dangling nodes
+    idx2 = _build_index_sets(node_ids, attr)
+    feature_idx = torch.tensor(idx2["feature"], dtype=torch.long, device=adj.device)
+    non_boundary = torch.tensor(idx2["feature"] + idx2["error"], dtype=torch.long, device=adj.device)
+    node_mask = remove_dangling_nodes(node_mask, edge_mask, feature_idx, non_boundary)
+
+    kept_indices = node_mask.nonzero(as_tuple=True)[0]
+    kept_ids = [node_ids[i] for i in kept_indices.tolist()]
 
     pruned_adj = adj[kept_indices][:, kept_indices].clone()
     kept_edge_mask = edge_mask[kept_indices][:, kept_indices]

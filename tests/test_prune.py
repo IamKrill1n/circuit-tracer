@@ -2,6 +2,7 @@ import pytest
 import torch
 
 from circuit_tracer.subgraph.prune import (
+    PruneGraph,
     PruneResult,
     _validate_threshold,
     _validate_inputs,
@@ -201,7 +202,7 @@ def test_prune_combined_shapes_and_scores_subset(tiny_graph):
     assert node_rel_kept.shape[0] == int(node_mask.sum().item())
 
 
-def test_prune_graph_pipeline_returns_new_signature(monkeypatch, tiny_graph):
+def test_prune_graph_pipeline_returns_prunegraph(monkeypatch, tiny_graph):
     adj, node_ids, attr = tiny_graph
 
     def fake_loader(_json_path):
@@ -209,7 +210,7 @@ def test_prune_graph_pipeline_returns_new_signature(monkeypatch, tiny_graph):
 
     monkeypatch.setattr("circuit_tracer.subgraph.prune.get_data_from_json", fake_loader)
 
-    kept_ids, pruned_adj, node_inf, node_rel, out_attr, metadata = prune_graph_pipeline(
+    out = prune_graph_pipeline(
         json_path="dummy.json",
         logit_weights="target",
         token_weights=[1.0],
@@ -220,17 +221,20 @@ def test_prune_graph_pipeline_returns_new_signature(monkeypatch, tiny_graph):
         keep_all_tokens_and_logits=False,
     )
 
-    assert isinstance(kept_ids, list)
-    assert isinstance(pruned_adj, torch.Tensor)
-    assert pruned_adj.ndim == 2
-    assert node_inf.ndim == 1
-    assert node_rel.ndim == 1
-    assert set(kept_ids) == set(out_attr.keys())
-    assert metadata["prompt"] == "hello"
-    assert pruned_adj.shape[0] == len(kept_ids)
-    assert pruned_adj.shape[1] == len(kept_ids)
-    assert node_inf.shape[0] == len(kept_ids)
-    assert node_rel.shape[0] == len(kept_ids)
+    assert isinstance(out, PruneGraph)
+    assert isinstance(out.kept_ids, list)
+    assert isinstance(out.pruned_adj, torch.Tensor)
+    assert out.pruned_adj.ndim == 2
+    assert out.node_influence.ndim == 1
+    assert out.node_relevance.ndim == 1
+    assert set(out.kept_ids) == set(out.attr.keys())
+    assert out.metadata["prompt"] == "hello"
+    assert out.pruned_adj.shape[0] == len(out.kept_ids)
+    assert out.pruned_adj.shape[1] == len(out.kept_ids)
+    assert out.node_influence.shape[0] == len(out.kept_ids)
+    assert out.node_relevance.shape[0] == len(out.kept_ids)
+    assert out.num_nodes == len(out.kept_ids)
+    assert out.num_edges() == int((out.pruned_adj != 0).sum().item())
 
 
 def test_prune_graph_pipeline_threshold_validation(monkeypatch, tiny_graph):
