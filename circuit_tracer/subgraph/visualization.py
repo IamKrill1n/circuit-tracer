@@ -161,10 +161,8 @@ if __name__ == "__main__":
         json_path=graph_path,
         logit_weights="target",
         token_weights=token_weights,
-        node_influence_threshold=0.6,
-        edge_influence_threshold=0.7,
-        node_relevance_threshold=0.4,
-        edge_relevance_threshold=0.5,
+        node_threshold=0.6,
+        edge_threshold=0.7,
         keep_all_tokens_and_logits=False,
     )
 
@@ -182,10 +180,8 @@ if __name__ == "__main__":
     #         json_path=graph_path,
     #         logit_weights="target",
     #         token_weights=None,
-    #         node_influence_threshold=0.8,
-    #         edge_influence_threshold=0.95,
-    #         node_relevance_threshold=node_relevance_threshold,
-    #         edge_relevance_threshold=0.95,
+    #         node_threshold=0.8,
+    #         edge_threshold=0.95,
     #         keep_all_tokens_and_logits=False,
     #     )
 

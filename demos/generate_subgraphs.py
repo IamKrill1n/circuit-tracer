@@ -11,10 +11,8 @@ def generate_subgraphs(
     graph_path: str,
     logit_weights: str = "target",
     token_weights=None,
-    node_influence_threshold: float = 0.8,
-    edge_influence_threshold: float = 0.98,
-    node_relevance_threshold: float = 0.8,
-    edge_relevance_threshold: float = 0.98,
+    node_threshold: float = 0.8,
+    edge_threshold: float = 0.98,
     keep_all_tokens_and_logits: bool = False,
     save: bool = False,
     model_id: str = "",
@@ -28,10 +26,8 @@ def generate_subgraphs(
         graph_path:                  path to the graph JSON file
         logit_weights:               "target" or "probs"
         token_weights:               per-token relevance weights; None => uniform
-        node_influence_threshold:    cumulative influence fraction to keep
-        edge_influence_threshold:    cumulative edge-influence fraction to keep
-        node_relevance_threshold:    cumulative relevance fraction to keep
-        edge_relevance_threshold:    cumulative edge-relevance fraction to keep
+        node_threshold:              cumulative node-score fraction to keep
+        edge_threshold:              cumulative edge-score fraction to keep
         keep_all_tokens_and_logits:  keep all embeddings/logits or only target logit
         save:                        upload subgraph to Neuronpedia
         model_id:                    model identifier for save (e.g. "gemma-2-2b")
@@ -43,10 +39,8 @@ def generate_subgraphs(
         json_path=graph_path,
         logit_weights=logit_weights,
         token_weights=token_weights,
-        node_influence_threshold=node_influence_threshold,
-        edge_influence_threshold=edge_influence_threshold,
-        node_relevance_threshold=node_relevance_threshold,
-        edge_relevance_threshold=edge_relevance_threshold,
+        node_threshold=node_threshold,
+        edge_threshold=edge_threshold,
         keep_all_tokens_and_logits=keep_all_tokens_and_logits,
     )
 
@@ -67,8 +61,8 @@ def generate_subgraphs(
                 slug=_slug,
                 displayName=_display_name,
                 pinnedIds=kept_ids,
-                pruningThreshold=node_influence_threshold,
-                densityThreshold=edge_influence_threshold,
+                pruningThreshold=node_threshold,
+                densityThreshold=edge_threshold,
             )
             print(f"Save status: {status}")
             print(response)
@@ -84,10 +78,8 @@ if __name__ == "__main__":
         graph_path="demos/temp_graph_files/austin.json",
         logit_weights="target",
         token_weights=token_weights,
-        node_influence_threshold=0.6,
-        edge_influence_threshold=0.95,
-        node_relevance_threshold=0.8,
-        edge_relevance_threshold=0.9,
+        node_threshold=0.6,
+        edge_threshold=0.95,
         keep_all_tokens_and_logits=False,
         model_id="gemma-2-2b",
         display_name="Austin Subgraph",

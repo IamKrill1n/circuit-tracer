@@ -186,10 +186,8 @@ def test_prune_combined_shapes_and_scores_subset(tiny_graph):
         attr=attr,
         logit_weights="target",
         token_weights=[1.0],
-        node_influence_threshold=0.9,
-        edge_influence_threshold=0.9,
-        node_relevance_threshold=0.9,
-        edge_relevance_threshold=0.9,
+        node_threshold=0.9,
+        edge_threshold=0.9,
         keep_all_tokens_and_logits=False,
     )
     assert node_mask.dtype == torch.bool
@@ -214,10 +212,8 @@ def test_prune_graph_pipeline_returns_prunegraph(monkeypatch, tiny_graph):
         json_path="dummy.json",
         logit_weights="target",
         token_weights=[1.0],
-        node_influence_threshold=0.9,
-        edge_influence_threshold=0.9,
-        node_relevance_threshold=0.9,
-        edge_relevance_threshold=0.9,
+        node_threshold=0.9,
+        edge_threshold=0.9,
         keep_all_tokens_and_logits=False,
     )
 
@@ -225,14 +221,12 @@ def test_prune_graph_pipeline_returns_prunegraph(monkeypatch, tiny_graph):
     assert isinstance(out.kept_ids, list)
     assert isinstance(out.pruned_adj, torch.Tensor)
     assert out.pruned_adj.ndim == 2
-    assert out.node_influence.ndim == 1
-    assert out.node_relevance.ndim == 1
+    assert out.node_scores.ndim == 1
     assert set(out.kept_ids) == set(out.attr.keys())
     assert out.metadata["prompt"] == "hello"
     assert out.pruned_adj.shape[0] == len(out.kept_ids)
     assert out.pruned_adj.shape[1] == len(out.kept_ids)
-    assert out.node_influence.shape[0] == len(out.kept_ids)
-    assert out.node_relevance.shape[0] == len(out.kept_ids)
+    assert out.node_scores.shape[0] == len(out.kept_ids)
     assert out.num_nodes == len(out.kept_ids)
     assert out.num_edges() == int((out.pruned_adj != 0).sum().item())
 
@@ -245,9 +239,9 @@ def test_prune_graph_pipeline_threshold_validation(monkeypatch, tiny_graph):
 
     monkeypatch.setattr("circuit_tracer.subgraph.prune.get_data_from_json", fake_loader)
 
-    with pytest.raises(ValueError, match="node_influence_threshold"):
+    with pytest.raises(ValueError, match="node_threshold"):
         prune_graph_pipeline(
             json_path="dummy.json",
             logit_weights="target",
-            node_influence_threshold=1.5,
+            node_threshold=1.5,
         )

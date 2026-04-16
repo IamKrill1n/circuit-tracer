@@ -151,10 +151,8 @@ def create_graph_files(
     scan=None,
     token_weights=None,
     logit_weights : str = "target",
-    node_influence_threshold=0.8,
-    edge_influence_threshold=0.98,
-    node_relevance_threshold=0.8,
-    edge_relevance_threshold=0.98,
+    node_threshold=0.8,
+    edge_threshold=0.98,
     keep_all_tokens_and_logits=True
 ):
     from circuit_tracer.graph import Graph, prune_graph

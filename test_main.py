@@ -49,10 +49,8 @@ kept_ids, pruned_adj, node_inf, node_rel, attr, metadata = prune_graph_pipeline(
     json_path=json_path,
     logit_weights='target',
     token_weights=token_weights,
-    node_influence_threshold=0.7,
-    edge_influence_threshold=0.9,
-    node_relevance_threshold=0.8,
-    edge_relevance_threshold=0.9,
+    node_threshold=0.7,
+    edge_threshold=0.9,
     keep_all_tokens_and_logits=False,
 )
 
