@@ -14,10 +14,11 @@ from circuit_tracer.graph import (
     compute_node_relevance,
     compute_edge_relevance,
     combine_scores_geometric,
+    combined_scores_arithmetic,
+    combined_scores_harmonic,
     find_threshold,
 )
 from circuit_tracer.subgraph.utils import get_data_from_json
-
 logger = logging.getLogger(__name__)
 
 LogitWeightMode = Literal["probs", "target"]
@@ -167,6 +168,8 @@ def prune_combined(
     token_weights: Optional[List[float]] = None,
     node_threshold: float = 0.8,
     edge_threshold: float = 0.98,
+    combined_scores_method: str = "geometric",
+    normalization: str = "min_max",
     alpha: float = 0.5,
     keep_all_tokens_and_logits: bool = True,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -200,7 +203,14 @@ def prune_combined(
 
     node_inf = compute_node_influence(adj, logits_seed)
     node_rel = compute_node_relevance(adj, emb_weights)
-    node_scores = combine_scores_geometric(node_inf, node_rel, alpha=alpha)
+    if combined_scores_method == "geometric":
+        node_scores = combine_scores_geometric(node_inf, node_rel, alpha=alpha, normalization=normalization)
+    elif combined_scores_method == "arithmetic":
+        node_scores = combined_scores_arithmetic(node_inf, node_rel, alpha=alpha, normalization=normalization)
+    elif combined_scores_method == "harmonic":
+        node_scores = combined_scores_harmonic(node_inf, node_rel, alpha=alpha, normalization=normalization)
+    else:
+        raise ValueError(f"Invalid combined scores method: {combined_scores_method}")
     node_mask = node_scores >= find_threshold(node_scores, node_threshold)
 
     if keep_all_tokens_and_logits:
@@ -218,7 +228,14 @@ def prune_combined(
 
     edge_inf = compute_edge_influence(pruned, logits_seed)
     edge_rel = compute_edge_relevance(pruned, emb_weights)
-    edge_scores = combine_scores_geometric(edge_inf.flatten(), edge_rel.flatten(), alpha=alpha).reshape_as(edge_inf)
+    if combined_scores_method == "geometric":
+        edge_scores = combine_scores_geometric(edge_inf.flatten(), edge_rel.flatten(), alpha=alpha, normalization=normalization).reshape_as(edge_inf)
+    elif combined_scores_method == "arithmetic":
+        edge_scores = combined_scores_arithmetic(edge_inf.flatten(), edge_rel.flatten(), alpha=alpha, normalization=normalization).reshape_as(edge_inf)
+    elif combined_scores_method == "harmonic":
+        edge_scores = combined_scores_harmonic(edge_inf.flatten(), edge_rel.flatten(), alpha=alpha, normalization=normalization).reshape_as(edge_inf)
+    else:
+        raise ValueError(f"Invalid combined scores method: {combined_scores_method}")
     edge_mask = edge_scores >= find_threshold(edge_scores.flatten(), edge_threshold)
 
     idx = _build_index_sets(node_ids, attr)
@@ -239,6 +256,8 @@ def prune_graph_pipeline(
     alpha: float = 0.5,
     keep_all_tokens_and_logits: bool = True,
     filter_act_density: bool = False,
+    combined_scores_method: str = "geometric",
+    normalization: str = "min_max",
     act_density_lb: float = 2e-5,
     act_density_ub: float = 0.1,
 ) -> PruneGraph:
@@ -254,6 +273,8 @@ def prune_graph_pipeline(
         token_weights=token_weights,
         node_threshold=node_threshold,
         edge_threshold=edge_threshold,
+        combined_scores_method=combined_scores_method,
+        normalization=normalization,
         alpha=alpha,
         keep_all_tokens_and_logits=keep_all_tokens_and_logits,
     )

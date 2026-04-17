@@ -55,8 +55,7 @@ def _compute_mediation_penalty(
 
 def compute_similarity(
     prune_graph: PruneGraph,
-    alpha: float = 0.5,
-    beta: float = 0.5,
+    gamma: float = 1,
     mediation_penalty: float = 0.1,
 ) -> torch.Tensor:
     """Compute node similarity from shared in/out neighbors, weighted by act/inf."""
@@ -66,25 +65,13 @@ def compute_similarity(
     # Match structure_grouping convention: sender-indexed adjacency.
     adj = prune_graph.pruned_adj.clone().float().T
 
-    act_t = torch.tensor(
-        [float(attr.get(n, {}).get("activation", 0.0) or 0.0) for n in kept_ids],
-        dtype=torch.float32,
-        device=adj.device,
-    )
-    inf_t = torch.tensor(
-        [float(attr.get(n, {}).get("influence", 0.0) or 0.0) for n in kept_ids],
-        dtype=torch.float32,
-        device=adj.device,
-    )
+    # calculate similarity matrix
+    W = torch.diag(1 - prune_graph.node_scores)
 
-    act_norm = act_t / (act_t.max() + 1e-8)
-    inf_norm = inf_t / (inf_t.max() + 1e-8)
-    w = torch.diag(alpha * act_norm + beta * inf_norm)
+    S_out_cos = _cosine_norm(adj @ W @ adj.T)
+    S_in_cos  = _cosine_norm(adj.T @ W @ adj)
 
-    s_out_cos = _cosine_norm(adj @ w @ adj.T)
-    s_in_cos = _cosine_norm(adj.T @ w @ adj)
-    s = (0.5 * s_out_cos + 0.5 * s_in_cos).clamp(0.0, 1.0)
-
+    s = (0.5 * S_out_cos + 0.5 * S_in_cos).clamp(0.0, 1.0)
     layers = [_parse_layer(attr, n) for n in kept_ids]
     if mediation_penalty < 1.0:
         p = _compute_mediation_penalty(adj=adj, layers=layers, mediation_penalty=mediation_penalty)
@@ -188,8 +175,7 @@ def cluster_graph(
     target_k: int = 7,
     max_layer_span: int = 4,
     max_sn: int | None = None,
-    alpha: float = 0.5,
-    beta: float = 0.5,
+    
     mediation_penalty: float = 0.1,
 ) -> list[list[str]]:
     """
@@ -216,8 +202,7 @@ def cluster_graph(
 
     sim = compute_similarity(
         prune_graph,
-        alpha=alpha,
-        beta=beta,
+        gamma=gamma,
         mediation_penalty=mediation_penalty,
     )
 

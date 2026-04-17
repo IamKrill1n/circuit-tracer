@@ -223,30 +223,77 @@ class PruneResult(NamedTuple):
     edge_mask: torch.Tensor  # Boolean tensor indicating which edges to keep
     cumulative_scores: torch.Tensor  # Tensor of cumulative influence scores for each node
 
-def normalize_scores(scores: torch.Tensor, eps: float = 1e-10):
+def normalize_scores_min_max(scores: torch.Tensor, eps: float = 1e-10):
     scores = scores.clone()
     scores = scores - scores.min()
     scores = scores / (scores.max() + eps)
     return scores
 
+def normalize_scores_rank(scores):
+    ranks = torch.argsort(torch.argsort(scores))
+    return ranks.float() / (len(scores) - 1)
+
 def combine_scores_geometric(
     influence: torch.Tensor,
     relevance: torch.Tensor,
+    normalization: str = "min_max",
     alpha: float = 0.5,
     eps: float = 1e-10,
 ):
     # Normalize first (important!)
-    I = normalize_scores(influence, eps)
-    R = normalize_scores(relevance, eps)
+    if normalization == "min_max":
+        I = normalize_scores_min_max(influence, eps)
+        R = normalize_scores_min_max(relevance, eps)
+    elif normalization == "rank":
+        I = normalize_scores_rank(influence)
+        R = normalize_scores_rank(relevance)
+    else:
+        raise ValueError(f"Invalid normalization method: {normalization}")
 
     # Geometric mean with alpha
     S = (I + eps) ** alpha * (R + eps) ** (1 - alpha)
     return S
 
+def combined_scores_arithmetic(
+    influence: torch.Tensor,
+    relevance: torch.Tensor,
+    normalization: str = "min_max",
+    alpha: float = 0.5,
+    eps: float = 1e-10,
+):
+    if normalization == "min_max":
+        I = normalize_scores_min_max(influence, eps)
+        R = normalize_scores_min_max(relevance, eps)
+    elif normalization == "rank":
+        I = normalize_scores_rank(influence)
+        R = normalize_scores_rank(relevance)
+    else:
+        raise ValueError(f"Invalid normalization method: {normalization}")
+    return I * alpha + R * (1 - alpha)
+
+def combined_scores_harmonic(
+    influence: torch.Tensor,
+    relevance: torch.Tensor,
+    normalization: str = "min_max",
+    alpha: float = 0.5,
+    eps: float = 1e-10,
+):
+    if normalization == "min_max":
+        I = normalize_scores_min_max(influence, eps)
+        R = normalize_scores_min_max(relevance, eps)
+    elif normalization == "rank":
+        I = normalize_scores_rank(influence)
+        R = normalize_scores_rank(relevance)
+    else:
+        raise ValueError(f"Invalid normalization method: {normalization}")
+    return 1 / ((1 / (I + eps) + alpha) + (1 / (R + eps) + alpha))
+
 def prune_graph(
     graph: Graph,
     token_weights=None,
     logit_weights=None,
+    combined_scores_method: str = "geometric",
+    normalization: str = "min_max",
     node_threshold: float = 0.8,
     edge_threshold: float = 0.98,
     alpha: float = 0.5,
@@ -316,6 +363,7 @@ def prune_graph(
         edge_influence.flatten(),
         edge_relevance.flatten(),
         alpha=alpha,
+        normalization=normalization,
     ).reshape_as(edge_influence)
 
     edge_mask = edge_scores >= find_threshold(edge_scores.flatten(), edge_threshold)

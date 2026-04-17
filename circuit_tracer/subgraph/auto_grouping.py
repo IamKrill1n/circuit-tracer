@@ -199,8 +199,7 @@ def find_best_k(
     k_max_override: int | None = None,
     weights: dict[str, float] | None = None,
     max_sn: int | None = None,
-    alpha: float = 0.5,
-    beta: float = 0.5,
+    gamma: float = 1,
     mediation_penalty: float = 0.1,
 ) -> tuple[int, dict[int, dict[str, Any]]]:
     """
@@ -212,8 +211,7 @@ def find_best_k(
     if sim is None:
         sim = compute_similarity(
             prune_graph,
-            alpha=alpha,
-            beta=beta,
+            gamma=gamma,
             mediation_penalty=mediation_penalty,
         )
     s_np = np.asarray(sim.detach().cpu().numpy() if hasattr(sim, "detach") else sim)
@@ -237,8 +235,7 @@ def find_best_k(
             target_k=k,
             max_layer_span=max_layer_span,
             max_sn=max_sn,
-            alpha=alpha,
-            beta=beta,
+            gamma=gamma,
             mediation_penalty=mediation_penalty,
         )
         final_supernodes = supernodes_to_mapping(prune_graph, supernodes)
