@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from typing import Literal
 
 import torch
 
@@ -57,6 +58,7 @@ def compute_similarity(
     prune_graph: PruneGraph,
     gamma: float = 1,
     mediation_penalty: float = 0.1,
+    similarity_mode: Literal["scores", "relevance", "influence", "uniform"] = "scores",
 ) -> torch.Tensor:
     """Compute node similarity from shared in/out neighbors, weighted by act/inf."""
     kept_ids = prune_graph.kept_ids
@@ -66,7 +68,30 @@ def compute_similarity(
     adj = prune_graph.pruned_adj.clone().float().T
 
     # calculate similarity matrix
-    W = torch.diag(1 - prune_graph.node_scores)
+    if similarity_mode == "scores":
+        weights = 1 - prune_graph.node_scores
+    elif similarity_mode == "relevance":
+        rel = torch.tensor(
+            [float(attr.get(nid, {}).get("relevance", 0.0) or 0.0) for nid in kept_ids],
+            dtype=torch.float32,
+            device=adj.device,
+        )
+        weights = rel / (rel.max() + 1e-8)
+    elif similarity_mode == "influence":
+        inf = torch.tensor(
+            [float(attr.get(nid, {}).get("influence", 0.0) or 0.0) for nid in kept_ids],
+            dtype=torch.float32,
+            device=adj.device,
+        )
+        weights = inf / (inf.max() + 1e-8)
+    elif similarity_mode == "uniform":
+        weights = torch.ones(len(kept_ids), dtype=torch.float32, device=adj.device)
+    else:
+        raise ValueError(
+            f"Unsupported similarity_mode={similarity_mode!r}. "
+            "Expected one of: scores, relevance, influence, uniform."
+        )
+    W = torch.diag(weights.clamp(min=0.0))
 
     S_out_cos = _cosine_norm(adj @ W @ adj.T)
     S_in_cos  = _cosine_norm(adj.T @ W @ adj)
@@ -175,8 +200,10 @@ def cluster_graph(
     target_k: int = 7,
     max_layer_span: int = 4,
     max_sn: int | None = None,
-    
+    gamma: float = 1,
     mediation_penalty: float = 0.1,
+    similarity_mode: Literal["scores", "relevance", "influence", "uniform"] = "scores",
+    enforce_dag: bool = True,
 ) -> list[list[str]]:
     """
     Cluster a pruned attribution graph into supernodes.
@@ -204,6 +231,7 @@ def cluster_graph(
         prune_graph,
         gamma=gamma,
         mediation_penalty=mediation_penalty,
+        similarity_mode=similarity_mode,
     )
 
     middle_idx = [i for i, nid in enumerate(kept_ids) if not _is_fixed(attr, nid)]
@@ -225,7 +253,7 @@ def cluster_graph(
         for i in range(len(clusters)):
             for j in range(i + 1, len(clusters)):
                 merged_idx = clusters[i] + clusters[j]
-                if _layer_span(merged_idx, layers) > max_layer_span:
+                if enforce_dag and _layer_span(merged_idx, layers) > max_layer_span:
                     continue
 
                 sim_score = _cluster_similarity(
@@ -246,9 +274,10 @@ def cluster_graph(
         clusters = [c for k, c in enumerate(clusters) if k not in (i_best, j_best)] + [merged]
 
     middle_clusters = [[middle_ids[i] for i in c] for c in clusters]
-    middle_clusters = _resolve_layer_interleaving(middle_clusters, attr)
+    if enforce_dag:
+        middle_clusters = _resolve_layer_interleaving(middle_clusters, attr)
 
-    if max_sn is not None:
+    if max_sn is not None and enforce_dag:
         middle_clusters = _merge_to_budget(middle_clusters, attr, max_sn=max_sn)
 
     # Keep deterministic naming order for middle SNs, but return member lists only.
