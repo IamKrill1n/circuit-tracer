@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 from scipy.linalg import eigvalsh
@@ -230,6 +230,7 @@ def find_best_k(
     max_sn: int | None = None,
     gamma: float = 1,
     mediation_penalty: float = 0.1,
+    similarity_mode: Literal["scores", "relevance", "influence", "uniform", "edge"] = "edge",
     use_flow_faithfulness: bool = True,
     w_flow: float = 0.40,
     enforce_dag: bool = False,
@@ -245,6 +246,7 @@ def find_best_k(
             prune_graph,
             gamma=gamma,
             mediation_penalty=mediation_penalty,
+            similarity_mode=similarity_mode,
         )
     s_np = np.asarray(sim.detach().cpu().numpy() if hasattr(sim, "detach") else sim)
     n_middle = len(_middle_indices(prune_graph))
@@ -269,6 +271,7 @@ def find_best_k(
             max_sn=max_sn,
             gamma=gamma,
             mediation_penalty=mediation_penalty,
+            similarity_mode=similarity_mode,
             enforce_dag=enforce_dag,
         )
         final_supernodes = supernodes_to_mapping(prune_graph, supernodes)
