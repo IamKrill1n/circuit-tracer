@@ -1,15 +1,16 @@
 import os
-from circuit_tracer.subgraph.prune import prune_graph_pipeline
-from circuit_tracer.subgraph.api import generate_graph, get_feature, save_subgraph
-from circuit_tracer.subgraph.classify import classify_features, classify_features_with_llm
-from circuit_tracer.subgraph.group import grouping_pipeline
+from circuit_tracer.subgraph.prune import prune_graph_pipeline, load_prune_graph
+# from circuit_tracer.subgraph.api import generate_graph, get_feature, save_subgraph
+# from circuit_tracer.subgraph.classify import classify_features, classify_features_with_llm
+from circuit_tracer.subgraph.auto_grouping import find_best_k
+from circuit_tracer.subgraph.cluster import cluster_graph, cluster_graph_with_labels
 from pathlib import Path
 import torch
 
-from circuit_tracer import ReplacementModel, attribute
-from circuit_tracer.utils.create_graph_files import create_graph_files  
-from circuit_tracer.graph import Graph, prune_graph, compute_graph_scores
-from transformers import AutoModelForCausalLM, AutoTokenizer
+# from circuit_tracer import ReplacementModel, attribute
+# from circuit_tracer.utils.create_graph_files import create_graph_files  
+# from circuit_tracer.graph import Graph, prune_graph, compute_graph_scores
+# from transformers import AutoModelForCausalLM, AutoTokenizer
 import shap
 from scipy.special import softmax
 
@@ -40,26 +41,33 @@ hf_token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_KEY")
 # token_weights = softmax(shap_values.values.squeeze())
 # print(token_weights)
 
-json_path = "demos/temp_graph_files/austin.json"
+json_path = "demos/temp_graph_files/austin_clt.json"
 source_set = 'clt-hp' #'clt-hp' # gemmascope-transcoder-16k
 # token_weights = [0.00198786, 0.03153391, 0.00083086, 0.01473883, 0.22338926, 0.00649094,
 #  0.00222269, 0.01996207, 0.0052309, 0.67869559, 0.01491708]
 token_weights = [0, 0, 0, 0, 1/3, 0, 0, 1/3, 0, 1/3, 0]
-kept_ids, pruned_adj, node_inf, node_rel, attr, metadata = prune_graph_pipeline(
-    json_path=json_path,
-    logit_weights='target',
-    token_weights=token_weights,
-    node_threshold=0.7,
-    edge_threshold=0.9,
-    keep_all_tokens_and_logits=False,
-)
+# prune_graph = prune_graph_pipeline(
+#     json_path=json_path,
+#     logit_weights='target',
+#     token_weights=token_weights,
+#     node_threshold=0.7,
+#     edge_threshold=0.9,
+#     combined_scores_method="geometric",
+#     normalization="min_max",
+#     alpha=0.5,
+#     keep_all_tokens_and_logits=False,
+#     filter_act_density=False,
+# )
 
-# print(len(kept_ids))
-for i, node_id in enumerate(kept_ids):
-    print(node_id, attr[node_id].get("clerp", ""), node_inf[i].item(), node_rel[i].item())
+prune_graph = load_prune_graph("demos\\subgraph\\austin_plt_clean_5_95_55.pt")
+# print(prune_graph.metadata)
+best_k, sweep = find_best_k(prune_graph, max_layer_span=4, gamma=1, mediation_penalty=0.1, similarity=None)
+print(best_k)
+# print(sweep)
 
-# print(attr['1_89326_9'])
 
-# LLM-based classify using OpenAI
-feature_types = classify_features_with_llm(kept_ids, attr, metadata)
-print(feature_types)
+supernodes = cluster_graph_with_labels(prune_graph, target_k=best_k, max_layer_span=4, max_sn=None, mediation_penalty=0.1)
+for supernode in supernodes:
+    print(supernode[0])
+    for node_id in supernode[1:]:
+        print(node_id, prune_graph.attr[node_id].get("clerp", ""), prune_graph.node_scores[prune_graph.kept_ids.index(node_id)].item())
