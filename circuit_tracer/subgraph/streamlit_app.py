@@ -1,300 +1,461 @@
 from __future__ import annotations
 
-import tempfile
+import json
 from pathlib import Path
 from typing import Any
 
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
-import pandas as pd
 import streamlit as st
-import torch
 
 from circuit_tracer.subgraph.cluster import cluster_graph
 from circuit_tracer.subgraph.flow_analysis import build_supernode_graph, supernodes_to_mapping
 from circuit_tracer.subgraph.prune import PruneGraph, load_prune_graph, prune_graph_pipeline
-from circuit_tracer.subgraph.utils import _parse_layer
+
+FULL_GRAPH_MODE = "Existing full graph JSON"
+PRUNED_GRAPH_MODE = "Existing pruned graph (.pt)"
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_JSON_DIRS = [REPO_ROOT / "demos" / "temp_graph_files", REPO_ROOT / "demos" / "graph_files"]
-DEFAULT_PRUNED_DIR = REPO_ROOT / "demos" / "subgraph"
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
 
 
-def _list_paths(paths: list[Path], suffix: str) -> list[Path]:
-    all_files: list[Path] = []
+def _list_files(paths: list[Path], suffix: str) -> list[Path]:
+    files: list[Path] = []
     for directory in paths:
-        if directory.exists():
-            all_files.extend(sorted(directory.glob(f"*{suffix}")))
-    return all_files
+        if not directory.exists():
+            continue
+        files.extend(sorted(directory.glob(f"*{suffix}")))
+    return sorted(files)
 
 
-def _parse_token_weights(raw_value: str) -> list[float] | None:
-    cleaned = raw_value.strip()
+def _format_path_for_ui(path: Path) -> str:
+    root = _repo_root()
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
+
+def _parse_token_weights(raw: str) -> list[float] | None:
+    cleaned = raw.strip()
     if not cleaned:
         return None
-    return [float(value.strip()) for value in cleaned.split(",") if value.strip()]
+    items = [part.strip() for part in cleaned.split(",") if part.strip()]
+    return [float(item) for item in items]
 
 
-def _save_uploaded_file(data: bytes, suffix: str) -> str:
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as handle:
-        handle.write(data)
-        return handle.name
+def _to_jsonable(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        return {key: _to_jsonable(value) for key, value in obj.items()}
+    if isinstance(obj, list):
+        return [_to_jsonable(value) for value in obj]
+    if isinstance(obj, tuple):
+        return [_to_jsonable(value) for value in obj]
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if hasattr(obj, "detach"):
+        return obj.detach().cpu().tolist()
+    return obj
 
 
-def _supernode_kind(name: str) -> str:
-    if "EMB" in name:
-        return "embedding"
-    if "LOGIT" in name:
-        return "logit"
-    return "middle"
-
-
-def _build_supernode_graph_nx(
+def _build_supernode_network(
     supernode_map: dict[str, list[str]],
-    supernode_flow: dict[str, Any],
-    attr: dict[str, dict[str, Any]],
+    sng: dict[str, Any],
+    edge_threshold: float,
 ) -> nx.DiGraph:
     graph = nx.DiGraph()
-    sn_names = supernode_flow["sn_names"]
-    sn_adj = np.asarray(supernode_flow["sn_adj"], dtype=np.float64)
-    sn_inf = np.asarray(supernode_flow["sn_inf"], dtype=np.float64)
+    sn_names: list[str] = list(sng["sn_names"])
+    sn_adj = np.asarray(sng["sn_adj"], dtype=np.float64)
+    sn_inf = np.asarray(sng["sn_inf"], dtype=np.float64)
 
-    for index, sn_name in enumerate(sn_names):
-        members = supernode_map.get(sn_name, [])
-        min_layer = min((_parse_layer(attr, node_id) for node_id in members), default=-1)
+    for idx, name in enumerate(sn_names):
+        members = supernode_map.get(name, [])
+        if "EMB" in name:
+            sn_type = "embedding"
+        elif "LOGIT" in name:
+            sn_type = "logit"
+        else:
+            sn_type = "middle"
         graph.add_node(
-            sn_name,
-            kind=_supernode_kind(sn_name),
-            members=members,
-            member_count=len(members),
-            min_layer=min_layer,
-            influence=float(sn_inf[index]),
+            name,
+            n_members=len(members),
+            influence=float(sn_inf[idx]),
+            type=sn_type,
         )
 
-    for src_idx, src_name in enumerate(sn_names):
-        for dst_idx, dst_name in enumerate(sn_names):
-            if src_idx == dst_idx:
+    for i, src in enumerate(sn_names):
+        for j, dst in enumerate(sn_names):
+            if i == j:
                 continue
-            weight = float(sn_adj[src_idx, dst_idx])
-            if weight == 0.0:
-                continue
-            graph.add_edge(src_name, dst_name, weight=weight)
+            weight = float(sn_adj[i, j])
+            if abs(weight) >= edge_threshold:
+                graph.add_edge(src, dst, weight=weight)
 
     return graph
 
 
-def _layered_layout(graph: nx.DiGraph) -> dict[str, tuple[float, float]]:
-    grouped: dict[int, list[str]] = {}
-    for node_name, data in graph.nodes(data=True):
-        grouped.setdefault(int(data.get("min_layer", -1)), []).append(node_name)
-
-    positions: dict[str, tuple[float, float]] = {}
-    for x_index, layer in enumerate(sorted(grouped)):
-        names = sorted(grouped[layer], key=lambda name: (graph.nodes[name]["kind"], name))
-        for y_index, name in enumerate(names):
-            y_pos = y_index - (len(names) - 1) / 2.0
-            positions[name] = (float(x_index), -float(y_pos))
-    return positions
-
-
-def _plot_graph(graph: nx.DiGraph) -> plt.Figure:
-    fig, ax = plt.subplots(figsize=(14, 8))
-    if not graph.nodes:
-        ax.text(0.5, 0.5, "No nodes in clustered graph", ha="center", va="center")
+def _draw_graph(graph: nx.DiGraph) -> mpl.figure.Figure:
+    fig, ax = plt.subplots(figsize=(13, 8))
+    if graph.number_of_nodes() == 0:
+        ax.text(0.5, 0.5, "No nodes to display.", ha="center", va="center")
         ax.axis("off")
         return fig
 
-    pos = _layered_layout(graph)
-    color_map = {"embedding": "#4C78A8", "middle": "#54A24B", "logit": "#F58518"}
-    node_colors = [color_map.get(graph.nodes[node]["kind"], "#9C9C9C") for node in graph.nodes]
-    node_sizes = [500 + 90 * graph.nodes[node]["member_count"] for node in graph.nodes]
+    pos = nx.spring_layout(graph, seed=42, k=1.25 / np.sqrt(max(graph.number_of_nodes(), 1)))
+    influences = np.asarray([graph.nodes[n]["influence"] for n in graph.nodes], dtype=np.float64)
+    n_members = np.asarray([graph.nodes[n]["n_members"] for n in graph.nodes], dtype=np.float64)
+    node_sizes = (300.0 + 200.0 * np.clip(n_members, 1.0, None)).tolist()
+
+    influence_max = float(np.max(np.abs(influences))) if influences.size else 1.0
+    influence_max = max(influence_max, 1e-8)
+    norm = mpl.colors.TwoSlopeNorm(vcenter=0.0, vmin=-influence_max, vmax=influence_max)
+    cmap = plt.cm.coolwarm
+    node_colors = cmap(norm(influences))
 
     nx.draw_networkx_nodes(
         graph,
         pos,
-        node_color=node_colors,
         node_size=node_sizes,
-        alpha=0.95,
+        node_color=node_colors,
         linewidths=1.0,
-        edgecolors="#2F2F2F",
+        edgecolors="#222222",
         ax=ax,
     )
-    labels = {name: f"{name}\n({graph.nodes[name]['member_count']})" for name in graph.nodes}
+
+    labels = {node: f"{node}\n({graph.nodes[node]['n_members']})" for node in graph.nodes}
     nx.draw_networkx_labels(graph, pos, labels=labels, font_size=8, ax=ax)
 
-    edges = list(graph.edges(data=True))
-    if edges:
-        widths = [1.0 + 6.0 * min(abs(edge_data["weight"]), 1.0) for _, _, edge_data in edges]
-        edge_colors = ["#2CA02C" if edge_data["weight"] > 0 else "#D62728" for _, _, edge_data in edges]
+    edge_data = list(graph.edges(data=True))
+    if edge_data:
+        max_abs_edge = max(abs(float(data["weight"])) for _, _, data in edge_data)
+        max_abs_edge = max(max_abs_edge, 1e-8)
+        edge_colors = ["#1f77b4" if data["weight"] >= 0 else "#d62728" for _, _, data in edge_data]
+        edge_widths = [0.8 + 4.0 * abs(float(data["weight"])) / max_abs_edge for _, _, data in edge_data]
         nx.draw_networkx_edges(
             graph,
             pos,
+            edge_color=edge_colors,
+            width=edge_widths,
             arrows=True,
             arrowstyle="-|>",
-            width=widths,
-            edge_color=edge_colors,
+            arrowsize=13,
             connectionstyle="arc3,rad=0.08",
-            alpha=0.75,
             ax=ax,
         )
 
-    ax.set_title("Final Cluster Graph (nodes = supernodes, edges = supernode flow)")
+    sm = mpl.cm.ScalarMappable(norm=norm, cmap=cmap)
+    sm.set_array([])
+    colorbar = fig.colorbar(sm, ax=ax, shrink=0.8)
+    colorbar.set_label("Supernode influence")
+
+    ax.set_title("Final Cluster Graph (nodes=supernodes, edges=supernode flow)")
     ax.axis("off")
     fig.tight_layout()
     return fig
 
 
-def _build_node_table(graph: nx.DiGraph) -> pd.DataFrame:
-    rows: list[dict[str, Any]] = []
-    for node_name, data in graph.nodes(data=True):
-        rows.append(
-            {
-                "supernode": node_name,
-                "type": data["kind"],
-                "member_count": data["member_count"],
-                "influence": round(float(data["influence"]), 6),
-                "min_layer": data["min_layer"],
-                "members": ", ".join(data["members"]),
-            }
+def _run_pipeline(
+    input_mode: str,
+    input_path: Path,
+    prune_cfg: dict[str, Any],
+    cluster_cfg: dict[str, Any],
+    enforce_dag: bool,
+) -> tuple[PruneGraph, dict[str, list[str]], dict[str, Any]]:
+    if input_mode == FULL_GRAPH_MODE:
+        prune_graph = prune_graph_pipeline(
+            json_path=str(input_path),
+            logit_weights=prune_cfg["logit_weights"],
+            token_weights=prune_cfg["token_weights"],
+            node_threshold=prune_cfg["node_threshold"],
+            edge_threshold=prune_cfg["edge_threshold"],
+            alpha=prune_cfg["alpha"],
+            keep_all_tokens_and_logits=prune_cfg["keep_all_tokens_and_logits"],
+            filter_act_density=prune_cfg["filter_act_density"],
+            combined_scores_method=prune_cfg["combined_scores_method"],
+            normalization=prune_cfg["normalization"],
+            act_density_lb=prune_cfg["act_density_lb"],
+            act_density_ub=prune_cfg["act_density_ub"],
         )
-    if not rows:
-        return pd.DataFrame(columns=["supernode", "type", "member_count", "influence", "min_layer", "members"])
-    return pd.DataFrame(rows).sort_values(by=["min_layer", "supernode"]).reset_index(drop=True)
+    else:
+        prune_graph = load_prune_graph(str(input_path))
 
-
-def _build_edge_table(graph: nx.DiGraph) -> pd.DataFrame:
-    rows: list[dict[str, Any]] = []
-    for src, dst, edge_data in graph.edges(data=True):
-        rows.append({"source": src, "target": dst, "weight": round(float(edge_data["weight"]), 6)})
-    if not rows:
-        return pd.DataFrame(columns=["source", "target", "weight"])
-    return pd.DataFrame(rows).sort_values(by="weight", ascending=False).reset_index(drop=True)
+    clusters = cluster_graph(
+        prune_graph=prune_graph,
+        target_k=cluster_cfg["target_k"],
+        max_layer_span=cluster_cfg["max_layer_span"],
+        max_sn=cluster_cfg["max_sn"],
+        gamma=cluster_cfg["gamma"],
+        mediation_penalty=cluster_cfg["mediation_penalty"],
+        similarity_mode=cluster_cfg["similarity_mode"],
+        enforce_dag=enforce_dag,
+    )
+    supernode_map = supernodes_to_mapping(prune_graph, clusters)
+    sng = build_supernode_graph(prune_graph, supernode_map, enforce_dag=enforce_dag)
+    return prune_graph, supernode_map, sng
 
 
 def main() -> None:
     st.set_page_config(page_title="Cluster Graph Visualizer", layout="wide")
-    st.title("Final Cluster Graph Visualizer")
+    st.title("Cluster Graph Visualizer")
     st.caption(
-        "Load a full JSON graph or a pruned graph (.pt), run the clustering pipeline, "
-        "and inspect the final supernode graph."
+        "Load a full graph JSON or a pruned graph .pt, run clustering, and visualize "
+        "the final cluster graph with nodes and directed edges."
     )
 
-    source_mode = st.sidebar.radio("Input graph type", options=["Full JSON graph", "Pruned graph (.pt)"])
-    json_files = _list_paths(DEFAULT_JSON_DIRS, ".json")
-    pruned_files = _list_paths([DEFAULT_PRUNED_DIR], ".pt")
+    repo_root = _repo_root()
+    default_full_files = _list_files(
+        [repo_root / "demos" / "temp_graph_files", repo_root / "demos" / "graph_files"],
+        ".json",
+    )
+    default_pruned_files = _list_files([repo_root / "demos" / "subgraph"], ".pt")
 
-    if source_mode == "Full JSON graph" and not json_files:
-        st.warning("No JSON files found in demos/temp_graph_files or demos/graph_files. Upload one to continue.")
-    if source_mode == "Pruned graph (.pt)" and not pruned_files:
-        st.warning("No .pt files found in demos/subgraph. Upload one to continue.")
+    input_mode = st.radio(
+        "Input graph type",
+        options=[FULL_GRAPH_MODE, PRUNED_GRAPH_MODE],
+        horizontal=True,
+    )
 
-    selected_path: str | None
-    uploaded_file = None
-    if source_mode == "Full JSON graph":
-        selected_path = st.sidebar.selectbox(
-            "Choose existing JSON file",
-            options=["(none)"] + [str(path) for path in json_files],
-        )
-        uploaded_file = st.sidebar.file_uploader("Or upload JSON graph", type=["json"])
+    if input_mode == FULL_GRAPH_MODE:
+        default_files = default_full_files
+        if not (repo_root / "demos" / "temp_graph_files").exists():
+            st.info(
+                "Directory `demos/temp_graph_files/` was not found here, so files from "
+                "`demos/graph_files/` are also listed."
+            )
     else:
-        selected_path = st.sidebar.selectbox(
-            "Choose existing pruned graph file",
-            options=["(none)"] + [str(path) for path in pruned_files],
-        )
-        uploaded_file = st.sidebar.file_uploader("Or upload .pt pruned graph", type=["pt"])
+        default_files = default_pruned_files
 
-    st.sidebar.subheader("Clustering parameters")
-    target_k = st.sidebar.slider("target_k", min_value=1, max_value=20, value=7)
-    max_layer_span = st.sidebar.slider("max_layer_span", min_value=1, max_value=16, value=4)
-    max_sn_enabled = st.sidebar.checkbox("Set max_sn budget", value=False)
-    max_sn = st.sidebar.slider("max_sn", min_value=1, max_value=30, value=12) if max_sn_enabled else None
-    gamma = st.sidebar.slider("gamma", min_value=0.0, max_value=1.0, value=1.0)
-    mediation_penalty = st.sidebar.slider("mediation_penalty", min_value=0.0, max_value=1.0, value=0.1)
-    enforce_dag = st.sidebar.checkbox("enforce_dag", value=True)
-    similarity_mode = st.sidebar.selectbox(
-        "similarity_mode",
-        options=["edge", "scores", "relevance", "influence", "uniform"],
-        index=0,
-    )
+    file_options = ["<none>"] + [_format_path_for_ui(path) for path in default_files]
+    selected_label = st.selectbox("Choose an input file", options=file_options, index=0)
+    custom_path = st.text_input(
+        "Or enter a path manually",
+        value="",
+        placeholder="e.g. demos/temp_graph_files/example.json",
+    ).strip()
 
-    prune_kwargs: dict[str, Any] = {}
-    if source_mode == "Full JSON graph":
-        st.sidebar.subheader("Pruning parameters")
-        prune_kwargs["logit_weights"] = st.sidebar.selectbox("logit_weights", ["target", "probs"], index=0)
-        prune_kwargs["node_threshold"] = st.sidebar.slider("node_threshold", min_value=0.0, max_value=1.0, value=0.8)
-        prune_kwargs["edge_threshold"] = st.sidebar.slider("edge_threshold", min_value=0.0, max_value=1.0, value=0.98)
-        prune_kwargs["alpha"] = st.sidebar.slider("alpha", min_value=0.0, max_value=1.0, value=0.5)
-        prune_kwargs["keep_all_tokens_and_logits"] = st.sidebar.checkbox("keep_all_tokens_and_logits", value=True)
-        prune_kwargs["combined_scores_method"] = st.sidebar.selectbox(
-            "combined_scores_method", options=["geometric", "arithmetic", "harmonic"], index=0
+    selected_path: Path | None = None
+    if custom_path:
+        selected_path = Path(custom_path)
+        if not selected_path.is_absolute():
+            selected_path = repo_root / selected_path
+    elif selected_label != "<none>":
+        selected_path = repo_root / selected_label
+
+    st.subheader("Pipeline parameters")
+    col_a, col_b, col_c = st.columns(3)
+
+    with col_a:
+        target_k = st.slider("target_k", min_value=1, max_value=50, value=7, step=1)
+        max_layer_span = st.slider("max_layer_span", min_value=1, max_value=24, value=4, step=1)
+        max_sn_raw = st.number_input(
+            "max_sn (0 means no cap)",
+            min_value=0,
+            value=0,
+            step=1,
         )
-        prune_kwargs["normalization"] = st.sidebar.selectbox("normalization", ["min_max", "rank"], index=0)
-        token_weights_raw = st.sidebar.text_input("token_weights (optional comma-separated floats)", value="")
+        similarity_mode = st.selectbox(
+            "similarity_mode",
+            options=["edge", "scores", "relevance", "influence", "uniform"],
+            index=0,
+        )
+    with col_b:
+        gamma = st.slider("gamma", min_value=0.0, max_value=1.0, value=1.0, step=0.05)
+        mediation_penalty = st.slider(
+            "mediation_penalty",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.1,
+            step=0.05,
+        )
+        enforce_dag = st.checkbox("enforce_dag", value=True)
+    with col_c:
+        edge_display_threshold = st.slider(
+            "Display edge threshold (absolute weight)",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.0,
+            step=0.01,
+        )
+
+    prune_cfg: dict[str, Any] = {
+        "logit_weights": "target",
+        "token_weights": None,
+        "node_threshold": 0.8,
+        "edge_threshold": 0.98,
+        "alpha": 0.5,
+        "keep_all_tokens_and_logits": True,
+        "filter_act_density": False,
+        "combined_scores_method": "geometric",
+        "normalization": "min_max",
+        "act_density_lb": 2e-5,
+        "act_density_ub": 0.1,
+    }
+
+    if input_mode == FULL_GRAPH_MODE:
+        st.subheader("Pruning parameters (used for full JSON graphs)")
+        prune_col_a, prune_col_b, prune_col_c = st.columns(3)
+        with prune_col_a:
+            prune_cfg["logit_weights"] = st.selectbox("logit_weights", options=["target", "probs"])
+            prune_cfg["node_threshold"] = st.slider(
+                "node_threshold",
+                min_value=0.0,
+                max_value=1.0,
+                value=0.8,
+                step=0.01,
+            )
+            prune_cfg["edge_threshold"] = st.slider(
+                "edge_threshold",
+                min_value=0.0,
+                max_value=1.0,
+                value=0.98,
+                step=0.01,
+            )
+        with prune_col_b:
+            prune_cfg["alpha"] = st.slider("alpha", min_value=0.0, max_value=1.0, value=0.5, step=0.05)
+            prune_cfg["combined_scores_method"] = st.selectbox(
+                "combined_scores_method",
+                options=["geometric", "arithmetic", "harmonic"],
+            )
+            prune_cfg["normalization"] = st.selectbox(
+                "normalization",
+                options=["min_max", "rank"],
+                index=0,
+            )
+        with prune_col_c:
+            prune_cfg["keep_all_tokens_and_logits"] = st.checkbox(
+                "keep_all_tokens_and_logits",
+                value=True,
+            )
+            prune_cfg["filter_act_density"] = st.checkbox("filter_act_density", value=False)
+            prune_cfg["act_density_lb"] = st.number_input("act_density_lb", value=2e-5, format="%.8f")
+            prune_cfg["act_density_ub"] = st.number_input("act_density_ub", value=0.1, format="%.6f")
+
+        token_weights_raw = st.text_area(
+            "token_weights (comma-separated floats, optional)",
+            value="",
+            height=80,
+            placeholder="0, 0, 0.33, 0, 0.67",
+        )
         try:
-            prune_kwargs["token_weights"] = _parse_token_weights(token_weights_raw)
+            prune_cfg["token_weights"] = _parse_token_weights(token_weights_raw)
         except ValueError as exc:
-            st.sidebar.error(f"Invalid token_weights: {exc}")
-            return
+            st.error(f"Invalid token_weights: {exc}")
+            st.stop()
 
-    run_clicked = st.sidebar.button("Run clustering pipeline", type="primary")
-    if not run_clicked:
-        st.info("Choose an input graph and click **Run clustering pipeline**.")
+    cluster_cfg = {
+        "target_k": int(target_k),
+        "max_layer_span": int(max_layer_span),
+        "max_sn": None if int(max_sn_raw) == 0 else int(max_sn_raw),
+        "gamma": float(gamma),
+        "mediation_penalty": float(mediation_penalty),
+        "similarity_mode": str(similarity_mode),
+    }
+
+    if "pipeline_result" not in st.session_state:
+        st.session_state.pipeline_result = None
+
+    if st.button("Run clustering pipeline", type="primary"):
+        if selected_path is None:
+            st.error("Please select or enter an input path.")
+            st.stop()
+        if not selected_path.exists():
+            st.error(f"Input file not found: {selected_path}")
+            st.stop()
+
+        with st.spinner("Running pipeline..."):
+            try:
+                result = _run_pipeline(
+                    input_mode=input_mode,
+                    input_path=selected_path,
+                    prune_cfg=prune_cfg,
+                    cluster_cfg=cluster_cfg,
+                    enforce_dag=bool(enforce_dag),
+                )
+            except Exception as exc:  # noqa: BLE001
+                st.exception(exc)
+                st.stop()
+
+        st.session_state.pipeline_result = {
+            "input_mode": input_mode,
+            "input_path": str(selected_path),
+            "prune_graph": result[0],
+            "supernode_map": result[1],
+            "sng": result[2],
+        }
+
+    result_payload = st.session_state.pipeline_result
+    if result_payload is None:
+        st.info("Choose an input and click **Run clustering pipeline**.")
         return
 
-    try:
-        if uploaded_file is not None:
-            suffix = ".json" if source_mode == "Full JSON graph" else ".pt"
-            input_path = _save_uploaded_file(uploaded_file.getvalue(), suffix=suffix)
-            st.write(f"Using uploaded file: `{uploaded_file.name}`")
-        elif selected_path and selected_path != "(none)":
-            input_path = selected_path
-            st.write(f"Using file: `{input_path}`")
-        else:
-            st.error("Select a file or upload one before running the pipeline.")
-            return
+    prune_graph: PruneGraph = result_payload["prune_graph"]
+    supernode_map: dict[str, list[str]] = result_payload["supernode_map"]
+    sng: dict[str, Any] = result_payload["sng"]
 
-        with st.spinner("Running prune/cluster pipeline..."):
-            if source_mode == "Full JSON graph":
-                prune_graph = prune_graph_pipeline(json_path=input_path, **prune_kwargs)
-            else:
-                prune_graph = load_prune_graph(input_path)
+    supernode_graph = _build_supernode_network(
+        supernode_map=supernode_map,
+        sng=sng,
+        edge_threshold=float(edge_display_threshold),
+    )
 
-            supernodes = cluster_graph(
-                prune_graph,
-                target_k=target_k,
-                max_layer_span=max_layer_span,
-                max_sn=max_sn,
-                gamma=gamma,
-                mediation_penalty=mediation_penalty,
-                similarity_mode=similarity_mode,
-                enforce_dag=enforce_dag,
-            )
-            supernode_map = supernodes_to_mapping(prune_graph, supernodes)
-            supernode_flow = build_supernode_graph(prune_graph, supernode_map, enforce_dag=enforce_dag)
-            graph = _build_supernode_graph_nx(supernode_map, supernode_flow, prune_graph.attr)
+    stat_col_1, stat_col_2, stat_col_3, stat_col_4 = st.columns(4)
+    stat_col_1.metric("Pruned nodes", f"{prune_graph.num_nodes}")
+    stat_col_2.metric("Pruned edges", f"{prune_graph.num_edges}")
+    stat_col_3.metric("Final supernodes", f"{len(supernode_map)}")
+    stat_col_4.metric("Supernode edges shown", f"{supernode_graph.number_of_edges()}")
 
-        left, right = st.columns(2)
-        left.metric("Pruned nodes", prune_graph.num_nodes)
-        left.metric("Pruned edges", prune_graph.num_edges)
-        right.metric("Supernodes", len(graph.nodes))
-        right.metric("Supernode edges", len(graph.edges))
+    st.pyplot(_draw_graph(supernode_graph), use_container_width=True)
 
-        figure = _plot_graph(graph)
-        st.pyplot(figure, clear_figure=True)
-        st.caption(
-            "Node colors: blue = embedding, green = middle cluster, orange = logit. "
-            "Edge colors: green = positive weight, red = negative weight."
+    sn_names: list[str] = list(sng["sn_names"])
+    sn_adj = np.asarray(sng["sn_adj"], dtype=np.float64)
+    sn_inf = np.asarray(sng["sn_inf"], dtype=np.float64)
+
+    node_rows: list[dict[str, Any]] = []
+    for idx, sn_name in enumerate(sn_names):
+        members = supernode_map.get(sn_name, [])
+        node_rows.append(
+            {
+                "supernode": sn_name,
+                "type": supernode_graph.nodes[sn_name]["type"],
+                "n_members": len(members),
+                "influence": float(sn_inf[idx]),
+                "members": ", ".join(members),
+            }
         )
 
-        st.subheader("Supernode details")
-        st.dataframe(_build_node_table(graph), use_container_width=True)
+    edge_rows: list[dict[str, Any]] = []
+    for i, src in enumerate(sn_names):
+        for j, dst in enumerate(sn_names):
+            if i == j:
+                continue
+            weight = float(sn_adj[i, j])
+            if abs(weight) < float(edge_display_threshold):
+                continue
+            if abs(weight) > 0.0:
+                edge_rows.append({"source": src, "target": dst, "weight": weight})
 
-        st.subheader("Edge details")
-        st.dataframe(_build_edge_table(graph), use_container_width=True)
-    except Exception as exc:
-        st.exception(exc)
+    st.subheader("Supernodes")
+    st.dataframe(node_rows, use_container_width=True)
+
+    st.subheader("Edges")
+    st.dataframe(edge_rows, use_container_width=True)
+
+    st.subheader("Downloads")
+    st.download_button(
+        "Download supernode map JSON",
+        data=json.dumps(supernode_map, indent=2),
+        file_name="supernodes.json",
+        mime="application/json",
+    )
+    st.download_button(
+        "Download supernode flow JSON",
+        data=json.dumps(_to_jsonable(sng), indent=2),
+        file_name="supernode_flow.json",
+        mime="application/json",
+    )
 
 
 if __name__ == "__main__":
