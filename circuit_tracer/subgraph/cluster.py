@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from typing import Literal
 
+import numpy as np
 import torch
+from sklearn.cluster import SpectralClustering
 
 from circuit_tracer.subgraph.prune import PruneGraph
 from circuit_tracer.subgraph.utils import _is_embedding, _is_fixed, _is_logit, _parse_layer
@@ -28,7 +29,8 @@ def _compute_mediation_penalty(
         return torch.ones((n, n), dtype=adj.dtype, device=adj.device)
 
     layer_t = torch.tensor(layers, dtype=torch.float32, device=adj.device)
-    a = (adj > 0).float()
+    # Treat any non-zero edge (positive or negative) as a mediating connection.
+    a = (adj != 0).float()
     penalty = torch.ones((n, n), dtype=adj.dtype, device=adj.device)
 
     unique_layers = sorted(set(layers))
@@ -54,49 +56,63 @@ def _compute_mediation_penalty(
     return penalty
 
 
+def _weighted_row_cosine(features: torch.Tensor) -> torch.Tensor:
+    gram = features @ features.T
+    return _cosine_norm(gram)
+
+
+def _normalize_edge_weights(weights: torch.Tensor) -> torch.Tensor:
+    # Preserve sign by normalizing with max absolute magnitude.
+    weights = torch.nan_to_num(weights, nan=0.0, posinf=0.0, neginf=0.0)
+    w_abs_max = float(weights.abs().max().item()) if weights.numel() else 0.0
+    if w_abs_max <= 0.0:
+        return torch.zeros_like(weights)
+    return weights / (w_abs_max + 1e-8)
+
+
+def _edge_channels_sender_indexed(prune_graph: PruneGraph, adj_sender: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    edge_rel = prune_graph.edge_relevance
+    edge_inf = prune_graph.edge_influence
+    if edge_rel is None or edge_inf is None:
+        # Backward-compatible fallback for older payloads.
+        fallback = _normalize_edge_weights(adj_sender)
+        return fallback, fallback
+
+    rel_sender = _normalize_edge_weights(edge_rel.float().T)
+    inf_sender = _normalize_edge_weights(edge_inf.float().T)
+    return rel_sender, inf_sender
+
+
 def compute_similarity(
     prune_graph: PruneGraph,
-    gamma: float = 1,
+    gamma: float = 0.5,
     mediation_penalty: float = 0.1,
-    similarity_mode: Literal["scores", "relevance", "influence", "uniform"] = "scores",
+    similarity_mode: Literal["scores", "relevance", "influence", "uniform", "edge"] = "edge",
 ) -> torch.Tensor:
-    """Compute node similarity from shared in/out neighbors, weighted by act/inf."""
+    """
+    Compute node similarity from weighted shared out/in structure.
+
+    - Output-side similarity uses edge influence weights.
+    - Input-side similarity uses edge relevance weights.
+    - `gamma` controls output/input blend: gamma*S_out + (1-gamma)*S_in.
+    """
     kept_ids = prune_graph.kept_ids
     attr = prune_graph.attr
 
-    # Match structure_grouping convention: sender-indexed adjacency.
     adj = prune_graph.pruned_adj.clone().float().T
+    rel_sender, inf_sender = _edge_channels_sender_indexed(prune_graph, adj)
 
-    # calculate similarity matrix
-    if similarity_mode == "scores":
-        weights = 1 - prune_graph.node_scores
-    elif similarity_mode == "relevance":
-        rel = torch.tensor(
-            [float(attr.get(nid, {}).get("relevance", 0.0) or 0.0) for nid in kept_ids],
-            dtype=torch.float32,
-            device=adj.device,
-        )
-        weights = rel / (rel.max() + 1e-8)
-    elif similarity_mode == "influence":
-        inf = torch.tensor(
-            [float(attr.get(nid, {}).get("influence", 0.0) or 0.0) for nid in kept_ids],
-            dtype=torch.float32,
-            device=adj.device,
-        )
-        weights = inf / (inf.max() + 1e-8)
-    elif similarity_mode == "uniform":
-        weights = torch.ones(len(kept_ids), dtype=torch.float32, device=adj.device)
+    # Deprecated modes remain accepted for API compatibility.
+    if similarity_mode in {"scores", "relevance", "influence", "uniform", "edge"}:
+        weighted_out = adj * inf_sender
+        weighted_in = (adj * rel_sender).T
     else:
-        raise ValueError(
-            f"Unsupported similarity_mode={similarity_mode!r}. "
-            "Expected one of: scores, relevance, influence, uniform."
-        )
-    W = torch.diag(weights.clamp(min=0.0))
+        raise ValueError(f"Unsupported similarity_mode={similarity_mode!r}.")
 
-    S_out_cos = _cosine_norm(adj @ W @ adj.T)
-    S_in_cos  = _cosine_norm(adj.T @ W @ adj)
-
-    s = (0.5 * S_out_cos + 0.5 * S_in_cos).clamp(0.0, 1.0)
+    s_out_cos = _weighted_row_cosine(weighted_out)
+    s_in_cos = _weighted_row_cosine(weighted_in)
+    blend = float(max(0.0, min(1.0, gamma)))
+    s = (blend * s_out_cos + (1.0 - blend) * s_in_cos).clamp(0.0, 1.0)
     layers = [_parse_layer(attr, n) for n in kept_ids]
     if mediation_penalty < 1.0:
         p = _compute_mediation_penalty(adj=adj, layers=layers, mediation_penalty=mediation_penalty)
@@ -105,14 +121,31 @@ def compute_similarity(
     return s
 
 
-def _cluster_similarity(cl_a: list[int], cl_b: list[int], sim: torch.Tensor) -> float:
-    vals = sim[cl_a][:, cl_b]
-    return float(vals.mean().item()) if vals.numel() else -1.0
-
-
-def _layer_span(cluster_idx: list[int], layers: list[int]) -> int:
-    lv = [layers[i] for i in cluster_idx]
+def _layer_span_nodes(cluster: list[str], attr: dict[str, dict]) -> int:
+    lv = [_parse_layer(attr, n) for n in cluster]
     return max(lv) - min(lv)
+
+
+def _split_cluster_by_span(cluster: list[str], attr: dict[str, dict], max_layer_span: int) -> list[list[str]]:
+    work = [cluster]
+    out: list[list[str]] = []
+    while work:
+        current = work.pop()
+        span = _layer_span_nodes(current, attr)
+        if span <= max_layer_span or len(current) <= 1:
+            out.append(current)
+            continue
+        current_sorted = sorted(current, key=lambda n: _parse_layer(attr, n))
+        lo = _parse_layer(attr, current_sorted[0])
+        hi = _parse_layer(attr, current_sorted[-1])
+        cut = (lo + hi) // 2
+        left = [n for n in current_sorted if _parse_layer(attr, n) <= cut]
+        right = [n for n in current_sorted if _parse_layer(attr, n) > cut]
+        if not left or not right:
+            half = max(1, len(current_sorted) // 2)
+            left, right = current_sorted[:half], current_sorted[half:]
+        work.extend([left, right])
+    return out
 
 
 def _split_cluster_by_boundary(cluster: list[str], boundary_layer: int, attr: dict[str, dict]) -> list[list[str]]:
@@ -202,7 +235,7 @@ def cluster_graph(
     max_sn: int | None = None,
     gamma: float = 1,
     mediation_penalty: float = 0.1,
-    similarity_mode: Literal["scores", "relevance", "influence", "uniform"] = "scores",
+    similarity_mode: Literal["scores", "relevance", "influence", "uniform", "edge"] = "edge",
     enforce_dag: bool = True,
 ) -> list[list[str]]:
     """
@@ -213,8 +246,7 @@ def cluster_graph(
         target_k: Target number of middle supernodes.
         max_layer_span: Maximum allowed layer span within a middle supernode.
         max_sn: Optional hard cap on number of middle supernodes.
-        alpha: Similarity weighting coefficient for activation.
-        beta: Similarity weighting coefficient for influence.
+        gamma: Blend coefficient between output/influence and input/relevance similarities.
         mediation_penalty: Penalty factor for mediated non-adjacent pairs.
 
     Returns:
@@ -236,44 +268,39 @@ def cluster_graph(
 
     middle_idx = [i for i, nid in enumerate(kept_ids) if not _is_fixed(attr, nid)]
     middle_ids = [kept_ids[i] for i in middle_idx]
-    layers = [_parse_layer(attr, n) for n in middle_ids]
 
     if not middle_ids:
         fixed_only = [[nid] for nid in kept_ids]
         return fixed_only
 
-    # Start with singleton clusters in middle-node local index space.
-    clusters: list[list[int]] = [[i] for i in range(len(middle_ids))]
-    target_k = max(1, min(target_k, len(clusters)))
+    mid_sim = sim[middle_idx][:, middle_idx].detach().cpu().numpy()
+    mid_sim = ((mid_sim + mid_sim.T) / 2.0).clip(0.0, 1.0)
+    target_k = max(1, min(target_k, len(middle_ids)))
 
-    # Greedy agglomerative merge under layer-span constraint.
-    while len(clusters) > target_k:
-        best: tuple[float, int, int] | None = None
+    if target_k == 1:
+        labels = np.zeros(len(middle_ids), dtype=np.int64)
+    elif target_k == len(middle_ids):
+        labels = np.arange(len(middle_ids), dtype=np.int64)
+    else:
+        labels = SpectralClustering(
+            n_clusters=target_k,
+            affinity="precomputed",
+            assign_labels="kmeans",
+            random_state=42,
+            n_init=20,
+        ).fit_predict(mid_sim)
 
-        for i in range(len(clusters)):
-            for j in range(i + 1, len(clusters)):
-                merged_idx = clusters[i] + clusters[j]
-                if enforce_dag and _layer_span(merged_idx, layers) > max_layer_span:
-                    continue
+    grouped: dict[int, list[str]] = {}
+    for nid, lbl in zip(middle_ids, labels):
+        grouped.setdefault(int(lbl), []).append(nid)
+    middle_clusters = list(grouped.values())
 
-                sim_score = _cluster_similarity(
-                    [middle_idx[x] for x in clusters[i]],
-                    [middle_idx[x] for x in clusters[j]],
-                    sim,
-                )
+    if enforce_dag:
+        span_safe: list[list[str]] = []
+        for cluster in middle_clusters:
+            span_safe.extend(_split_cluster_by_span(cluster, attr, max_layer_span=max_layer_span))
+        middle_clusters = span_safe
 
-                if best is None or sim_score > best[0]:
-                    best = (sim_score, i, j)
-
-        if best is None:
-            # No further legal merge under constraints.
-            break
-
-        _, i_best, j_best = best
-        merged = clusters[i_best] + clusters[j_best]
-        clusters = [c for k, c in enumerate(clusters) if k not in (i_best, j_best)] + [merged]
-
-    middle_clusters = [[middle_ids[i] for i in c] for c in clusters]
     if enforce_dag:
         middle_clusters = _resolve_layer_interleaving(middle_clusters, attr)
 

@@ -115,8 +115,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         target_k=best_k,
         max_layer_span=args.max_layer_span,
         max_sn=args.max_sn,
-        alpha=args.alpha,
-        beta=args.beta,
+        gamma=args.gamma,
         mediation_penalty=args.mediation_penalty,
     )
 
@@ -166,7 +165,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--token-weights", type=str, default=None, help="JSON list string, e.g. '[0,0,0.5,0.5]'")
     parser.add_argument("--node-threshold", type=float, default=0.5)
     parser.add_argument("--edge-threshold", type=float, default=0.98)
-    parser.add_argument("--alpha", type=float, default=0.5)
+    parser.add_argument("--alpha", type=float, default=0.5, help="Deprecated: use --gamma")
     parser.add_argument("--keep-all-tokens-and-logits", action="store_true")
     parser.add_argument("--filter-act-density", action="store_true")
     parser.add_argument("--act-density-lb", type=float, default=2e-5)
@@ -177,7 +176,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--k-max", type=int, default=None)
     parser.add_argument("--max-layer-span", type=int, default=4)
     parser.add_argument("--max-sn", type=int, default=None)
-    parser.add_argument("--beta", type=float, default=0.5)
+    parser.add_argument("--beta", type=float, default=0.5, help="Deprecated")
+    parser.add_argument("--gamma", type=float, default=0.5)
     parser.add_argument("--mediation-penalty", type=float, default=0.1)
     parser.add_argument("--supernodes-out", type=str, default="temp_graph_files/supernodes.json")
 
