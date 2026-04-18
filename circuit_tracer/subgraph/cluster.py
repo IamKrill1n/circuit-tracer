@@ -237,6 +237,8 @@ def cluster_graph(
     mediation_penalty: float = 0.1,
     similarity_mode: Literal["scores", "relevance", "influence", "uniform", "edge"] = "edge",
     enforce_dag: bool = True,
+    random_state: int = 42,
+    n_init: int = 20,
 ) -> list[list[str]]:
     """
     Cluster a pruned attribution graph into supernodes.
@@ -248,6 +250,8 @@ def cluster_graph(
         max_sn: Optional hard cap on number of middle supernodes.
         gamma: Blend coefficient between output/influence and input/relevance similarities.
         mediation_penalty: Penalty factor for mediated non-adjacent pairs.
+        random_state: Random seed for spectral clustering k-means init.
+        n_init: Number of k-means runs for `SpectralClustering(assign_labels="kmeans")`.
 
     Returns:
         List of supernodes where each supernode is a list of node ids.
@@ -286,8 +290,8 @@ def cluster_graph(
             n_clusters=target_k,
             affinity="precomputed",
             assign_labels="kmeans",
-            random_state=42,
-            n_init=20,
+            random_state=int(random_state),
+            n_init=int(n_init),
         ).fit_predict(mid_sim)
 
     grouped: dict[int, list[str]] = {}

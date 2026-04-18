@@ -202,7 +202,7 @@ def supernode_graph_figure(
             mode="markers+text",
             text=labels,
             textposition="middle center",
-            textfont=dict(size=10),
+            textfont=dict(size=10, color="black"),
             marker=marker_kwargs,
             hovertext=hover,
             hoverinfo="text",
