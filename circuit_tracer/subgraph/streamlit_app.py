@@ -4,13 +4,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-import matplotlib as mpl
-import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 import streamlit as st
 
 from circuit_tracer.subgraph.cluster import cluster_graph
+from circuit_tracer.subgraph.cluster_viz import supernode_graph_figure
 from circuit_tracer.subgraph.flow_analysis import build_supernode_graph, supernodes_to_mapping
 from circuit_tracer.subgraph.prune import PruneGraph, load_prune_graph, prune_graph_pipeline
 
@@ -95,66 +94,6 @@ def _build_supernode_network(
                 graph.add_edge(src, dst, weight=weight)
 
     return graph
-
-
-def _draw_graph(graph: nx.DiGraph) -> mpl.figure.Figure:
-    fig, ax = plt.subplots(figsize=(13, 8))
-    if graph.number_of_nodes() == 0:
-        ax.text(0.5, 0.5, "No nodes to display.", ha="center", va="center")
-        ax.axis("off")
-        return fig
-
-    pos = nx.spring_layout(graph, seed=42, k=1.25 / np.sqrt(max(graph.number_of_nodes(), 1)))
-    influences = np.asarray([graph.nodes[n]["influence"] for n in graph.nodes], dtype=np.float64)
-    n_members = np.asarray([graph.nodes[n]["n_members"] for n in graph.nodes], dtype=np.float64)
-    node_sizes = (300.0 + 200.0 * np.clip(n_members, 1.0, None)).tolist()
-
-    influence_max = float(np.max(np.abs(influences))) if influences.size else 1.0
-    influence_max = max(influence_max, 1e-8)
-    norm = mpl.colors.TwoSlopeNorm(vcenter=0.0, vmin=-influence_max, vmax=influence_max)
-    cmap = plt.cm.coolwarm
-    node_colors = cmap(norm(influences))
-
-    nx.draw_networkx_nodes(
-        graph,
-        pos,
-        node_size=node_sizes,
-        node_color=node_colors,
-        linewidths=1.0,
-        edgecolors="#222222",
-        ax=ax,
-    )
-
-    labels = {node: f"{node}\n({graph.nodes[node]['n_members']})" for node in graph.nodes}
-    nx.draw_networkx_labels(graph, pos, labels=labels, font_size=8, ax=ax)
-
-    edge_data = list(graph.edges(data=True))
-    if edge_data:
-        max_abs_edge = max(abs(float(data["weight"])) for _, _, data in edge_data)
-        max_abs_edge = max(max_abs_edge, 1e-8)
-        edge_colors = ["#1f77b4" if data["weight"] >= 0 else "#d62728" for _, _, data in edge_data]
-        edge_widths = [0.8 + 4.0 * abs(float(data["weight"])) / max_abs_edge for _, _, data in edge_data]
-        nx.draw_networkx_edges(
-            graph,
-            pos,
-            edge_color=edge_colors,
-            width=edge_widths,
-            arrows=True,
-            arrowstyle="-|>",
-            arrowsize=13,
-            connectionstyle="arc3,rad=0.08",
-            ax=ax,
-        )
-
-    sm = mpl.cm.ScalarMappable(norm=norm, cmap=cmap)
-    sm.set_array([])
-    colorbar = fig.colorbar(sm, ax=ax, shrink=0.8)
-    colorbar.set_label("Supernode influence")
-
-    ax.set_title("Final Cluster Graph (nodes=supernodes, edges=supernode flow)")
-    ax.axis("off")
-    fig.tight_layout()
-    return fig
 
 
 def _run_pipeline(
@@ -407,7 +346,13 @@ def main() -> None:
     stat_col_3.metric("Final supernodes", f"{len(supernode_map)}")
     stat_col_4.metric("Supernode edges shown", f"{supernode_graph.number_of_edges()}")
 
-    st.pyplot(_draw_graph(supernode_graph), use_container_width=True)
+    fig = supernode_graph_figure(
+        sng=sng,
+        final_supernodes=supernode_map,
+        attr=prune_graph.attr,
+        title="Final Cluster Graph",
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
     sn_names: list[str] = list(sng["sn_names"])
     sn_adj = np.asarray(sng["sn_adj"], dtype=np.float64)

@@ -3,3 +3,5 @@ networkx
 shap
 google-genai
 pytest
+plotly
+streamlit
