@@ -6,7 +6,8 @@ import networkx as nx
 from typing import Any, Dict, List, Tuple, Optional, Literal, NamedTuple
 
 def get_data_from_json(json_path: str):
-    with open(json_path, "r") as f:
+    # Explicit UTF-8 avoids UnicodeDecodeError on Windows (default locale is often cp1252).
+    with open(json_path, "r", encoding="utf-8-sig") as f:
         data = json.load(f)
 
     metadata = data.get("metadata", {})
