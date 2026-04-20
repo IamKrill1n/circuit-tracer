@@ -8,8 +8,8 @@ import networkx as nx
 import numpy as np
 import plotly.graph_objects as go
 
-from circuit_tracer.subgraph.cluster import _parse_layer
-from circuit_tracer.subgraph.flow_analysis import _classify_sn
+from summarization.cluster import _parse_layer
+from summarization.flow_analysis import _classify_sn
 
 
 def _sn_kind(sn_name: str) -> str:

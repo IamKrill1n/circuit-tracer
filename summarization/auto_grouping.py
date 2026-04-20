@@ -5,17 +5,17 @@ from typing import Any, Literal
 import numpy as np
 from scipy.linalg import eigvalsh
 
-from circuit_tracer.subgraph.cluster import (
+from summarization.cluster import (
     _is_fixed,
     cluster_graph,
     compute_similarity,
 )
-from circuit_tracer.subgraph.flow_analysis import (
+from summarization.flow_analysis import (
     build_supernode_graph,
     flow_faithfulness_report,
     supernodes_to_mapping,
 )
-from circuit_tracer.subgraph.prune import PruneGraph
+from summarization.prune import PruneGraph
 
 
 def _middle_indices(prune_graph: PruneGraph) -> list[int]:

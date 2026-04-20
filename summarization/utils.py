@@ -1,7 +1,7 @@
 import json
 import time
 import torch
-from circuit_tracer.subgraph.api import get_feature, generate_autointerp
+from api import get_feature, generate_autointerp
 import networkx as nx
 from typing import Any, Dict, List, Tuple, Optional, Literal, NamedTuple
 

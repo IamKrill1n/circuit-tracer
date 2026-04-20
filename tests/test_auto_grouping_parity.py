@@ -3,14 +3,14 @@ from __future__ import annotations
 import numpy as np
 import torch
 
-from circuit_tracer.subgraph.auto_grouping import (
+from summarization.auto_grouping import (
     eigengap_analysis,
     find_best_k,
     score_k,
 )
-from circuit_tracer.subgraph.cluster import compute_similarity
-from circuit_tracer.subgraph.flow_analysis import build_supernode_graph, supernodes_to_mapping
-from circuit_tracer.subgraph.prune import PruneGraph
+from summarization.cluster import compute_similarity
+from summarization.flow_analysis import build_supernode_graph, supernodes_to_mapping
+from summarization.prune import PruneGraph
 
 
 def _build_test_graph() -> PruneGraph:

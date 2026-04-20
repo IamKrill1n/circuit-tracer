@@ -8,18 +8,18 @@ import networkx as nx
 import numpy as np
 import streamlit as st
 
-from circuit_tracer.subgraph.auto_grouping import find_best_k
-from circuit_tracer.subgraph.cluster import cluster_graph
-from circuit_tracer.subgraph.cluster_viz import supernode_graph_figure
-from circuit_tracer.subgraph.flow_analysis import build_supernode_graph, supernodes_to_mapping
-from circuit_tracer.subgraph.prune import PruneGraph, load_prune_graph, prune_graph_pipeline
+from summarization.auto_grouping import find_best_k
+from summarization.cluster import cluster_graph
+from summarization.cluster_viz import supernode_graph_figure
+from summarization.flow_analysis import build_supernode_graph, supernodes_to_mapping
+from summarization.prune import PruneGraph, load_prune_graph, prune_graph_pipeline
 
 FULL_GRAPH_MODE = "Existing full graph JSON"
 PRUNED_GRAPH_MODE = "Existing pruned graph (.pt)"
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return Path(__file__).resolve().parent
 
 
 def _list_files(paths: list[Path], suffix: str) -> list[Path]:

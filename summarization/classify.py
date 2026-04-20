@@ -1,5 +1,5 @@
-from circuit_tracer.subgraph.api import get_feature
-from circuit_tracer.subgraph.config import get_env
+from api import get_feature
+from config import get_env
 from typing import List, Dict, Any
 import json
 import re

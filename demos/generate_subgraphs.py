@@ -1,9 +1,9 @@
 import os
 import json
 
-from circuit_tracer.subgraph.prune import prune_graph_pipeline
-from circuit_tracer.subgraph.api import save_subgraph
-from circuit_tracer.subgraph.utils import get_clerp
+from summarization.prune import prune_graph_pipeline
+from api import save_subgraph
+from summarization.utils import get_clerp
 # from dotenv import load_dotenv
 # load_dotenv()
 

@@ -16,10 +16,10 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from circuit_tracer.subgraph.cluster import cluster_graph
-from circuit_tracer.subgraph.cluster_viz import supernode_graph_figure
-from circuit_tracer.subgraph.flow_analysis import build_supernode_graph, supernodes_to_mapping
-from circuit_tracer.subgraph.prune import load_prune_graph, prune_graph_pipeline
+from summarization.cluster import cluster_graph
+from summarization.cluster_viz import supernode_graph_figure
+from summarization.flow_analysis import build_supernode_graph, supernodes_to_mapping
+from summarization.prune import load_prune_graph, prune_graph_pipeline
 
 _DEFAULT_JSON_DIR = _ROOT / "demos" / "temp_graph_files"
 _DEFAULT_PRUNE_DIR = _ROOT / "demos" / "subgraph"
@@ -74,7 +74,7 @@ def _prune_from_cache(blob: bytes):
 
     import torch
 
-    from circuit_tracer.subgraph.prune import PruneGraph
+    from summarization.prune import PruneGraph
 
     buf = io.BytesIO(blob)
     payload = torch.load(buf, map_location="cpu")
@@ -193,7 +193,7 @@ def main() -> None:
     try:
         k_use = int(target_k)
         if auto_k:
-            from circuit_tracer.subgraph.auto_grouping import find_best_k
+            from summarization.auto_grouping import find_best_k
 
             best_k, _sweep = find_best_k(
                 prune_graph,

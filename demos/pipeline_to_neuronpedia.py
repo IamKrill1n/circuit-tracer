@@ -7,10 +7,10 @@ from pathlib import Path
 from typing import Any
 
 import requests
-from circuit_tracer.subgraph.api import generate_graph, save_subgraph
-from circuit_tracer.subgraph.auto_grouping import find_best_k
-from circuit_tracer.subgraph.cluster import cluster_graph_with_labels
-from circuit_tracer.subgraph.prune import prune_graph_pipeline
+from api import generate_graph, save_subgraph
+from summarization.auto_grouping import find_best_k
+from summarization.cluster import cluster_graph_with_labels
+from summarization.prune import prune_graph_pipeline
 
 
 def _download_graph_json(
@@ -92,8 +92,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         json_path=graph_json_path,
         logit_weights=args.logit_weights,
         token_weights=token_weights,
-        node_threshold=args.node_influence_threshold,
-        edge_threshold=args.edge_influence_threshold,
+        node_threshold=args.node_threshold,
+        edge_threshold=args.edge_threshold,
         keep_all_tokens_and_logits=args.keep_all_tokens_and_logits,
         filter_act_density=args.filter_act_density,
         act_density_lb=args.act_density_lb,

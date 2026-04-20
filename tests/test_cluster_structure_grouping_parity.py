@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import torch
 
-from circuit_tracer.subgraph.cluster import cluster_graph, compute_similarity
-from circuit_tracer.subgraph.prune import PruneGraph
+from summarization.cluster import cluster_graph, compute_similarity
+from summarization.prune import PruneGraph
 
 
 def _build_test_graph() -> PruneGraph:

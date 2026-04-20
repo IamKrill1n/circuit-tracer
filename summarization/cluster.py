@@ -6,8 +6,8 @@ import numpy as np
 import torch
 from sklearn.cluster import SpectralClustering
 
-from circuit_tracer.subgraph.prune import PruneGraph
-from circuit_tracer.subgraph.utils import _is_embedding, _is_fixed, _is_logit, _parse_layer
+from summarization.prune import PruneGraph
+from summarization.utils import _is_embedding, _is_fixed, _is_logit, _parse_layer
 
 
 def _cosine_norm(matrix: torch.Tensor) -> torch.Tensor:

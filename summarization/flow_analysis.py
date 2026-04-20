@@ -4,8 +4,8 @@ from typing import Any
 
 import numpy as np
 
-from circuit_tracer.subgraph.cluster import _is_embedding, _is_logit, _parse_layer
-from circuit_tracer.subgraph.prune import PruneGraph
+from summarization.cluster import _is_embedding, _is_logit, _parse_layer
+from summarization.prune import PruneGraph
 
 
 def _classify_node(node_id: str, attr: dict[str, dict[str, Any]]) -> str:

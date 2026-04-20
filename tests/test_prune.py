@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from circuit_tracer.subgraph.prune import (
+from summarization.prune import (
     PruneGraph,
     PruneResult,
     _validate_threshold,
@@ -206,7 +206,7 @@ def test_prune_graph_pipeline_returns_prunegraph(monkeypatch, tiny_graph):
     def fake_loader(_json_path):
         return adj, node_ids, attr, {"prompt": "hello"}
 
-    monkeypatch.setattr("circuit_tracer.subgraph.prune.get_data_from_json", fake_loader)
+    monkeypatch.setattr("summarization.prune.get_data_from_json", fake_loader)
 
     out = prune_graph_pipeline(
         json_path="dummy.json",
@@ -237,7 +237,7 @@ def test_prune_graph_pipeline_threshold_validation(monkeypatch, tiny_graph):
     def fake_loader(_json_path):
         return adj, node_ids, attr, {}
 
-    monkeypatch.setattr("circuit_tracer.subgraph.prune.get_data_from_json", fake_loader)
+    monkeypatch.setattr("summarization.prune.get_data_from_json", fake_loader)
 
     with pytest.raises(ValueError, match="node_threshold"):
         prune_graph_pipeline(

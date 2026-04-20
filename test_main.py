@@ -1,6 +1,6 @@
 import os
-from circuit_tracer.subgraph.prune import prune_graph_pipeline
-from circuit_tracer.subgraph.api import generate_graph, get_feature, save_subgraph
+from summarization.prune import prune_graph_pipeline
+from api import generate_graph, get_feature, save_subgraph
 from pathlib import Path
 import torch
 

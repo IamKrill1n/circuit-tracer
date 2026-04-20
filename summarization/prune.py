@@ -1,8 +1,8 @@
 # graph.prune_graph for json files
 import logging
 from typing import Any, Dict, List, Tuple, Optional, Literal, NamedTuple
-from circuit_tracer.subgraph.utils import _build_index_sets
-from circuit_tracer.subgraph.api import get_feature
+from summarization.utils import _build_index_sets
+from api import get_feature
 from dataclasses import dataclass
 
 import torch
@@ -18,7 +18,7 @@ from circuit_tracer.graph import (
     combined_scores_harmonic,
     find_threshold,
 )
-from circuit_tracer.subgraph.utils import get_data_from_json
+from summarization.utils import get_data_from_json
 logger = logging.getLogger(__name__)
 
 LogitWeightMode = Literal["probs", "target"]
