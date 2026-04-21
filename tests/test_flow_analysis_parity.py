@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from circuit_tracer.subgraph import flow_analysis as package_flow_analysis
+from summarization import flow_analysis as package_flow_analysis
 
 
 def _load_demo_flow_analysis_module() -> types.ModuleType:

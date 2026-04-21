@@ -1,20 +1,21 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 from scipy.linalg import eigvalsh
 
-from circuit_tracer.subgraph.cluster import (
+from summarization.cluster import (
     _is_fixed,
     cluster_graph,
     compute_similarity,
 )
-from circuit_tracer.subgraph.flow_analysis import (
+from summarization.flow_analysis import (
     build_supernode_graph,
+    flow_faithfulness_report,
     supernodes_to_mapping,
 )
-from circuit_tracer.subgraph.prune import PruneGraph
+from summarization.prune import PruneGraph
 
 
 def _middle_indices(prune_graph: PruneGraph) -> list[int]:
@@ -119,13 +120,16 @@ def score_k(
     w_dag: float = 0.25,
     w_attr: float = 0.25,
     w_size: float = 0.20,
+    use_flow_faithfulness: bool = False,
+    w_flow: float = 0.40,
+    enforce_dag: bool = False,
 ) -> dict[str, Any]:
     if isinstance(final_supernodes, list):
         final_supernodes = supernodes_to_mapping(prune_graph, final_supernodes)
 
     stats = _evaluate_grouping(final_supernodes, prune_graph, similarity)
     dag_warnings = _check_dag_safety(final_supernodes)
-    sng = build_supernode_graph(prune_graph, final_supernodes)
+    sng = build_supernode_graph(prune_graph, final_supernodes, enforce_dag=enforce_dag)
     middle = {sn: st for sn, st in stats.items() if "EMB" not in sn and "LOGIT" not in sn}
     n_middle = len(middle)
     if n_middle == 0:
@@ -175,9 +179,19 @@ def score_k(
     dev = abs(n_middle - ideal_k) / max(target_n_middle, 1)
     size_score = max(0.0, 1.0 - dev)
 
-    total = w_intra * intra + w_dag * dag_safety + w_attr * attr_balance + w_size * size_score
-    return {
+    total_base = w_intra * intra + w_dag * dag_safety + w_attr * attr_balance + w_size * size_score
+    flow_report: dict[str, Any] | None = None
+    f_phi = 0.0
+    if use_flow_faithfulness:
+        flow_report = flow_faithfulness_report(sng, final_supernodes, top_k=10)
+        f_phi = float(flow_report["combined"]["F_phi"])
+        total = (1.0 - w_flow) * total_base + w_flow * f_phi
+    else:
+        total = total_base
+
+    out = {
         "total": float(total),
+        "total_base": float(total_base),
         "intra_sim": float(intra),
         "dag_safety": float(dag_safety),
         "flow_balance": float(attr_balance),
@@ -189,6 +203,21 @@ def score_k(
         "edge_conservation": float(sng["edge_conservation"]),
         "details": {sn: {"intra_sim": st["intra_sim_mean"], "n": int(st["n"])} for sn, st in middle.items()},
     }
+    if use_flow_faithfulness and flow_report is not None:
+        combined = flow_report["combined"]
+        out.update(
+            {
+                "F_phi": f_phi,
+                "D_phi": float(combined["D_phi"]),
+                "R_phi": float(combined["R_phi"]),
+                "R_phi_balance": float(combined["R_phi_balance"]),
+                "R_phi_suppressive": float(combined["R_phi_suppressive"]),
+                "sigma_phi": float(combined.get("sigma_phi", combined.get("shortcut_frac", 0.0))),
+                "shortcut_frac": float(combined["shortcut_frac"]),
+                "flow_report": flow_report,
+            }
+        )
+    return out
 
 
 def find_best_k(
@@ -201,6 +230,10 @@ def find_best_k(
     max_sn: int | None = None,
     gamma: float = 1,
     mediation_penalty: float = 0.1,
+    similarity_mode: Literal["scores", "relevance", "influence", "uniform", "edge"] = "edge",
+    use_flow_faithfulness: bool = True,
+    w_flow: float = 0.40,
+    enforce_dag: bool = False,
 ) -> tuple[int, dict[int, dict[str, Any]]]:
     """
     Auto-select k for `cluster_graph` and return sweep metrics.
@@ -213,6 +246,7 @@ def find_best_k(
             prune_graph,
             gamma=gamma,
             mediation_penalty=mediation_penalty,
+            similarity_mode=similarity_mode,
         )
     s_np = np.asarray(sim.detach().cpu().numpy() if hasattr(sim, "detach") else sim)
     n_middle = len(_middle_indices(prune_graph))
@@ -237,6 +271,8 @@ def find_best_k(
             max_sn=max_sn,
             gamma=gamma,
             mediation_penalty=mediation_penalty,
+            similarity_mode=similarity_mode,
+            enforce_dag=enforce_dag,
         )
         final_supernodes = supernodes_to_mapping(prune_graph, supernodes)
         sc = score_k(
@@ -248,6 +284,9 @@ def find_best_k(
             w_dag=w.get("w_dag", 0.25),
             w_attr=w.get("w_flow", 0.25),
             w_size=w.get("w_size", 0.20),
+            use_flow_faithfulness=use_flow_faithfulness,
+            w_flow=w_flow,
+            enforce_dag=enforce_dag,
         )
         sc["final_supernodes"] = final_supernodes
         results[k] = sc

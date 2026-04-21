@@ -7,10 +7,10 @@ from pathlib import Path
 from typing import Any
 
 import requests
-from circuit_tracer.subgraph.api import generate_graph, save_subgraph
-from circuit_tracer.subgraph.auto_grouping import find_best_k
-from circuit_tracer.subgraph.cluster import cluster_graph_with_labels
-from circuit_tracer.subgraph.prune import prune_graph_pipeline
+from api import generate_graph, save_subgraph
+from summarization.auto_grouping import find_best_k
+from summarization.cluster import cluster_graph_with_labels
+from summarization.prune import prune_graph_pipeline
 
 
 def _download_graph_json(
@@ -92,8 +92,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         json_path=graph_json_path,
         logit_weights=args.logit_weights,
         token_weights=token_weights,
-        node_threshold=args.node_influence_threshold,
-        edge_threshold=args.edge_influence_threshold,
+        node_threshold=args.node_threshold,
+        edge_threshold=args.edge_threshold,
         keep_all_tokens_and_logits=args.keep_all_tokens_and_logits,
         filter_act_density=args.filter_act_density,
         act_density_lb=args.act_density_lb,
@@ -115,8 +115,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         target_k=best_k,
         max_layer_span=args.max_layer_span,
         max_sn=args.max_sn,
-        alpha=args.alpha,
-        beta=args.beta,
+        gamma=args.gamma,
         mediation_penalty=args.mediation_penalty,
     )
 
@@ -166,7 +165,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--token-weights", type=str, default=None, help="JSON list string, e.g. '[0,0,0.5,0.5]'")
     parser.add_argument("--node-threshold", type=float, default=0.5)
     parser.add_argument("--edge-threshold", type=float, default=0.98)
-    parser.add_argument("--alpha", type=float, default=0.5)
+    parser.add_argument("--alpha", type=float, default=0.5, help="Deprecated: use --gamma")
     parser.add_argument("--keep-all-tokens-and-logits", action="store_true")
     parser.add_argument("--filter-act-density", action="store_true")
     parser.add_argument("--act-density-lb", type=float, default=2e-5)
@@ -177,7 +176,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--k-max", type=int, default=None)
     parser.add_argument("--max-layer-span", type=int, default=4)
     parser.add_argument("--max-sn", type=int, default=None)
-    parser.add_argument("--beta", type=float, default=0.5)
+    parser.add_argument("--beta", type=float, default=0.5, help="Deprecated")
+    parser.add_argument("--gamma", type=float, default=0.5)
     parser.add_argument("--mediation-penalty", type=float, default=0.1)
     parser.add_argument("--supernodes-out", type=str, default="temp_graph_files/supernodes.json")
 

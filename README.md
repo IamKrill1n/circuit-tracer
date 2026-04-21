@@ -3,7 +3,7 @@ Fork of safety-research/circuit-tracer
 Original Readme below
 ## Subgraph finding algorithm
 
-Path: `circuit_tracer/subgraph`
+Path: `summarization`
 
 - `api.py` — High-level API to load features and generate attribution graphs.
 - `prune.py` — Prune algorithm using influence and relevance

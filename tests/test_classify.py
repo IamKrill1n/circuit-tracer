@@ -1,7 +1,7 @@
 import json
 import pytest
 
-from circuit_tracer.subgraph.classify import (
+from summarization.classify import (
     normalize_text,
     heuristic_classify,
     classify_features,
@@ -86,7 +86,7 @@ def test_classify_features_trash_when_high_act_density(monkeypatch):
         }
         return 200, json.dumps(data)
 
-    monkeypatch.setattr("circuit_tracer.subgraph.classify.get_feature", fake_get_feature)
+    monkeypatch.setattr("summarization.classify.get_feature", fake_get_feature)
 
     node_ids = ["25_9974_1"]
     attr = {"25_9974_1": {"feature_type": "cross layer transcoder"}}
@@ -115,7 +115,7 @@ def test_classify_features_calls_heuristic_path(monkeypatch):
         }
         return 200, json.dumps(data)
 
-    monkeypatch.setattr("circuit_tracer.subgraph.classify.get_feature", fake_get_feature)
+    monkeypatch.setattr("summarization.classify.get_feature", fake_get_feature)
 
     node_ids = ["3_42_0"]
     attr = {"3_42_0": {"feature_type": "cross layer transcoder"}}
@@ -129,7 +129,7 @@ def test_classify_features_skip_on_non_200(monkeypatch):
     def fake_get_feature(modelId, layer, index):
         return 500, "error"
 
-    monkeypatch.setattr("circuit_tracer.subgraph.classify.get_feature", fake_get_feature)
+    monkeypatch.setattr("summarization.classify.get_feature", fake_get_feature)
 
     node_ids = ["1_2_3"]
     attr = {"1_2_3": {"feature_type": "cross layer transcoder"}}

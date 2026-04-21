@@ -5,7 +5,7 @@
 # from google import genai
 # from google.genai import types
 
-# from circuit_tracer.subgraph.config import get_env
+# from config import get_env
 
 # SYSTEM_PROMPT = """
 # You are a meticulous AI researcher.

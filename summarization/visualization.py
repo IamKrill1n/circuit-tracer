@@ -1,8 +1,8 @@
 from platform import node
-from circuit_tracer.subgraph.prune import prune_graph_pipeline
-from circuit_tracer.subgraph.utils import get_data_from_json, get_clerp
-from circuit_tracer.subgraph.grouping import greedy_grouping
-from circuit_tracer.subgraph.distance import build_distance_graph_from_clerp
+from summarization.prune import prune_graph_pipeline
+from summarization.utils import get_data_from_json, get_clerp
+from summarization.grouping import greedy_grouping
+from summarization.distance import build_distance_graph_from_clerp
 from circuit_tracer import ReplacementModel
 import networkx as nx  # type: ignore
 from typing import Any, Callable, Dict, List, Optional, Tuple

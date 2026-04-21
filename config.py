@@ -3,7 +3,7 @@ import os
 from dotenv import load_dotenv
 
 # Load .env from repo root: /home/tu/circuit-tracer/.env
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = Path(__file__).resolve().parent
 load_dotenv(_REPO_ROOT / ".env", override=False)
 
 def get_env(name: str, default: str = "") -> str:

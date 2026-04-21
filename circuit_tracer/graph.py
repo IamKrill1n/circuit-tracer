@@ -1,7 +1,6 @@
 from typing import NamedTuple
 
 import torch
-from circuit_tracer.subgraph.utils import get_data_from_json
 from circuit_tracer.utils.tl_nnsight_mapping import (
     convert_nnsight_config_to_transformerlens,
     UnifiedConfig,

@@ -4,14 +4,14 @@ from typing import List, Optional, Tuple, Dict, Any
 import math
 import html
 import networkx as nx
-from circuit_tracer.subgraph.visualization import topological_layers
+from summarization.visualization import topological_layers
 from circuit_tracer.replacement_model import ReplacementModel
 import torch
 import numpy as np
 from IPython.display import SVG
 
-from circuit_tracer.subgraph.pruning import trim_graph
-from circuit_tracer.subgraph.grouping import greedy_grouping
+from summarization.pruning import trim_graph
+from summarization.grouping import greedy_grouping
 Feature = namedtuple("Feature", ["layer", "pos", "feature_idx"])
 
 

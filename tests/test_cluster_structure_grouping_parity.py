@@ -1,155 +1,81 @@
 from __future__ import annotations
 
-import importlib.util
-import sys
-import types
-from pathlib import Path
-
 import torch
 
-from circuit_tracer.subgraph.cluster import cluster_graph, compute_similarity as package_compute_similarity
-from circuit_tracer.subgraph.prune import PruneGraph
+from summarization.cluster import cluster_graph, compute_similarity
+from summarization.prune import PruneGraph
 
 
-def _load_demo_structure_grouping_module() -> types.ModuleType:
-    """
-    Load demos/structure_grouping.py while stubbing scipy imports used only for dendrogram mode.
-    """
-    scipy_module = types.ModuleType("scipy")
-    scipy_cluster = types.ModuleType("scipy.cluster")
-    scipy_cluster_hierarchy = types.ModuleType("scipy.cluster.hierarchy")
-    scipy_spatial = types.ModuleType("scipy.spatial")
-    scipy_spatial_distance = types.ModuleType("scipy.spatial.distance")
-
-    setattr(scipy_cluster_hierarchy, "dendrogram", lambda *_args, **_kwargs: None)
-    setattr(scipy_cluster_hierarchy, "fcluster", lambda *_args, **_kwargs: None)
-    setattr(scipy_cluster_hierarchy, "linkage", lambda *_args, **_kwargs: None)
-    setattr(scipy_spatial_distance, "squareform", lambda *_args, **_kwargs: None)
-
-    original_modules = {
-        name: sys.modules.get(name)
-        for name in [
-            "scipy",
-            "scipy.cluster",
-            "scipy.cluster.hierarchy",
-            "scipy.spatial",
-            "scipy.spatial.distance",
-        ]
-    }
-
-    sys.modules["scipy"] = scipy_module
-    sys.modules["scipy.cluster"] = scipy_cluster
-    sys.modules["scipy.cluster.hierarchy"] = scipy_cluster_hierarchy
-    sys.modules["scipy.spatial"] = scipy_spatial
-    sys.modules["scipy.spatial.distance"] = scipy_spatial_distance
-
-    try:
-        demo_path = Path(__file__).resolve().parents[1] / "demos" / "structure_grouping.py"
-        module_name = "_demo_structure_grouping_for_parity_test"
-        spec = importlib.util.spec_from_file_location(module_name, demo_path)
-        if spec is None or spec.loader is None:
-            raise RuntimeError(f"Failed to create import spec for {demo_path}")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
-    finally:
-        for name, original in original_modules.items():
-            if original is None:
-                del sys.modules[name]
-            else:
-                sys.modules[name] = original
-
-
-def _build_test_graph() -> tuple[PruneGraph, dict]:
+def _build_test_graph() -> PruneGraph:
     kept_ids = ["E_0_0", "1_0_0", "1_1_0", "2_0_0", "2_1_0", "27_0_0"]
     attr = {
-        "E_0_0": {"feature_type": "embedding", "activation": None, "influence": 0.0, "is_target_logit": False},
-        "1_0_0": {"feature_type": "sae_feature", "activation": 1.0, "influence": 0.3, "is_target_logit": False},
-        "1_1_0": {"feature_type": "sae_feature", "activation": 0.9, "influence": 0.35, "is_target_logit": False},
-        "2_0_0": {"feature_type": "sae_feature", "activation": 1.2, "influence": 0.5, "is_target_logit": False},
-        "2_1_0": {"feature_type": "sae_feature", "activation": 1.1, "influence": 0.45, "is_target_logit": False},
-        "27_0_0": {"feature_type": "logit", "activation": None, "influence": None, "is_target_logit": True},
+        "E_0_0": {"feature_type": "embedding", "is_target_logit": False},
+        "1_0_0": {"feature_type": "sae_feature", "is_target_logit": False},
+        "1_1_0": {"feature_type": "sae_feature", "is_target_logit": False},
+        "2_0_0": {"feature_type": "sae_feature", "is_target_logit": False},
+        "2_1_0": {"feature_type": "sae_feature", "is_target_logit": False},
+        "27_0_0": {"feature_type": "logit", "is_target_logit": True},
     }
-
-    # receiver-indexed adjacency (both implementations transpose internally to sender-indexed)
+    # receiver-indexed adjacency
     pruned_adj = torch.tensor(
         [
             [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            [0.4, 0.0, 0.1, 0.0, 0.0, 0.0],
-            [0.3, 0.2, 0.0, 0.0, 0.0, 0.0],
-            [0.0, 0.7, 0.6, 0.0, 0.2, 0.0],
-            [0.0, 0.6, 0.7, 0.3, 0.0, 0.0],
-            [0.0, 0.1, 0.2, 0.8, 0.9, 0.0],
+            [0.8, 0.0, 0.2, 0.0, 0.0, 0.0],
+            [0.7, 0.1, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.9, 0.8, 0.0, 0.3, 0.0],
+            [0.0, 0.8, 0.9, 0.2, 0.0, 0.0],
+            [0.0, 0.2, 0.3, 0.8, 0.9, 0.0],
         ],
         dtype=torch.float32,
     )
-
-    prune_graph = PruneGraph(
+    edge_relevance = pruned_adj.clone() * 0.8
+    edge_influence = pruned_adj.clone() * 1.2
+    node_relevance = torch.tensor([0.0, 0.4, 0.45, 0.7, 0.75, 0.0], dtype=torch.float32)
+    node_influence = torch.tensor([0.0, 0.3, 0.35, 0.8, 0.85, 0.0], dtype=torch.float32)
+    node_scores = 0.5 * (node_relevance + node_influence)
+    return PruneGraph(
         kept_ids=kept_ids,
         pruned_adj=pruned_adj,
-        node_influence=torch.zeros(len(kept_ids)),
-        node_relevance=torch.zeros(len(kept_ids)),
+        node_scores=node_scores,
         attr=attr,
         metadata={},
-    )
-    raw = {"kept_ids": kept_ids, "pruned_adj": pruned_adj, "attr": attr}
-    return prune_graph, raw
-
-
-def _normalize_partition(clusters: list[list[str]]) -> set[frozenset[str]]:
-    return {frozenset(cluster) for cluster in clusters}
-
-
-def test_compute_similarity_matches_demo_structure_grouping() -> None:
-    demo_structure_grouping = _load_demo_structure_grouping_module()
-    prune_graph, raw = _build_test_graph()
-
-    package_similarity = package_compute_similarity(
-        prune_graph,
-        alpha=0.5,
-        beta=0.5,
-        mediation_penalty=0.1,
+        node_influence=node_influence,
+        node_relevance=node_relevance,
+        edge_influence=edge_influence,
+        edge_relevance=edge_relevance,
     )
 
-    data = demo_structure_grouping.prepare_graph_data(raw)
-    demo_similarity = demo_structure_grouping.compute_similarity(
-        data,
-        alpha=0.5,
-        beta=0.5,
-        mediation_penalty=0.1,
-    )
 
-    assert torch.allclose(package_similarity, demo_similarity, atol=1e-6, rtol=1e-6)
+def test_compute_similarity_uses_edge_channels() -> None:
+    prune_graph = _build_test_graph()
+    sim_out = compute_similarity(prune_graph, gamma=1.0, mediation_penalty=1.0)
+    sim_in = compute_similarity(prune_graph, gamma=0.0, mediation_penalty=1.0)
+
+    assert sim_out.shape == sim_in.shape == (len(prune_graph.kept_ids), len(prune_graph.kept_ids))
+    assert torch.all(sim_out >= 0.0) and torch.all(sim_out <= 1.0)
+    assert torch.all(sim_in >= 0.0) and torch.all(sim_in <= 1.0)
+    assert not torch.allclose(sim_out, sim_in)
 
 
-def test_cluster_partition_matches_demo_structure_grouping() -> None:
-    # cluster_with_target_k imports sklearn lazily.
-    import pytest
+def test_mediation_penalty_reduces_similarity() -> None:
+    prune_graph = _build_test_graph()
+    no_penalty = compute_similarity(prune_graph, gamma=0.5, mediation_penalty=1.0)
+    with_penalty = compute_similarity(prune_graph, gamma=0.5, mediation_penalty=0.1)
+    assert torch.all(with_penalty <= no_penalty + 1e-8)
 
-    pytest.importorskip("sklearn")
 
-    demo_structure_grouping = _load_demo_structure_grouping_module()
-    prune_graph, raw = _build_test_graph()
-
-    package_clusters = cluster_graph(
+def test_cluster_graph_spectral_output_shape() -> None:
+    prune_graph = _build_test_graph()
+    supernodes = cluster_graph(
         prune_graph,
         target_k=2,
         max_layer_span=4,
         max_sn=None,
-        alpha=0.5,
-        beta=0.5,
         mediation_penalty=0.1,
+        enforce_dag=False,
     )
 
-    data = demo_structure_grouping.prepare_graph_data(raw)
-    similarity = demo_structure_grouping.compute_similarity(data, alpha=0.5, beta=0.5, mediation_penalty=0.1)
-    demo_supernodes = demo_structure_grouping.cluster_with_target_k(
-        data,
-        similarity,
-        target_k=2,
-        max_layer_span=4,
-        max_sn=None,
-    )
-    demo_clusters = list(demo_supernodes.values())
-
-    assert _normalize_partition(package_clusters) == _normalize_partition(demo_clusters)
+    middle = [sn for sn in supernodes if not sn[0].startswith("E") and not sn[0].startswith("27")]
+    fixed = [sn for sn in supernodes if sn[0].startswith("E") or sn[0].startswith("27")]
+    assert len(middle) == 2
+    assert len(fixed) == 2  # one embedding and one logit singleton in this fixture

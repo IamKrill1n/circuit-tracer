@@ -1,9 +1,6 @@
 import os
-from circuit_tracer.subgraph.prune import prune_graph_pipeline, load_prune_graph
-# from circuit_tracer.subgraph.api import generate_graph, get_feature, save_subgraph
-# from circuit_tracer.subgraph.classify import classify_features, classify_features_with_llm
-from circuit_tracer.subgraph.auto_grouping import find_best_k
-from circuit_tracer.subgraph.cluster import cluster_graph, cluster_graph_with_labels
+from summarization.prune import prune_graph_pipeline
+from api import generate_graph, get_feature, save_subgraph
 from pathlib import Path
 import torch
 

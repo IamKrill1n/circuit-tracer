@@ -1,6 +1,6 @@
 import requests
 from typing import Tuple, List, Optional, Any
-from circuit_tracer.subgraph.config import NEURONPEDIA_API_KEY
+from config import NEURONPEDIA_API_KEY
 import json
 
 BASE_URL = "https://www.neuronpedia.org"

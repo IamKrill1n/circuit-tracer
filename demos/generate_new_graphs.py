@@ -1,8 +1,10 @@
-from circuit_tracer.subgraph.api import generate_graph
+from api import generate_graph
 import os
 import time
 import json
-from typing import Tuple
+import re
+from pathlib import Path
+from typing import Optional
 import requests
 
 # configure defaults used for API calls
@@ -13,6 +15,10 @@ REQUEST_DELAY = 1.0
 # number of times to retry downloading the saved s3 json
 DOWNLOAD_RETRIES = 3
 DOWNLOAD_TIMEOUT = 30.0
+PROMPTS_FILE = Path(__file__).with_name("prompts2.txt")
+OUTPUT_DIR = Path(__file__).with_name("temp_graph_files")
+SOURCE_SETS = ("clt-hp", "gemmascope-transcoder-16k")
+MAX_PROMPTS = 10
 
 
 def fetch_json_url(url: str, retries: int = DOWNLOAD_RETRIES) -> dict:
@@ -28,9 +34,9 @@ def fetch_json_url(url: str, retries: int = DOWNLOAD_RETRIES) -> dict:
     raise RuntimeError("unreachable")
 
 def download_graph(
-    prompt: str = None,
-    slug: str = None,
-    out_path: str = None,
+    prompt: Optional[str] = None,
+    slug: Optional[str] = None,
+    out_path: Optional[str] = None,
     model_id: str = DEFAULT_MODEL,
     source_set: str = DEFAULT_SOURCE_SET,
     desired_logit_prob: float = 0.99,
@@ -86,8 +92,54 @@ def download_graph(
     # break
 
 
+def slugify_prompt(prompt: str, index: int, source_set: str) -> str:
+    trimmed = re.sub(r"\s+", " ", prompt.strip()).lower()
+    core = re.sub(r"[^a-z0-9]+", "-", trimmed).strip("-")
+    if not core:
+        core = f"prompt-{index + 1:02d}"
+    if len(core) > 60:
+        core = core[:60].rstrip("-")
+    return f"{source_set}-p{index + 1:02d}-{core}"
+
+
+def load_prompts(path: Path, limit: int) -> list[str]:
+    with path.open("r", encoding="utf-8") as in_f:
+        prompts = []
+        for line in in_f:
+            text = line.strip()
+            if not text:
+                continue
+            words = text.split()
+            # Remove the final token (the target word) before generation.
+            truncated = " ".join(words[:-1]).strip() if len(words) > 1 else ""
+            if truncated:
+                prompts.append(truncated)
+    return prompts[:limit]
+
+
 if __name__ == "__main__":
-    prompt = "abc"
-    out_path = "temp_graph_files/abc.json"
-    download_graph(prompt=prompt, slug="test-graph-abc", out_path=out_path, node_threshold=0.5, edge_threshold=0.8, desired_logit_prob=0.95, max_feature_nodes=5000, max_n_logits=10)
+    prompts = load_prompts(PROMPTS_FILE, MAX_PROMPTS)
+    if not prompts:
+        raise ValueError(f"No prompts found in {PROMPTS_FILE}")
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    for source_set in SOURCE_SETS:
+        source_out_dir = OUTPUT_DIR / source_set
+        source_out_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Generating {len(prompts)} graphs for source_set='{source_set}'")
+        for idx, prompt in enumerate(prompts):
+            slug = slugify_prompt(prompt, idx, source_set)
+            out_path = source_out_dir / f"{slug}.json"
+            download_graph(
+                prompt=prompt,
+                slug=slug,
+                out_path=str(out_path),
+                source_set=source_set,
+                node_threshold=0.95,
+                edge_threshold=0.98,
+                desired_logit_prob=0.99,
+                max_feature_nodes=10000,
+                max_n_logits=15,
+            )
 

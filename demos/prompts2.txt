@@ -1,0 +1,50 @@
+Fact: The capital of the country that borders the United States to the north is Ottawa
+Fact: The currency of the country where the Eiffel Tower is located is euro
+Fact: The largest planet in the solar system where Earth is located is Jupiter
+Fact: The author of the book that features Sherlock Holmes is Doyle
+Fact: The capital of the country where the Amazon rainforest is primarily located is Brasília
+Fact: The language spoken in the country whose capital is Tokyo is Japanese
+Fact: The continent where the Nile River flows is Africa
+Fact: The inventor of the telephone used in modern communication is Bell
+Fact: The capital of the state where Silicon Valley is located is Sacramento
+Fact: The animal that produces the material used to make silk is silkworm
+Fact: The capital of the country where the Great Pyramid of Giza is located is Cairo
+Fact: The scientist who developed the theory of relativity is Einstein
+Fact: The country that uses the yen as its currency is Japan
+Fact: The capital of the country where Mount Everest is located is Kathmandu
+Fact: The organ that pumps blood through the human body is heart
+Fact: The largest ocean on the planet where humans live is Pacific
+Fact: The country whose flag has a maple leaf is Canada
+Fact: The capital of the country where the Colosseum is located is Rome
+Fact: The metal that is liquid at room temperature is mercury
+Fact: The capital of the country where Oktoberfest is held is Berlin
+Fact: The author of the play that features Hamlet is Shakespeare
+Fact: The gas that plants absorb for photosynthesis is carbon
+Fact: The capital of the country where the Taj Mahal is located is Delhi
+Fact: The device used to measure temperature is thermometer
+Fact: The country where the kangaroo is native is Australia
+Fact: The capital of the country where the Statue of Liberty is located is Washington
+Fact: The hardest natural substance found on Earth is diamond
+Fact: The capital of the country where the Great Wall is located is Beijing
+Fact: The bird that is a symbol of peace is dove
+Fact: The capital of the country where the pyramids of Giza are located is Cairo
+Fact: The process by which plants make food using sunlight is photosynthesis
+Fact: The country where the Alps mountain range is primarily located is Switzerland
+Fact: The capital of the country where the Louvre Museum is located is Paris
+Fact: The scientist who discovered gravity after observing a falling apple is Newton
+Fact: The largest mammal living on Earth is whale
+Fact: The capital of the country where the Sydney Opera House is located is Canberra
+Fact: The chemical element with the symbol O is oxygen
+Fact: The capital of the country where the Sahara Desert is located is Algiers
+Fact: The instrument used to measure earthquakes is seismograph
+Fact: The country where the panda is native is China
+Fact: The capital of the country where Machu Picchu is located is Lima
+Fact: The star at the center of the solar system is sun
+Fact: The capital of the country where the Leaning Tower is located is Rome
+Fact: The substance essential for human breathing is oxygen
+Fact: The capital of the country where Niagara Falls is located is Ottawa
+Fact: The largest land animal on Earth is elephant
+Fact: The capital of the country where the Kremlin is located is Moscow
+Fact: The scientist known for the laws of motion is Newton
+Fact: The country where the tulip is a national symbol is Netherlands
+Fact: The capital of the country where Christ the Redeemer is located is Brasília

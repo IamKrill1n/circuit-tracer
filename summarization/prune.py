@@ -1,8 +1,8 @@
 # graph.prune_graph for json files
 import logging
 from typing import Any, Dict, List, Tuple, Optional, Literal, NamedTuple
-from circuit_tracer.subgraph.utils import _build_index_sets
-from circuit_tracer.subgraph.api import get_feature
+from summarization.utils import _build_index_sets
+from api import get_feature
 from dataclasses import dataclass
 
 import torch
@@ -18,7 +18,7 @@ from circuit_tracer.graph import (
     combined_scores_harmonic,
     find_threshold,
 )
-from circuit_tracer.subgraph.utils import get_data_from_json
+from summarization.utils import get_data_from_json
 logger = logging.getLogger(__name__)
 
 LogitWeightMode = Literal["probs", "target"]
@@ -34,6 +34,10 @@ class PruneGraph:
     node_scores: torch.Tensor
     attr: Dict[str, Any]
     metadata: Dict[str, Any]
+    node_influence: torch.Tensor | None = None
+    node_relevance: torch.Tensor | None = None
+    edge_influence: torch.Tensor | None = None
+    edge_relevance: torch.Tensor | None = None
 
     @property
     def num_nodes(self) -> int:
@@ -48,6 +52,10 @@ class PruneGraph:
             "kept_ids": self.kept_ids,
             "pruned_adj": self.pruned_adj,
             "node_scores": self.node_scores,
+            "node_influence": self.node_influence,
+            "node_relevance": self.node_relevance,
+            "edge_influence": self.edge_influence,
+            "edge_relevance": self.edge_relevance,
             "attr": self.attr,
             "metadata": self.metadata,
         }
@@ -78,6 +86,10 @@ class PruneGraph:
             kept_ids=payload["kept_ids"],
             pruned_adj=payload["pruned_adj"],
             node_scores=payload["node_scores"],
+            node_influence=payload.get("node_influence"),
+            node_relevance=payload.get("node_relevance"),
+            edge_influence=payload.get("edge_influence"),
+            edge_relevance=payload.get("edge_relevance"),
             attr=payload["attr"],
             metadata=payload["metadata"],
         )
@@ -172,7 +184,7 @@ def prune_combined(
     normalization: str = "min_max",
     alpha: float = 0.5,
     keep_all_tokens_and_logits: bool = True,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     n = adj.shape[0]
     idx = _build_index_sets(node_ids, attr)
 
@@ -244,7 +256,7 @@ def prune_combined(
     # Use helper to iteratively remove dangling nodes after combining masks
     node_mask = remove_dangling_nodes(node_mask, edge_mask, feature_idx, non_boundary)
 
-    return node_mask, edge_mask, node_scores
+    return node_mask, edge_mask, node_scores, node_inf, node_rel, edge_inf, edge_rel
 
 
 def prune_graph_pipeline(
@@ -267,7 +279,7 @@ def prune_graph_pipeline(
     adj, node_ids, attr, metadata = get_data_from_json(json_path)
     _validate_inputs(adj, node_ids, attr, logit_weights, token_weights)
 
-    node_mask, edge_mask, node_scores = prune_combined(
+    node_mask, edge_mask, node_scores, node_inf, node_rel, edge_inf, edge_rel = prune_combined(
         adj, node_ids, attr,
         logit_weights=logit_weights,
         token_weights=token_weights,
@@ -326,6 +338,12 @@ def prune_graph_pipeline(
     kept_edge_mask = edge_mask[kept_indices][:, kept_indices]
     pruned_adj[~kept_edge_mask] = 0.0
     kept_node_scores = node_scores[kept_indices]
+    kept_node_inf = node_inf[kept_indices]
+    kept_node_rel = node_rel[kept_indices]
+    kept_edge_inf = edge_inf[kept_indices][:, kept_indices]
+    kept_edge_rel = edge_rel[kept_indices][:, kept_indices]
+    kept_edge_inf[~kept_edge_mask] = 0.0
+    kept_edge_rel[~kept_edge_mask] = 0.0
 
     out_attr = {nid: attr[nid] for nid in kept_ids}
     logger.info("Pruned graph: %d nodes, %d edges", len(kept_ids), int((pruned_adj != 0).sum().item()))
@@ -335,7 +353,11 @@ def prune_graph_pipeline(
         pruned_adj,
         kept_node_scores,
         out_attr,
-        metadata
+        metadata,
+        kept_node_inf,
+        kept_node_rel,
+        kept_edge_inf,
+        kept_edge_rel,
     )
 
 
