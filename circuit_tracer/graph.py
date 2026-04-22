@@ -153,7 +153,7 @@ def compute_node_influence(adjacency_matrix: torch.Tensor, logit_weights: torch.
 def compute_edge_influence(pruned_matrix: torch.Tensor, logit_weights: torch.Tensor):
     normalized_pruned = normalize_matrix(pruned_matrix)
     pruned_influence = compute_influence(normalized_pruned, logit_weights)
-    pruned_influence += logit_weights
+    # pruned_influence += logit_weights
     edge_scores = normalized_pruned * pruned_influence[:, None]
     return edge_scores
 
@@ -178,8 +178,8 @@ def compute_node_relevance(adjacency_matrix: torch.Tensor, emb_weights: torch.Te
 def compute_edge_relevance(pruned_matrix: torch.Tensor, emb_weights: torch.Tensor):
     normalized_pruned = normalize_matrix(pruned_matrix.T) # (n, n)
     pruned_relevance = compute_relevance(normalized_pruned, emb_weights) # (1, n)
-    pruned_relevance += emb_weights # (1, n)
-    edge_scores = normalized_pruned * pruned_relevance[:, None] # (n, n) * (1, n) -> (n, n)
+    # pruned_relevance += emb_weights # (1, n)
+    edge_scores = normalized_pruned * pruned_relevance[:, None] # (n, n) * (n, n) -> (n, n)
     return edge_scores.T # transpose back to original orientation
 
 def find_threshold(scores: torch.Tensor, threshold: float):
