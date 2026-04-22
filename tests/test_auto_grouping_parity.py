@@ -40,11 +40,9 @@ def _build_test_graph() -> PruneGraph:
     edge_influence = pruned_adj.clone() * 1.2
     node_relevance = torch.tensor([0.0, 0.4, 0.45, 0.7, 0.75, 0.0], dtype=torch.float32)
     node_influence = torch.tensor([0.0, 0.3, 0.35, 0.8, 0.85, 0.0], dtype=torch.float32)
-    node_scores = 0.5 * (node_relevance + node_influence)
     return PruneGraph(
         kept_ids=kept_ids,
         pruned_adj=pruned_adj,
-        node_scores=node_scores,
         attr=attr,
         metadata={},
         node_influence=node_influence,

@@ -221,12 +221,10 @@ def test_prune_graph_pipeline_returns_prunegraph(monkeypatch, tiny_graph):
     assert isinstance(out.kept_ids, list)
     assert isinstance(out.pruned_adj, torch.Tensor)
     assert out.pruned_adj.ndim == 2
-    assert out.node_scores.ndim == 1
     assert set(out.kept_ids) == set(out.attr.keys())
     assert out.metadata["prompt"] == "hello"
     assert out.pruned_adj.shape[0] == len(out.kept_ids)
     assert out.pruned_adj.shape[1] == len(out.kept_ids)
-    assert out.node_scores.shape[0] == len(out.kept_ids)
     assert out.num_nodes == len(out.kept_ids)
     assert out.num_edges() == int((out.pruned_adj != 0).sum().item())
 

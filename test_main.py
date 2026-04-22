@@ -67,4 +67,4 @@ supernodes = cluster_graph_with_labels(prune_graph, target_k=best_k, max_layer_s
 for supernode in supernodes:
     print(supernode[0])
     for node_id in supernode[1:]:
-        print(node_id, prune_graph.attr[node_id].get("clerp", ""), prune_graph.node_scores[prune_graph.kept_ids.index(node_id)].item())
+        print(node_id, prune_graph.attr[node_id].get("clerp", ""))

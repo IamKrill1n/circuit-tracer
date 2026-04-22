@@ -13,9 +13,6 @@ from circuit_tracer.graph import (
     compute_edge_influence,
     compute_node_relevance,
     compute_edge_relevance,
-    combine_scores_geometric,
-    combined_scores_arithmetic,
-    combined_scores_harmonic,
     find_threshold,
 )
 from summarization.utils import get_data_from_json
@@ -31,7 +28,6 @@ class PruneResult(NamedTuple):
 class PruneGraph:
     kept_ids: List[str]
     pruned_adj: torch.Tensor
-    node_scores: torch.Tensor
     attr: Dict[str, Any]
     metadata: Dict[str, Any]
     node_influence: torch.Tensor | None = None
@@ -51,7 +47,6 @@ class PruneGraph:
         return {
             "kept_ids": self.kept_ids,
             "pruned_adj": self.pruned_adj,
-            "node_scores": self.node_scores,
             "node_influence": self.node_influence,
             "node_relevance": self.node_relevance,
             "edge_influence": self.edge_influence,
@@ -65,27 +60,19 @@ class PruneGraph:
         required = {
             "kept_ids",
             "pruned_adj",
-            "node_scores",
+            "node_influence",
+            "node_relevance",
+            "edge_influence",
+            "edge_relevance",
             "attr",
             "metadata",
         }
         missing = required - set(payload.keys())
         if missing:
-            # Backward compatibility for older payloads.
-            if "node_scores" in missing and {"node_influence", "node_relevance"} <= set(payload.keys()):
-                node_scores = combine_scores_geometric(
-                    payload["node_influence"],
-                    payload["node_relevance"],
-                    alpha=0.5,
-                )
-                payload = {**payload, "node_scores": node_scores}
-                missing = required - set(payload.keys())
-            if missing:
-                raise ValueError(f"Invalid PruneGraph payload. Missing keys: {sorted(missing)}")
+            raise ValueError(f"Invalid PruneGraph payload. Missing keys: {sorted(missing)}")
         return cls(
             kept_ids=payload["kept_ids"],
             pruned_adj=payload["pruned_adj"],
-            node_scores=payload["node_scores"],
             node_influence=payload.get("node_influence"),
             node_relevance=payload.get("node_relevance"),
             edge_influence=payload.get("edge_influence"),
@@ -178,13 +165,12 @@ def prune_combined(
     attr: Dict[str, Any],
     logit_weights: LogitWeightMode,
     token_weights: Optional[List[float]] = None,
-    node_threshold: float = 0.8,
-    edge_threshold: float = 0.98,
-    combined_scores_method: str = "geometric",
-    normalization: str = "min_max",
-    alpha: float = 0.5,
+    node_influence_threshold: float = 0.8,
+    node_relevance_threshold: float = 0.8,
+    edge_influence_threshold: float = 0.98,
+    edge_relevance_threshold: float = 0.98,
     keep_all_tokens_and_logits: bool = True,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     n = adj.shape[0]
     idx = _build_index_sets(node_ids, attr)
 
@@ -215,15 +201,10 @@ def prune_combined(
 
     node_inf = compute_node_influence(adj, logits_seed)
     node_rel = compute_node_relevance(adj, emb_weights)
-    if combined_scores_method == "geometric":
-        node_scores = combine_scores_geometric(node_inf, node_rel, alpha=alpha, normalization=normalization)
-    elif combined_scores_method == "arithmetic":
-        node_scores = combined_scores_arithmetic(node_inf, node_rel, alpha=alpha, normalization=normalization)
-    elif combined_scores_method == "harmonic":
-        node_scores = combined_scores_harmonic(node_inf, node_rel, alpha=alpha, normalization=normalization)
-    else:
-        raise ValueError(f"Invalid combined scores method: {combined_scores_method}")
-    node_mask = node_scores >= find_threshold(node_scores, node_threshold)
+    node_inf_mask = node_inf >= find_threshold(node_inf, node_influence_threshold)
+    node_rel_mask = node_rel >= find_threshold(node_rel, node_relevance_threshold)
+    # Final node selection keeps only nodes that are both influential and relevant.
+    node_mask = (node_inf_mask & node_rel_mask).bool()
 
     if keep_all_tokens_and_logits:
         for i in emb_idx:
@@ -237,57 +218,60 @@ def prune_combined(
     pruned = adj.clone()
     pruned[~node_mask] = 0
     pruned[:, ~node_mask] = 0
-
     edge_inf = compute_edge_influence(pruned, logits_seed)
     edge_rel = compute_edge_relevance(pruned, emb_weights)
-    if combined_scores_method == "geometric":
-        edge_scores = combine_scores_geometric(edge_inf.flatten(), edge_rel.flatten(), alpha=alpha, normalization=normalization).reshape_as(edge_inf)
-    elif combined_scores_method == "arithmetic":
-        edge_scores = combined_scores_arithmetic(edge_inf.flatten(), edge_rel.flatten(), alpha=alpha, normalization=normalization).reshape_as(edge_inf)
-    elif combined_scores_method == "harmonic":
-        edge_scores = combined_scores_harmonic(edge_inf.flatten(), edge_rel.flatten(), alpha=alpha, normalization=normalization).reshape_as(edge_inf)
-    else:
-        raise ValueError(f"Invalid combined scores method: {combined_scores_method}")
-    edge_mask = edge_scores >= find_threshold(edge_scores.flatten(), edge_threshold)
+    edge_inf_mask = edge_inf >= find_threshold(edge_inf.flatten(), edge_influence_threshold)
+    edge_rel_mask = edge_rel >= find_threshold(edge_rel.flatten(), edge_relevance_threshold)
+    # Final edge selection keeps only edges that are both influential and relevant.
+    edge_mask = (edge_inf_mask & edge_rel_mask).bool()
 
-    idx = _build_index_sets(node_ids, attr)
     feature_idx = torch.tensor(idx["feature"], dtype=torch.long, device=adj.device)
     non_boundary = torch.tensor(idx["feature"] + idx["error"], dtype=torch.long, device=adj.device)
     # Use helper to iteratively remove dangling nodes after combining masks
     node_mask = remove_dangling_nodes(node_mask, edge_mask, feature_idx, non_boundary)
 
-    return node_mask, edge_mask, node_scores, node_inf, node_rel, edge_inf, edge_rel
+    return node_mask, edge_mask, node_inf, node_rel, edge_inf, edge_rel
 
 
 def prune_graph_pipeline(
     json_path: str,
     logit_weights: LogitWeightMode,
     token_weights: Optional[List[float]] = None,
-    node_threshold: float = 0.8,
-    edge_threshold: float = 0.98,
-    alpha: float = 0.5,
+    node_threshold: Optional[float] = None,
+    edge_threshold: Optional[float] = None,
+    node_influence_threshold: float = 0.8,
+    node_relevance_threshold: float = 0.8,
+    edge_influence_threshold: float = 0.98,
+    edge_relevance_threshold: float = 0.98,
     keep_all_tokens_and_logits: bool = True,
     filter_act_density: bool = False,
-    combined_scores_method: str = "geometric",
-    normalization: str = "min_max",
     act_density_lb: float = 2e-5,
     act_density_ub: float = 0.1,
 ) -> PruneGraph:
-    _validate_threshold("node_threshold", node_threshold)
-    _validate_threshold("edge_threshold", edge_threshold)
+    # Backward compatibility: if shared thresholds are provided, use them for both.
+    if node_threshold is not None:
+        node_influence_threshold = node_threshold
+        node_relevance_threshold = node_threshold
+    if edge_threshold is not None:
+        edge_influence_threshold = edge_threshold
+        edge_relevance_threshold = edge_threshold
+
+    _validate_threshold("node_influence_threshold", node_influence_threshold)
+    _validate_threshold("node_relevance_threshold", node_relevance_threshold)
+    _validate_threshold("edge_influence_threshold", edge_influence_threshold)
+    _validate_threshold("edge_relevance_threshold", edge_relevance_threshold)
 
     adj, node_ids, attr, metadata = get_data_from_json(json_path)
     _validate_inputs(adj, node_ids, attr, logit_weights, token_weights)
 
-    node_mask, edge_mask, node_scores, node_inf, node_rel, edge_inf, edge_rel = prune_combined(
+    node_mask, edge_mask, node_inf, node_rel, edge_inf, edge_rel = prune_combined(
         adj, node_ids, attr,
         logit_weights=logit_weights,
         token_weights=token_weights,
-        node_threshold=node_threshold,
-        edge_threshold=edge_threshold,
-        combined_scores_method=combined_scores_method,
-        normalization=normalization,
-        alpha=alpha,
+        node_influence_threshold=node_influence_threshold,
+        node_relevance_threshold=node_relevance_threshold,
+        edge_influence_threshold=edge_influence_threshold,
+        edge_relevance_threshold=edge_relevance_threshold,
         keep_all_tokens_and_logits=keep_all_tokens_and_logits,
     )
 
@@ -337,7 +321,6 @@ def prune_graph_pipeline(
     pruned_adj = adj[kept_indices][:, kept_indices].clone()
     kept_edge_mask = edge_mask[kept_indices][:, kept_indices]
     pruned_adj[~kept_edge_mask] = 0.0
-    kept_node_scores = node_scores[kept_indices]
     kept_node_inf = node_inf[kept_indices]
     kept_node_rel = node_rel[kept_indices]
     kept_edge_inf = edge_inf[kept_indices][:, kept_indices]
@@ -351,7 +334,6 @@ def prune_graph_pipeline(
     return PruneGraph(
         kept_ids,
         pruned_adj,
-        kept_node_scores,
         out_attr,
         metadata,
         kept_node_inf,

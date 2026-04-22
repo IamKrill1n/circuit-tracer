@@ -179,7 +179,6 @@ def run_single_graph(
     (
         _node_mask,
         _edge_mask,
-        _node_scores,
         node_influence,
         node_relevance,
         _edge_influence,
@@ -190,11 +189,10 @@ def run_single_graph(
         attr=attr,
         logit_weights=logit_weights,  # type: ignore[arg-type]
         token_weights=token_weights,
-        node_threshold=node_threshold,
-        edge_threshold=edge_threshold,
-        combined_scores_method=combined_scores_method,
-        normalization=normalization,
-        alpha=alpha,
+        node_influence_threshold=node_threshold,
+        node_relevance_threshold=node_threshold,
+        edge_influence_threshold=edge_threshold,
+        edge_relevance_threshold=edge_threshold,
         keep_all_tokens_and_logits=True,
     )
 
