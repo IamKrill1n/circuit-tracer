@@ -17,6 +17,7 @@ if str(_ROOT) not in sys.path:
 from summarization.prune import prune_combined
 from summarization.token_attribution import get_token_attribution_from_graph
 from summarization.utils import _build_index_sets, get_data_from_json
+from circuit_tracer.graph import find_threshold
 
 
 DEFAULT_INPUT_ROOT = Path("demos") / "temp_graph_files"
@@ -198,6 +199,8 @@ def run_single_graph(
 
     feature_influence = _to_numpy(node_influence[feature_indices])
     feature_relevance = _to_numpy(node_relevance[feature_indices])
+    relevance_cutoff = float(find_threshold(node_relevance, node_threshold).item())
+    influence_cutoff = float(find_threshold(node_influence, node_threshold).item())
 
     output_dir = output_root / source_set
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -211,6 +214,20 @@ def run_single_graph(
         alpha=0.35,
         linewidths=0,
     )
+    ax.axvline(
+        relevance_cutoff,
+        color="tab:blue",
+        linestyle="--",
+        linewidth=1.2,
+        label=f"relevance threshold={node_threshold:.2f}",
+    )
+    ax.axhline(
+        influence_cutoff,
+        color="tab:red",
+        linestyle="--",
+        linewidth=1.2,
+        label=f"influence threshold={node_threshold:.2f}",
+    )
 
     if _should_use_log_scale(feature_relevance):
         ax.set_xscale("log")
@@ -221,6 +238,7 @@ def run_single_graph(
     ax.set_ylabel("Feature node influence")
     ax.set_title(f"{source_set}: {graph_path.stem}")
     ax.grid(alpha=0.25, linestyle="--", linewidth=0.5)
+    ax.legend(loc="best", fontsize=8)
     fig.tight_layout()
     fig.savefig(output_path, dpi=180)
     plt.close(fig)
