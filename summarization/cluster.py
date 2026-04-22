@@ -70,6 +70,24 @@ def _normalize_edge_weights(weights: torch.Tensor) -> torch.Tensor:
     return weights / (w_abs_max + 1e-8)
 
 
+def _normalize_node_weights(scores: torch.Tensor | None, n_nodes: int, device: torch.device) -> torch.Tensor:
+    # Missing tensors can happen for older serialized PruneGraph payloads.
+    if scores is None:
+        return torch.ones(n_nodes, dtype=torch.float32, device=device)
+
+    values = scores.detach().float().to(device).reshape(-1)
+    if values.numel() != n_nodes:
+        return torch.ones(n_nodes, dtype=torch.float32, device=device)
+
+    values = torch.nan_to_num(values, nan=0.0, posinf=0.0, neginf=0.0)
+    v_min = float(values.min().item()) if values.numel() else 0.0
+    v_max = float(values.max().item()) if values.numel() else 0.0
+    if v_max - v_min <= 1e-8:
+        return torch.ones_like(values)
+
+    return ((values - v_min) / (v_max - v_min + 1e-8)).clamp(0.0, 1.0)
+
+
 def _edge_channels_sender_indexed(prune_graph: PruneGraph, adj_sender: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     edge_rel = prune_graph.edge_relevance
     edge_inf = prune_graph.edge_influence
@@ -87,27 +105,32 @@ def compute_similarity(
     prune_graph: PruneGraph,
     gamma: float = 0.5,
     mediation_penalty: float = 0.1,
-    similarity_mode: Literal["scores", "relevance", "influence", "uniform", "edge"] = "edge",
+    similarity_mode: Literal["edge", "node"] = "edge",
 ) -> torch.Tensor:
     """
     Compute node similarity from weighted shared out/in structure.
 
-    - Output-side similarity uses edge influence weights.
-    - Input-side similarity uses edge relevance weights.
+    - `edge` mode uses edge influence/relevance channels (current behavior).
+    - `node` mode applies node influence/relevance pairwise weights.
     - `gamma` controls output/input blend: gamma*S_out + (1-gamma)*S_in.
     """
     kept_ids = prune_graph.kept_ids
     attr = prune_graph.attr
 
     adj = prune_graph.pruned_adj.clone().float().T
-    rel_sender, inf_sender = _edge_channels_sender_indexed(prune_graph, adj)
-
-    # Deprecated modes remain accepted for API compatibility.
-    if similarity_mode in {"scores", "relevance", "influence", "uniform", "edge"}:
+    if similarity_mode == "edge":
+        rel_sender, inf_sender = _edge_channels_sender_indexed(prune_graph, adj)
         weighted_out = adj * inf_sender
         weighted_in = (adj * rel_sender).T
+    elif similarity_mode == "node":
+        node_inf = _normalize_node_weights(prune_graph.node_influence, n_nodes=adj.shape[0], device=adj.device)
+        node_rel = _normalize_node_weights(prune_graph.node_relevance, n_nodes=adj.shape[0], device=adj.device)
+        pair_inf = torch.sqrt(torch.outer(node_inf, node_inf))
+        pair_rel = torch.sqrt(torch.outer(node_rel, node_rel))
+        weighted_out = adj * pair_inf
+        weighted_in = adj.T * pair_rel
     else:
-        raise ValueError(f"Unsupported similarity_mode={similarity_mode!r}.")
+        raise ValueError("Unsupported similarity_mode. Expected 'edge' or 'node'.")
 
     s_out_cos = _weighted_row_cosine(weighted_out)
     s_in_cos = _weighted_row_cosine(weighted_in)
@@ -235,7 +258,7 @@ def cluster_graph(
     max_sn: int | None = None,
     gamma: float = 1,
     mediation_penalty: float = 0.1,
-    similarity_mode: Literal["scores", "relevance", "influence", "uniform", "edge"] = "edge",
+    similarity_mode: Literal["edge", "node"] = "edge",
     enforce_dag: bool = True,
     random_state: int = 42,
     n_init: int = 20,

@@ -105,11 +105,8 @@ def _load_prune_graph(input_mode: str, input_path: Path, prune_cfg: dict[str, An
             token_weights=prune_cfg["token_weights"],
             node_threshold=prune_cfg["node_threshold"],
             edge_threshold=prune_cfg["edge_threshold"],
-            alpha=prune_cfg["alpha"],
             keep_all_tokens_and_logits=prune_cfg["keep_all_tokens_and_logits"],
             filter_act_density=prune_cfg["filter_act_density"],
-            combined_scores_method=prune_cfg["combined_scores_method"],
-            normalization=prune_cfg["normalization"],
             act_density_lb=prune_cfg["act_density_lb"],
             act_density_ub=prune_cfg["act_density_ub"],
         )
@@ -257,11 +254,8 @@ def main() -> None:
         "token_weights": None,
         "node_threshold": 0.8,
         "edge_threshold": 0.98,
-        "alpha": 0.5,
         "keep_all_tokens_and_logits": True,
         "filter_act_density": False,
-        "combined_scores_method": "geometric",
-        "normalization": "min_max",
         "act_density_lb": 2e-5,
         "act_density_ub": 0.1,
     }
@@ -302,28 +296,9 @@ def main() -> None:
                 help="Same idea as node threshold but for edge influence/relevance when building the edge mask.",
             )
         with prune_col_b:
-            prune_cfg["alpha"] = st.slider(
-                "alpha",
-                min_value=0.0,
-                max_value=1.0,
-                value=0.5,
-                step=0.05,
-                help=(
-                    "Blend between node influence and node relevance when combining scores: "
-                    "higher α emphasizes influence, lower α emphasizes relevance (exact mix depends on "
-                    "combined_scores_method)."
-                ),
-            )
-            prune_cfg["combined_scores_method"] = st.selectbox(
-                "combined_scores_method",
-                options=["geometric", "arithmetic", "harmonic"],
-                help="How node influence and relevance are fused before thresholding (geometric / mean / harmonic).",
-            )
-            prune_cfg["normalization"] = st.selectbox(
-                "normalization",
-                options=["min_max", "rank"],
-                index=0,
-                help="Per-channel normalization before combining influence and relevance (min–max vs rank).",
+            st.caption(
+                "Node and edge thresholds are applied as paired influence/relevance cutoffs "
+                "inside `prune_graph_pipeline`."
             )
         with prune_col_c:
             prune_cfg["keep_all_tokens_and_logits"] = st.checkbox(
@@ -418,13 +393,12 @@ def main() -> None:
         )
         similarity_mode = st.selectbox(
             "similarity_mode",
-            options=["edge", "scores", "relevance", "influence", "uniform"],
+            options=["edge", "node"],
             index=0,
             help=(
                 "What feeds the affinity matrix for spectral clustering: **edge** uses normalized edge "
-                "structure (influence/relevance channels); **scores** uses pruned node scores; "
-                "**relevance** / **influence** use node-level tensors; **uniform** treats non-diagonal "
-                "affinities as a constant."
+                "structure (influence/relevance channels), while **node** weights similarity using "
+                "node influence and node relevance scores."
             ),
         )
     with col_b:

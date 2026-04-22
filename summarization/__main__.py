@@ -113,11 +113,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         token_weights=token_weights,
         node_threshold=args.node_threshold,
         edge_threshold=args.edge_threshold,
-        alpha=args.alpha,
         keep_all_tokens_and_logits=args.keep_all_tokens_and_logits,
         filter_act_density=args.filter_act_density,
-        combined_scores_method=args.combined_scores_method,
-        normalization=args.normalization,
         act_density_lb=args.act_density_lb,
         act_density_ub=args.act_density_ub,
     )
@@ -244,9 +241,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--token-weights", type=str, default=None, help="JSON list string, e.g. '[0,0,0.5,0.5]'.")
     parser.add_argument("--node-threshold", type=float, default=0.8)
     parser.add_argument("--edge-threshold", type=float, default=0.98)
-    parser.add_argument("--combined-scores-method", type=str, choices=["geometric", "arithmetic", "harmonic"], default="geometric")
-    parser.add_argument("--normalization", type=str, choices=["min_max", "rank"], default="min_max")
-    parser.add_argument("--alpha", type=float, default=0.5)
     parser.add_argument("--keep-all-tokens-and-logits", action="store_true")
     parser.add_argument("--filter-act-density", action="store_true")
     parser.add_argument("--act-density-lb", type=float, default=2e-5)
@@ -263,8 +257,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--similarity-mode",
         type=str,
-        choices=["scores", "relevance", "influence", "uniform", "edge"],
+        choices=["edge", "node"],
         default="edge",
+        help=(
+            "Similarity construction mode for clustering: "
+            "'edge' uses edge influence/relevance channels; "
+            "'node' uses node influence/relevance pairwise weighting."
+        ),
     )
     parser.add_argument("--enforce-dag", action="store_true")
     parser.add_argument("--random-state", type=int, default=42)
