@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
-from typing import Any
+import re
+from typing import Any, Literal, cast
 
 import networkx as nx
 import numpy as np
@@ -12,7 +14,7 @@ from summarization.auto_grouping import find_best_k
 from summarization.cluster import cluster_graph
 from summarization.cluster_viz import supernode_graph_figure
 from summarization.flow_analysis import build_supernode_graph, supernodes_to_mapping
-from summarization.prune import PruneGraph, load_prune_graph, prune_graph_pipeline
+from summarization.prune import PruneGraph, load_prune_graph, prune_graph_pipeline, save_prune_graph
 
 FULL_GRAPH_MODE = "Existing full graph JSON"
 PRUNED_GRAPH_MODE = "Existing pruned graph (.pt)"
@@ -45,6 +47,36 @@ def _parse_token_weights(raw: str) -> list[float] | None:
         return None
     items = [part.strip() for part in cleaned.split(",") if part.strip()]
     return [float(item) for item in items]
+
+
+def _slugify(text: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", text).strip("-")
+    return cleaned or "graph"
+
+
+def _prune_cache_path(repo_root: Path, input_path: Path, prune_cfg: dict[str, Any]) -> Path:
+    try:
+        rel_input = str(input_path.resolve().relative_to(repo_root.resolve()))
+    except ValueError:
+        rel_input = str(input_path.resolve())
+
+    key_payload = {
+        "input_path": rel_input,
+        "logit_weights": prune_cfg["logit_weights"],
+        "token_weights": prune_cfg["token_weights"],
+        "node_threshold": float(prune_cfg["node_threshold"]),
+        "edge_threshold": float(prune_cfg["edge_threshold"]),
+        "keep_all_tokens_and_logits": bool(prune_cfg["keep_all_tokens_and_logits"]),
+        "filter_act_density": bool(prune_cfg["filter_act_density"]),
+        "act_density_lb": float(prune_cfg["act_density_lb"]),
+        "act_density_ub": float(prune_cfg["act_density_ub"]),
+    }
+    key_raw = json.dumps(key_payload, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(key_raw.encode("utf-8")).hexdigest()[:16]
+
+    cache_dir = repo_root / "demos" / "subgraph" / "cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir / f"{_slugify(input_path.stem)}-{digest}.pt"
 
 
 def _to_jsonable(obj: Any) -> Any:
@@ -113,6 +145,36 @@ def _load_prune_graph(input_mode: str, input_path: Path, prune_cfg: dict[str, An
     return load_prune_graph(str(input_path))
 
 
+def _load_or_build_prune_graph(
+    repo_root: Path,
+    input_mode: str,
+    input_path: Path,
+    prune_cfg: dict[str, Any],
+) -> tuple[PruneGraph, dict[str, Any]]:
+    if input_mode != FULL_GRAPH_MODE:
+        return load_prune_graph(str(input_path)), {
+            "cache_hit": None,
+            "prune_graph_path": str(input_path),
+            "source": "provided_pt",
+        }
+
+    cached_path = _prune_cache_path(repo_root, input_path, prune_cfg)
+    if cached_path.exists():
+        return load_prune_graph(str(cached_path)), {
+            "cache_hit": True,
+            "prune_graph_path": str(cached_path),
+            "source": "cache",
+        }
+
+    prune_graph = _load_prune_graph(input_mode, input_path, prune_cfg)
+    save_prune_graph(prune_graph, str(cached_path))
+    return prune_graph, {
+        "cache_hit": False,
+        "prune_graph_path": str(cached_path),
+        "source": "fresh",
+    }
+
+
 def _cluster_from_prune(
     prune_graph: PruneGraph,
     cluster_cfg: dict[str, Any],
@@ -127,6 +189,7 @@ def _cluster_from_prune(
     """
     max_sn = cluster_cfg["max_sn"]
     target_k_user = int(cluster_cfg["target_k"])
+    mean_method = cast(Literal["geo", "harm", "arith"], cluster_cfg["mean_method"])
     run_meta: dict[str, Any] = {"auto_k": bool(auto_k), "target_k_requested": target_k_user}
 
     target_k_eff = target_k_user
@@ -138,12 +201,15 @@ def _cluster_from_prune(
             k_max_override=auto_k_cfg["k_max_override"],
             weights=auto_k_cfg["weights"],
             max_sn=max_sn,
-            gamma=float(cluster_cfg["gamma"]),
+            mean_method=mean_method,
             mediation_penalty=float(cluster_cfg["mediation_penalty"]),
             similarity_mode=cluster_cfg["similarity_mode"],
+            normalization=cluster_cfg["normalization"],
             use_flow_faithfulness=bool(auto_k_cfg["use_flow_faithfulness"]),
             w_flow=float(auto_k_cfg["w_flow"]),
             enforce_dag=enforce_dag,
+            random_state=int(cluster_cfg["random_state"]),
+            n_init=int(cluster_cfg["n_init"]),
         )
         run_meta["sweep_size"] = len(sweep)
         if sweep:
@@ -167,9 +233,10 @@ def _cluster_from_prune(
         target_k=int(target_k_eff),
         max_layer_span=int(cluster_cfg["max_layer_span"]),
         max_sn=max_sn,
-        gamma=float(cluster_cfg["gamma"]),
+        mean_method=mean_method,
         mediation_penalty=float(cluster_cfg["mediation_penalty"]),
         similarity_mode=cluster_cfg["similarity_mode"],
+        normalization=cluster_cfg["normalization"],
         enforce_dag=enforce_dag,
         random_state=int(cluster_cfg["random_state"]),
         n_init=int(cluster_cfg["n_init"]),
@@ -189,7 +256,12 @@ def main() -> None:
 
     repo_root = _repo_root()
     default_full_files = _list_files(
-        [repo_root / "demos" / "temp_graph_files", repo_root / "demos" / "graph_files"],
+        [
+            repo_root / "demos" / "temp_graph_files" / "clt-hp",
+            repo_root / "demos" / "temp_graph_files" / "gemmascope-transcoder-16k",
+            repo_root / "demos" / "temp_graph_files",
+            repo_root / "demos" / "graph_files",
+        ],
         ".json",
     )
     default_pruned_files = _list_files([repo_root / "demos" / "subgraph"], ".pt")
@@ -401,16 +473,23 @@ def main() -> None:
                 "node influence and node relevance scores."
             ),
         )
-    with col_b:
-        gamma = st.slider(
-            "gamma",
-            min_value=0.0,
-            max_value=1.0,
-            value=1.0,
-            step=0.05,
+        normalization = st.selectbox(
+            "normalization",
+            options=["cos", "cos_relu"],
+            index=0,
             help=(
-                "For edge-based similarity: blend of output-side (influence) vs input-side (relevance) "
-                "structure — `gamma * S_out + (1 - gamma) * S_in`."
+                "Normalization for similarity channels: **cos** keeps signed cosine values; "
+                "**cos_relu** clips negatives to 0 before combination."
+            ),
+        )
+    with col_b:
+        mean_method = st.selectbox(
+            "mean_method",
+            options=["geo", "harm", "arith"],
+            index=2,
+            help=(
+                "How output/input cosine similarities are combined to form affinity: "
+                "**geo** (geometric), **harm** (harmonic), or **arith** (arithmetic)."
             ),
         )
         mediation_penalty = st.slider(
@@ -529,9 +608,10 @@ def main() -> None:
         "target_k": int(target_k),
         "max_layer_span": int(max_layer_span),
         "max_sn": None if int(max_sn_raw) == 0 else int(max_sn_raw),
-        "gamma": float(gamma),
+        "mean_method": str(mean_method),
         "mediation_penalty": float(mediation_penalty),
         "similarity_mode": str(similarity_mode),
+        "normalization": str(normalization),
         "random_state": int(random_state),
         "n_init": int(n_init),
     }
@@ -543,7 +623,7 @@ def main() -> None:
         "weights": {
             "w_intra": float(w_intra),
             "w_dag": float(w_dag),
-            "w_flow": float(w_attr),
+            "w_attr": float(w_attr),
             "w_size": float(w_size),
         },
     }
@@ -561,7 +641,12 @@ def main() -> None:
 
         with st.spinner("Running pipeline..."):
             try:
-                prune_graph = _load_prune_graph(input_mode, selected_path, prune_cfg)
+                prune_graph, prune_meta = _load_or_build_prune_graph(
+                    repo_root=repo_root,
+                    input_mode=input_mode,
+                    input_path=selected_path,
+                    prune_cfg=prune_cfg,
+                )
                 supernode_map, sng, run_meta = _cluster_from_prune(
                     prune_graph,
                     cluster_cfg,
@@ -580,6 +665,7 @@ def main() -> None:
             "supernode_map": supernode_map,
             "sng": sng,
             "run_meta": run_meta,
+            "prune_meta": prune_meta,
         }
 
     result_payload = st.session_state.pipeline_result
@@ -588,9 +674,21 @@ def main() -> None:
         return
 
     prune_graph: PruneGraph = result_payload["prune_graph"]
+    result_input_mode: str = result_payload.get("input_mode", input_mode)
     supernode_map: dict[str, list[str]] = result_payload["supernode_map"]
     sng: dict[str, Any] = result_payload["sng"]
     run_meta: dict[str, Any] = result_payload.get("run_meta", {})
+    prune_meta: dict[str, Any] = result_payload.get("prune_meta", {})
+
+    if result_input_mode == FULL_GRAPH_MODE:
+        if prune_meta.get("cache_hit") is True:
+            st.success("Reused cached pruned graph from previous run.")
+        elif prune_meta.get("cache_hit") is False:
+            st.info("Pruned graph computed and cached for future clustering reruns.")
+
+    prune_graph_path = prune_meta.get("prune_graph_path")
+    if prune_graph_path:
+        st.caption(f"Pruned graph source: `{prune_graph_path}`")
 
     if run_meta.get("auto_k"):
         tk_auto = run_meta.get("target_k_auto")
