@@ -6,7 +6,6 @@ import numpy as np
 from scipy.linalg import eigvalsh
 
 from summarization.cluster import (
-    _is_fixed,
     cluster_graph,
     compute_similarity,
 )
@@ -16,6 +15,7 @@ from summarization.flow_analysis import (
     supernodes_to_mapping,
 )
 from summarization.prune import PruneGraph
+from summarization.utils import _is_fixed
 
 
 def _middle_indices(prune_graph: PruneGraph) -> list[int]:
@@ -228,12 +228,15 @@ def find_best_k(
     k_max_override: int | None = None,
     weights: dict[str, float] | None = None,
     max_sn: int | None = None,
-    gamma: float = 1,
+    mean_method: Literal["geo", "harm", "arith"] = "arith",
     mediation_penalty: float = 0.1,
     similarity_mode: Literal["edge", "node"] = "edge",
+    normalization: Literal["cos", "cos_relu"] = "cos",
     use_flow_faithfulness: bool = True,
     w_flow: float = 0.40,
     enforce_dag: bool = False,
+    random_state: int = 42,
+    n_init: int = 20,
 ) -> tuple[int, dict[int, dict[str, Any]]]:
     """
     Auto-select k for `cluster_graph` and return sweep metrics.
@@ -244,9 +247,10 @@ def find_best_k(
     if sim is None:
         sim = compute_similarity(
             prune_graph,
-            gamma=gamma,
+            mean_method=mean_method,
             mediation_penalty=mediation_penalty,
             similarity_mode=similarity_mode,
+            normalization=normalization,
         )
     s_np = np.asarray(sim.detach().cpu().numpy() if hasattr(sim, "detach") else sim)
     n_middle = len(_middle_indices(prune_graph))
@@ -269,10 +273,13 @@ def find_best_k(
             target_k=k,
             max_layer_span=max_layer_span,
             max_sn=max_sn,
-            gamma=gamma,
+            mean_method=mean_method,
             mediation_penalty=mediation_penalty,
             similarity_mode=similarity_mode,
+            normalization=normalization,
             enforce_dag=enforce_dag,
+            random_state=random_state,
+            n_init=n_init,
         )
         final_supernodes = supernodes_to_mapping(prune_graph, supernodes)
         sc = score_k(

@@ -50,6 +50,7 @@ def _compute_mediation_penalty(
         lj_gt_lk = layer_t.unsqueeze(0) > float(lk)
         between = li_lt_lk & lj_gt_lk
         mark = mediated & between
+        mark = mark | mark.T
         penalty[mark] = mediation_penalty
 
     penalty.fill_diagonal_(1.0)
@@ -100,19 +101,21 @@ def _edge_channels_sender_indexed(prune_graph: PruneGraph, adj_sender: torch.Ten
     inf_sender = _normalize_edge_weights(edge_inf.float().T)
     return rel_sender, inf_sender
 
+def sign_aware_normalize(tensor: torch.Tensor) -> torch.Tensor:
+    return torch.nan_to_num(tensor, nan=0.0, posinf=0.0, neginf=0.0) / (tensor.abs().max() + 1e-8)
 
 def compute_similarity(
     prune_graph: PruneGraph,
-    gamma: float = 0.5,
+    mean_method: Literal["geo", "harm", "arith"] = "arith",
     mediation_penalty: float = 0.1,
-    similarity_mode: Literal["edge", "node"] = "edge",
+    similarity_mode: Literal["edge", "node"] = "node",
+    normalization: Literal['cos', 'cos_relu'] = 'cos_relu',
 ) -> torch.Tensor:
     """
     Compute node similarity from weighted shared out/in structure.
 
     - `edge` mode uses edge influence/relevance channels (current behavior).
     - `node` mode applies node influence/relevance pairwise weights.
-    - `gamma` controls output/input blend: gamma*S_out + (1-gamma)*S_in.
     """
     kept_ids = prune_graph.kept_ids
     attr = prune_graph.attr
@@ -122,20 +125,37 @@ def compute_similarity(
         rel_sender, inf_sender = _edge_channels_sender_indexed(prune_graph, adj)
         weighted_out = adj * inf_sender
         weighted_in = (adj * rel_sender).T
+        s_out = weighted_out @ weighted_out.T
+        s_in = weighted_in @ weighted_in.T
     elif similarity_mode == "node":
-        node_inf = _normalize_node_weights(prune_graph.node_influence, n_nodes=adj.shape[0], device=adj.device)
-        node_rel = _normalize_node_weights(prune_graph.node_relevance, n_nodes=adj.shape[0], device=adj.device)
-        pair_inf = torch.sqrt(torch.outer(node_inf, node_inf))
-        pair_rel = torch.sqrt(torch.outer(node_rel, node_rel))
-        weighted_out = adj * pair_inf
-        weighted_in = adj.T * pair_rel
+        n_nodes = adj.shape[0]
+        node_inf = _normalize_node_weights(prune_graph.node_influence, n_nodes, adj.device)
+        node_rel = _normalize_node_weights(prune_graph.node_relevance, n_nodes, adj.device)
+        s_out= adj @ torch.diag(node_inf) @ adj.T
+        s_in= adj.T @ torch.diag(node_rel) @ adj
     else:
         raise ValueError("Unsupported similarity_mode. Expected 'edge' or 'node'.")
 
-    s_out_cos = _weighted_row_cosine(weighted_out)
-    s_in_cos = _weighted_row_cosine(weighted_in)
-    blend = float(max(0.0, min(1.0, gamma)))
-    s = (blend * s_out_cos + (1.0 - blend) * s_in_cos).clamp(0.0, 1.0)
+    # s_out_cos = _weighted_row_cosine(weighted_out)
+    # s_in_cos = _weighted_row_cosine(weighted_in)
+    if normalization == 'cos':
+        s_out_cos = _cosine_norm(s_out)
+        s_in_cos = _cosine_norm(s_in)
+    elif normalization == 'cos_relu':
+        s_out_cos = torch.relu(_cosine_norm(s_out))
+        s_in_cos = torch.relu(_cosine_norm(s_in))
+    else:
+        raise ValueError(f"Unsupported normalization={normalization!r}.")
+
+    if mean_method == "geo":
+        s = (s_out_cos * s_in_cos).sqrt()
+    elif mean_method == "harm":
+        s = 2.0 / (1.0 / s_out_cos + 1.0 / s_in_cos)
+    elif mean_method == "arith":
+        s = (s_out_cos + s_in_cos) / 2.0
+    else:
+        raise ValueError(f"Unsupported mean_method={mean_method!r}.")
+        
     layers = [_parse_layer(attr, n) for n in kept_ids]
     if mediation_penalty < 1.0:
         p = _compute_mediation_penalty(adj=adj, layers=layers, mediation_penalty=mediation_penalty)
@@ -256,9 +276,10 @@ def cluster_graph(
     target_k: int = 7,
     max_layer_span: int = 4,
     max_sn: int | None = None,
-    gamma: float = 1,
+    mean_method: Literal["geo", "harm", "arith"] = "arith",
     mediation_penalty: float = 0.1,
     similarity_mode: Literal["edge", "node"] = "edge",
+    normalization: Literal["cos", "cos_relu"] = "cos",
     enforce_dag: bool = True,
     random_state: int = 42,
     n_init: int = 20,
@@ -271,8 +292,9 @@ def cluster_graph(
         target_k: Target number of middle supernodes.
         max_layer_span: Maximum allowed layer span within a middle supernode.
         max_sn: Optional hard cap on number of middle supernodes.
-        gamma: Blend coefficient between output/influence and input/relevance similarities.
+        mean_method: Mean used to combine output/input cosine similarities.
         mediation_penalty: Penalty factor for mediated non-adjacent pairs.
+        normalization: Similarity normalization mode (`cos` or `cos_relu`).
         random_state: Random seed for spectral clustering k-means init.
         n_init: Number of k-means runs for `SpectralClustering(assign_labels="kmeans")`.
 
@@ -288,9 +310,10 @@ def cluster_graph(
 
     sim = compute_similarity(
         prune_graph,
-        gamma=gamma,
+        mean_method=mean_method,
         mediation_penalty=mediation_penalty,
         similarity_mode=similarity_mode,
+        normalization=normalization,
     )
 
     middle_idx = [i for i, nid in enumerate(kept_ids) if not _is_fixed(attr, nid)]
@@ -300,8 +323,8 @@ def cluster_graph(
         fixed_only = [[nid] for nid in kept_ids]
         return fixed_only
 
-    mid_sim = sim[middle_idx][:, middle_idx].detach().cpu().numpy()
-    mid_sim = ((mid_sim + mid_sim.T) / 2.0).clip(0.0, 1.0)
+    mid_sim = sim[middle_idx][:, middle_idx].detach().cpu().numpy().clip(0.0, 1.0)
+    # mid_sim = ((mid_sim + mid_sim.T) / 2.0).clip(0.0, 1.0)
     target_k = max(1, min(target_k, len(middle_ids)))
 
     if target_k == 1:

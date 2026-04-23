@@ -4,8 +4,8 @@ from typing import Any
 
 import numpy as np
 
-from summarization.cluster import _is_embedding, _is_logit, _parse_layer
 from summarization.prune import PruneGraph
+from summarization.utils import _is_embedding, _is_logit, _parse_layer
 
 
 def _classify_node(node_id: str, attr: dict[str, dict[str, Any]]) -> str:
