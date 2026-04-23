@@ -86,6 +86,15 @@ def _save_json(path: str | None, payload: Any) -> None:
     out.write_text(json.dumps(_to_jsonable(payload), indent=2), encoding="utf-8")
 
 
+def _clustered_supernodes_for_upload(clusters: list[list[str]]) -> list[list[str]]:
+    """Convert clusters into Neuronpedia upload format [label, member_1, ...]."""
+    return [
+        [f"cluster_{idx}", *members]
+        for idx, members in enumerate(clusters)
+        if len(members) > 1
+    ]
+
+
 def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     graph_json_path = args.graph_json
     if not args.use_existing_graph:
@@ -163,11 +172,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     supernode_map = supernodes_to_mapping(prune_graph, clusters)
     sng = build_supernode_graph(prune_graph, supernode_map, enforce_dag=args.enforce_dag)
 
-    labelled_supernodes = [
-        [f"cluster_{idx}", *members]
-        for idx, members in enumerate(clusters)
-        if len(members) > 1
-    ]
+    labelled_supernodes = _clustered_supernodes_for_upload(clusters)
 
     _save_json(args.supernodes_out, labelled_supernodes)
     _save_json(args.supernode_map_out, supernode_map)
@@ -200,6 +205,10 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     if args.upload:
         if not args.slug or not args.display_name:
             raise ValueError("--upload requires --slug and --display-name.")
+        if not 0.0 <= float(args.upload_pruning_threshold) <= 1.0:
+            raise ValueError("--upload-pruning-threshold must be between 0 and 1.")
+        if not 0.0 <= float(args.upload_density_threshold) <= 1.0:
+            raise ValueError("--upload-density-threshold must be between 0 and 1.")
         upload_status, upload_body = save_subgraph(
             modelId=args.model_id,
             slug=args.slug,

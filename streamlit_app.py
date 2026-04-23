@@ -10,6 +10,7 @@ import networkx as nx
 import numpy as np
 import streamlit as st
 
+from api import save_subgraph
 from summarization.auto_grouping import find_best_k
 from summarization.cluster import cluster_graph
 from summarization.cluster_viz import supernode_graph_figure
@@ -91,6 +92,29 @@ def _to_jsonable(obj: Any) -> Any:
     if hasattr(obj, "detach"):
         return obj.detach().cpu().tolist()
     return obj
+
+
+def _clustered_supernodes_for_upload(supernode_map: dict[str, list[str]]) -> list[list[str]]:
+    """Convert clustered supernodes into Neuronpedia upload rows."""
+    indexed_rows: list[tuple[int, str, list[str]]] = []
+    for name, members in supernode_map.items():
+        is_boundary = ("EMB" in name) or ("LOGIT" in name)
+        if len(members) <= 1 or is_boundary:
+            continue
+        try:
+            cluster_idx = int(name.rsplit("_", 1)[1])
+        except ValueError:
+            cluster_idx = 10**9
+        indexed_rows.append((cluster_idx, name, members))
+    indexed_rows.sort(key=lambda row: (row[0], row[1]))
+    return [[f"cluster_{idx}", *members] for idx, (_, _, members) in enumerate(indexed_rows)]
+
+
+def _pretty_response_body(body: str) -> str:
+    try:
+        return json.dumps(json.loads(body), indent=2)
+    except json.JSONDecodeError:
+        return body
 
 
 def _build_supernode_network(
@@ -630,6 +654,8 @@ def main() -> None:
 
     if "pipeline_result" not in st.session_state:
         st.session_state.pipeline_result = None
+    if "last_upload_result" not in st.session_state:
+        st.session_state.last_upload_result = None
 
     if st.button("Run clustering pipeline", type="primary"):
         if selected_path is None:
@@ -667,6 +693,7 @@ def main() -> None:
             "run_meta": run_meta,
             "prune_meta": prune_meta,
         }
+        st.session_state.last_upload_result = None
 
     result_payload = st.session_state.pipeline_result
     if result_payload is None:
@@ -766,6 +793,78 @@ def main() -> None:
         file_name="supernode_flow.json",
         mime="application/json",
     )
+
+    st.subheader("Upload to Neuronpedia")
+    upload_col_1, upload_col_2 = st.columns(2)
+    with upload_col_1:
+        upload_model_id = st.text_input("model_id", value="gemma-2-2b")
+        upload_slug = st.text_input("slug (parent graph slug)", value="")
+        upload_display_name = st.text_input("display_name", value="")
+    with upload_col_2:
+        upload_pruning_threshold = st.number_input(
+            "pruning_threshold",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.8,
+            step=0.01,
+        )
+        upload_density_threshold = st.number_input(
+            "density_threshold",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.99,
+            step=0.01,
+        )
+        upload_overwrite_id = st.text_input("overwrite_id (optional)", value="")
+
+    if st.button("Upload clustered graph to Neuronpedia"):
+        if not upload_slug.strip():
+            st.error("`slug` is required to upload.")
+            st.stop()
+        if not upload_display_name.strip():
+            st.error("`display_name` is required to upload.")
+            st.stop()
+
+        upload_supernodes = _clustered_supernodes_for_upload(supernode_map)
+        if not upload_supernodes:
+            st.error("No clustered supernodes with more than one member were found to upload.")
+            st.stop()
+
+        with st.spinner("Uploading clustered graph to Neuronpedia..."):
+            status, body = save_subgraph(
+                modelId=upload_model_id.strip(),
+                slug=upload_slug.strip(),
+                displayName=upload_display_name.strip(),
+                pinnedIds=prune_graph.kept_ids,
+                supernodes=upload_supernodes,
+                pruningThreshold=float(upload_pruning_threshold),
+                densityThreshold=float(upload_density_threshold),
+                overwriteId=upload_overwrite_id.strip(),
+            )
+        st.session_state.last_upload_result = {
+            "status": int(status),
+            "body": body,
+            "model_id": upload_model_id.strip(),
+            "slug": upload_slug.strip(),
+            "display_name": upload_display_name.strip(),
+            "supernode_count": len(upload_supernodes),
+            "pinned_count": len(prune_graph.kept_ids),
+        }
+
+    last_upload = st.session_state.last_upload_result
+    if last_upload is not None:
+        status = int(last_upload["status"])
+        if 200 <= status < 300:
+            st.success(
+                f"Upload succeeded (status {status}). Uploaded {last_upload['supernode_count']} clustered supernodes."
+            )
+        else:
+            st.error(f"Upload failed with status {status}.")
+        st.caption(
+            f"model_id={last_upload['model_id']} slug={last_upload['slug']} "
+            f"display_name={last_upload['display_name']} pinned_ids={last_upload['pinned_count']}"
+        )
+        st.code(_pretty_response_body(str(last_upload["body"])), language="json")
 
 
 if __name__ == "__main__":
