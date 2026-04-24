@@ -1,5 +1,4 @@
 Fact: The capital of the country that borders the United States to the north is Ottawa
-Fact: The currency of the country where the Eiffel Tower is located is euro
 Fact: The largest planet in the solar system where Earth is located is Jupiter
 Fact: The author of the book that features Sherlock Holmes is Doyle
 Fact: The capital of the country where the Amazon rainforest is primarily located is Brasília

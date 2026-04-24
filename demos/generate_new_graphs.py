@@ -95,11 +95,13 @@ def download_graph(
 def slugify_prompt(prompt: str, index: int, source_set: str) -> str:
     trimmed = re.sub(r"\s+", " ", prompt.strip()).lower()
     core = re.sub(r"[^a-z0-9]+", "-", trimmed).strip("-")
-    if not core:
+    if core:
+        words = [w for w in core.split("-") if w]
+        core = "-".join(words[:4])
+    else:
         core = f"prompt-{index + 1:02d}"
-    if len(core) > 60:
-        core = core[:60].rstrip("-")
-    return f"{source_set}-p{index + 1:02d}-{core}"
+    timestamp = f"{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns() % 1_000_000:06d}"
+    return f"{source_set}-p{index + 1:02d}-{core}-{timestamp}"
 
 
 def load_prompts(path: Path, limit: int) -> list[str]:

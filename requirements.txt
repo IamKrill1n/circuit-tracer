@@ -1,5 +1,6 @@
 dotenv
 networkx
+transformers
 shap
 google-genai
 pytest
