@@ -11,7 +11,11 @@ from api import generate_graph, save_subgraph
 from summarization.auto_grouping import find_best_k
 from summarization.cluster import cluster_graph
 from summarization.cluster_viz import supernode_graph_figure
-from summarization.flow_analysis import build_supernode_graph, supernodes_to_mapping
+from summarization.flow_analysis import (
+    build_supernode_graph,
+    flow_faithfulness_report,
+    supernodes_to_mapping,
+)
 from summarization.prune import prune_graph_pipeline
 
 
@@ -171,6 +175,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     )
     supernode_map = supernodes_to_mapping(prune_graph, clusters)
     sng = build_supernode_graph(prune_graph, supernode_map, enforce_dag=args.enforce_dag)
+    flow_report = flow_faithfulness_report(sng, supernode_map)
 
     labelled_supernodes = _clustered_supernodes_for_upload(clusters)
 
@@ -227,6 +232,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         "auto_k_candidates": len(sweep),
         "supernodes": labelled_supernodes,
         "supernode_map": supernode_map,
+        "flow_report": flow_report,
         "figure_html_out": figure_path,
         "upload_status": upload_status,
         "upload_body": upload_body,
@@ -327,6 +333,8 @@ def main() -> None:
     print(f"resolved_k: {result['resolved_k']}")
     print(f"auto_k_candidates: {result['auto_k_candidates']}")
     print(f"supernodes: {len(result['supernodes'])}")
+    print("flow_report:")
+    print(json.dumps(_to_jsonable(result["flow_report"]), indent=2))
     if result["figure_html_out"]:
         print(f"figure_html_out: {result['figure_html_out']}")
     if result["upload_status"] is not None:
