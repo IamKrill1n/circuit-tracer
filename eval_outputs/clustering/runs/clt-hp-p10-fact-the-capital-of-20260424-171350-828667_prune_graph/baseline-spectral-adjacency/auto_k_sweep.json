@@ -1,0 +1,179 @@
+{
+  "10": {
+    "total": 0.8125247317837884,
+    "total_base": 0.8125247317837884,
+    "intra_sim": 0.85,
+    "dag_safety": 0.9777777777777777,
+    "flow_balance": 0.8830903801266061,
+    "attr_balance": 0.8830903801266061,
+    "size_score": 0.46153846153846156,
+    "n_middle": 10,
+    "n_warnings": 1,
+    "inf_conservation": 0.999999999999886,
+    "edge_conservation": 0.8255813953488277,
+    "details": {
+      "SN_0": {
+        "intra_sim": 0.040570177137851715,
+        "n": 2
+      },
+      "SN_1": {
+        "intra_sim": 0.06935307383537292,
+        "n": 2
+      },
+      "SN_2": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_3": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_4": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_5": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_6": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_7": {
+        "intra_sim": 0.19627192616462708,
+        "n": 2
+      },
+      "SN_8": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_9": {
+        "intra_sim": 1.0,
+        "n": 1
+      }
+    }
+  },
+  "11": {
+    "total": 0.8127775300069018,
+    "total_base": 0.8127775300069018,
+    "intra_sim": 0.9090909090909091,
+    "dag_safety": 0.9818181818181818,
+    "flow_balance": 0.8706905396080263,
+    "attr_balance": 0.8706905396080263,
+    "size_score": 0.3846153846153846,
+    "n_middle": 11,
+    "n_warnings": 1,
+    "inf_conservation": 0.999999999999886,
+    "edge_conservation": 0.906976744186036,
+    "details": {
+      "SN_0": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_1": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_2": {
+        "intra_sim": 0.06935307383537292,
+        "n": 2
+      },
+      "SN_3": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_4": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_5": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_6": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_7": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_8": {
+        "intra_sim": 0.19627192616462708,
+        "n": 2
+      },
+      "SN_9": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_10": {
+        "intra_sim": 1.0,
+        "n": 1
+      }
+    }
+  },
+  "12": {
+    "total": 0.8133045291662794,
+    "total_base": 0.8133045291662794,
+    "intra_sim": 0.9583333333333334,
+    "dag_safety": 1.0,
+    "flow_balance": 0.8570642705112714,
+    "attr_balance": 0.8570642705112714,
+    "size_score": 0.3076923076923077,
+    "n_middle": 12,
+    "n_warnings": 0,
+    "inf_conservation": 0.999999999999886,
+    "edge_conservation": 0.9534883720930122,
+    "details": {
+      "SN_0": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_1": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_2": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_3": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_4": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_5": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_6": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_7": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_8": {
+        "intra_sim": 0.19627192616462708,
+        "n": 2
+      },
+      "SN_9": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_10": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_11": {
+        "intra_sim": 1.0,
+        "n": 1
+      }
+    }
+  }
+}

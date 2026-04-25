@@ -117,11 +117,17 @@ def _discover_prune_graphs(input_paths: Sequence[str]) -> list[Path]:
     for raw_path in input_paths:
         path = Path(raw_path).expanduser().resolve()
         if path.is_file():
-            if path.suffix == ".pt":
+            if path.suffix == ".pt" and path.name.endswith("_prune_graph.pt"):
                 discovered.append(path)
             continue
         if path.is_dir():
-            discovered.extend(sorted(p.resolve() for p in path.rglob("*.pt") if p.is_file()))
+            discovered.extend(
+                sorted(
+                    p.resolve()
+                    for p in path.rglob("*_prune_graph.pt")
+                    if p.is_file()
+                )
+            )
     unique = sorted(dict.fromkeys(discovered))
     if not unique:
         raise FileNotFoundError(

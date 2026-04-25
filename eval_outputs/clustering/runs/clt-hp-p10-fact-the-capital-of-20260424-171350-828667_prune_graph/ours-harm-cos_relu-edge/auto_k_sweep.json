@@ -1,0 +1,177 @@
+{
+  "3": {
+    "total": 0.8984812665064987,
+    "total_base": 0.8984812665064987,
+    "intra_sim": 0.6666666666666667,
+    "dag_safety": 1.0,
+    "flow_balance": 0.993925066025995,
+    "attr_balance": 0.993925066025995,
+    "size_score": 1.0,
+    "n_middle": 3,
+    "n_warnings": 0,
+    "inf_conservation": 0.999999999999886,
+    "edge_conservation": 0.2674418604651132,
+    "details": {
+      "SN_0": {
+        "intra_sim": 0.46253473604364054,
+        "n": 8
+      },
+      "SN_1": {
+        "intra_sim": 0.3400562529762586,
+        "n": 3
+      },
+      "SN_2": {
+        "intra_sim": 0.5633714199066162,
+        "n": 2
+      }
+    }
+  },
+  "4": {
+    "total": 0.87012150693394,
+    "total_base": 0.87012150693394,
+    "intra_sim": 0.75,
+    "dag_safety": 1.0,
+    "flow_balance": 0.8420244892742214,
+    "attr_balance": 0.8420244892742214,
+    "size_score": 0.9230769230769231,
+    "n_middle": 4,
+    "n_warnings": 0,
+    "inf_conservation": 0.999999999999886,
+    "edge_conservation": 0.3604651162790656,
+    "details": {
+      "SN_0": {
+        "intra_sim": 0.9820410013198853,
+        "n": 2
+      },
+      "SN_1": {
+        "intra_sim": 0.5579711432258289,
+        "n": 6
+      },
+      "SN_2": {
+        "intra_sim": 0.3400562529762586,
+        "n": 3
+      },
+      "SN_3": {
+        "intra_sim": 0.5633714199066162,
+        "n": 2
+      }
+    }
+  },
+  "5": {
+    "total": 0.8825764976180055,
+    "total_base": 0.8825764976180055,
+    "intra_sim": 0.9,
+    "dag_safety": 1.0,
+    "flow_balance": 0.7733829135489451,
+    "attr_balance": 0.7733829135489451,
+    "size_score": 0.8461538461538461,
+    "n_middle": 5,
+    "n_warnings": 0,
+    "inf_conservation": 0.999999999999886,
+    "edge_conservation": 0.41860465116278583,
+    "details": {
+      "SN_0": {
+        "intra_sim": 0.9820410013198853,
+        "n": 2
+      },
+      "SN_1": {
+        "intra_sim": 0.5579711432258289,
+        "n": 6
+      },
+      "SN_2": {
+        "intra_sim": 0.9871331453323364,
+        "n": 2
+      },
+      "SN_3": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_4": {
+        "intra_sim": 0.5633714199066162,
+        "n": 2
+      }
+    }
+  },
+  "6": {
+    "total": 0.8699022126107868,
+    "total_base": 0.8699022126107868,
+    "intra_sim": 0.9166666666666666,
+    "dag_safety": 1.0,
+    "flow_balance": 0.7642242350585324,
+    "attr_balance": 0.7642242350585324,
+    "size_score": 0.7692307692307692,
+    "n_middle": 6,
+    "n_warnings": 0,
+    "inf_conservation": 0.999999999999886,
+    "edge_conservation": 0.4999999999999942,
+    "details": {
+      "SN_0": {
+        "intra_sim": 0.9820410013198853,
+        "n": 2
+      },
+      "SN_1": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_2": {
+        "intra_sim": 0.8369567148387432,
+        "n": 5
+      },
+      "SN_3": {
+        "intra_sim": 0.9871331453323364,
+        "n": 2
+      },
+      "SN_4": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_5": {
+        "intra_sim": 0.5633714199066162,
+        "n": 2
+      }
+    }
+  },
+  "7": {
+    "total": 0.88081892086438,
+    "total_base": 0.88081892086438,
+    "intra_sim": 1.0,
+    "dag_safety": 1.0,
+    "flow_balance": 0.7694295296113659,
+    "attr_balance": 0.7694295296113659,
+    "size_score": 0.6923076923076923,
+    "n_middle": 7,
+    "n_warnings": 0,
+    "inf_conservation": 0.999999999999886,
+    "edge_conservation": 0.5813953488372026,
+    "details": {
+      "SN_0": {
+        "intra_sim": 0.9820410013198853,
+        "n": 2
+      },
+      "SN_1": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_2": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_3": {
+        "intra_sim": 0.8910315831502279,
+        "n": 4
+      },
+      "SN_4": {
+        "intra_sim": 0.9871331453323364,
+        "n": 2
+      },
+      "SN_5": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_6": {
+        "intra_sim": 0.5633714199066162,
+        "n": 2
+      }
+    }
+  }
+}

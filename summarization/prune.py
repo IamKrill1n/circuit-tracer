@@ -8,13 +8,6 @@ from dataclasses import dataclass
 import torch
 import json
 
-from circuit_tracer.graph import (
-    compute_node_influence,
-    compute_edge_influence,
-    compute_node_relevance,
-    compute_edge_relevance,
-    find_threshold,
-)
 from summarization.utils import get_data_from_json
 logger = logging.getLogger(__name__)
 
@@ -159,6 +152,28 @@ def remove_dangling_nodes(node_mask: torch.Tensor, edge_mask: torch.Tensor, feat
                 node_mask[feature_idx] &= edge_mask[feature_idx].any(1)
     return node_mask
 
+
+def _graph_pruning_ops() -> tuple[Any, Any, Any, Any, Any]:
+    """
+    Import graph-pruning helpers lazily so loading a serialized PruneGraph does not
+    require heavyweight runtime dependencies from the tracing stack.
+    """
+    from circuit_tracer.graph import (
+        compute_edge_influence,
+        compute_edge_relevance,
+        compute_node_influence,
+        compute_node_relevance,
+        find_threshold,
+    )
+
+    return (
+        compute_node_influence,
+        compute_edge_influence,
+        compute_node_relevance,
+        compute_edge_relevance,
+        find_threshold,
+    )
+
 def prune_combined(
     adj: torch.Tensor,
     node_ids: List[str],
@@ -171,6 +186,14 @@ def prune_combined(
     edge_relevance_threshold: float = 0.98,
     keep_all_tokens_and_logits: bool = True,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    (
+        compute_node_influence,
+        compute_edge_influence,
+        compute_node_relevance,
+        compute_edge_relevance,
+        find_threshold,
+    ) = _graph_pruning_ops()
+
     n = adj.shape[0]
     idx = _build_index_sets(node_ids, attr)
 

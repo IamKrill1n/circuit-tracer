@@ -1,0 +1,177 @@
+{
+  "3": {
+    "total": 0.8668040271555142,
+    "total_base": 0.8668040271555142,
+    "intra_sim": 0.6666666666666667,
+    "dag_safety": 1.0,
+    "flow_balance": 0.8672161086220566,
+    "attr_balance": 0.8672161086220566,
+    "size_score": 1.0,
+    "n_middle": 3,
+    "n_warnings": 0,
+    "inf_conservation": 0.9999999999999372,
+    "edge_conservation": 0.2885906040268437,
+    "details": {
+      "SN_0": {
+        "intra_sim": 0.5006317014495532,
+        "n": 6
+      },
+      "SN_1": {
+        "intra_sim": 0.6438821665942669,
+        "n": 5
+      },
+      "SN_2": {
+        "intra_sim": 0.7976449330647787,
+        "n": 3
+      }
+    }
+  },
+  "4": {
+    "total": 0.8660135247718166,
+    "total_base": 0.8660135247718166,
+    "intra_sim": 0.875,
+    "dag_safety": 0.8333333333333334,
+    "flow_balance": 0.8378636228967902,
+    "attr_balance": 0.8378636228967902,
+    "size_score": 0.9285714285714286,
+    "n_middle": 4,
+    "n_warnings": 1,
+    "inf_conservation": 0.9999999999999372,
+    "edge_conservation": 0.37583892617449416,
+    "details": {
+      "SN_0": {
+        "intra_sim": 0.8330624202887217,
+        "n": 4
+      },
+      "SN_1": {
+        "intra_sim": 0.6438821665942669,
+        "n": 5
+      },
+      "SN_2": {
+        "intra_sim": 0.9695324301719666,
+        "n": 2
+      },
+      "SN_3": {
+        "intra_sim": 0.7976449330647787,
+        "n": 3
+      }
+    }
+  },
+  "5": {
+    "total": 0.9418668078934781,
+    "total_base": 0.9418668078934781,
+    "intra_sim": 1.0,
+    "dag_safety": 1.0,
+    "flow_balance": 0.8817529458596264,
+    "attr_balance": 0.8817529458596264,
+    "size_score": 0.8571428571428572,
+    "n_middle": 5,
+    "n_warnings": 0,
+    "inf_conservation": 0.9999999999999372,
+    "edge_conservation": 0.44966442953019836,
+    "details": {
+      "SN_0": {
+        "intra_sim": 0.8330624202887217,
+        "n": 4
+      },
+      "SN_1": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_2": {
+        "intra_sim": 0.9476241767406464,
+        "n": 4
+      },
+      "SN_3": {
+        "intra_sim": 0.9695324301719666,
+        "n": 2
+      },
+      "SN_4": {
+        "intra_sim": 0.7976449330647787,
+        "n": 3
+      }
+    }
+  },
+  "6": {
+    "total": 0.9181222821563367,
+    "total_base": 0.9181222821563367,
+    "intra_sim": 1.0,
+    "dag_safety": 1.0,
+    "flow_balance": 0.8439177000539181,
+    "attr_balance": 0.8439177000539181,
+    "size_score": 0.7857142857142857,
+    "n_middle": 6,
+    "n_warnings": 0,
+    "inf_conservation": 0.9999999999999372,
+    "edge_conservation": 0.5369127516778488,
+    "details": {
+      "SN_0": {
+        "intra_sim": 0.8330624202887217,
+        "n": 4
+      },
+      "SN_1": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_2": {
+        "intra_sim": 1.0,
+        "n": 2
+      },
+      "SN_3": {
+        "intra_sim": 0.7982959548632304,
+        "n": 3
+      },
+      "SN_4": {
+        "intra_sim": 0.9695324301719666,
+        "n": 2
+      },
+      "SN_5": {
+        "intra_sim": 0.7502391338348389,
+        "n": 2
+      }
+    }
+  },
+  "7": {
+    "total": 0.9045512333418375,
+    "total_base": 0.9045512333418375,
+    "intra_sim": 1.0,
+    "dag_safety": 1.0,
+    "flow_balance": 0.8467763619387783,
+    "attr_balance": 0.8467763619387783,
+    "size_score": 0.7142857142857143,
+    "n_middle": 7,
+    "n_warnings": 0,
+    "inf_conservation": 0.9999999999999372,
+    "edge_conservation": 0.6040268456375799,
+    "details": {
+      "SN_0": {
+        "intra_sim": 0.756436288356781,
+        "n": 3
+      },
+      "SN_1": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_2": {
+        "intra_sim": 1.0,
+        "n": 2
+      },
+      "SN_3": {
+        "intra_sim": 0.9335400462150574,
+        "n": 2
+      },
+      "SN_4": {
+        "intra_sim": 0.7982959548632304,
+        "n": 3
+      },
+      "SN_5": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_6": {
+        "intra_sim": 0.7502391338348389,
+        "n": 2
+      }
+    }
+  }
+}

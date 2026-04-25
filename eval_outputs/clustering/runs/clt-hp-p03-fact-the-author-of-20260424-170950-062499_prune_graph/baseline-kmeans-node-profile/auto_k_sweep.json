@@ -1,0 +1,25 @@
+{
+  "2": {
+    "total": 0.6453639040283683,
+    "total_base": 0.6453639040283683,
+    "intra_sim": 0.6512130134278945,
+    "dag_safety": 1.0,
+    "flow_balance": 0.0,
+    "attr_balance": 0.0,
+    "size_score": 1.0,
+    "n_middle": 2,
+    "n_warnings": 0,
+    "inf_conservation": 0.9999999999999217,
+    "edge_conservation": 0.9999999999999546,
+    "details": {
+      "SN_0": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_1": {
+        "intra_sim": 1.0,
+        "n": 1
+      }
+    }
+  }
+}

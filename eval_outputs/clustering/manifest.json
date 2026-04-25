@@ -1,0 +1,89 @@
+{
+  "input_paths": [
+    "demos/subgraph/clt-hp",
+    "demos/subgraph/gemmascope-transcoder-16k"
+  ],
+  "graph_paths": [
+    "/workspace/demos/subgraph/clt-hp/clt-hp-p01-fact-the-capital-of-20260424-170840-165461_prune_graph.pt",
+    "/workspace/demos/subgraph/clt-hp/clt-hp-p02-fact-the-largest-planet-20260424-170919-703199_prune_graph.pt",
+    "/workspace/demos/subgraph/clt-hp/clt-hp-p03-fact-the-author-of-20260424-170950-062499_prune_graph.pt",
+    "/workspace/demos/subgraph/clt-hp/clt-hp-p04-fact-the-capital-of-20260424-171023-706697_prune_graph.pt",
+    "/workspace/demos/subgraph/clt-hp/clt-hp-p05-fact-the-language-spoken-20260424-171104-257980_prune_graph.pt",
+    "/workspace/demos/subgraph/clt-hp/clt-hp-p06-fact-the-continent-where-20260424-171140-478521_prune_graph.pt",
+    "/workspace/demos/subgraph/clt-hp/clt-hp-p07-fact-the-inventor-of-20260424-171211-217697_prune_graph.pt",
+    "/workspace/demos/subgraph/clt-hp/clt-hp-p08-fact-the-capital-of-20260424-171241-030870_prune_graph.pt",
+    "/workspace/demos/subgraph/clt-hp/clt-hp-p10-fact-the-capital-of-20260424-171350-828667_prune_graph.pt",
+    "/workspace/demos/subgraph/gemmascope-transcoder-16k/gemmascope-transcoder-16k-p01-fact-the-capital-of-20260424-171438-028431_prune_graph.pt",
+    "/workspace/demos/subgraph/gemmascope-transcoder-16k/gemmascope-transcoder-16k-p02-fact-the-largest-planet-20260424-172052-571968_prune_graph.pt",
+    "/workspace/demos/subgraph/gemmascope-transcoder-16k/gemmascope-transcoder-16k-p03-fact-the-author-of-20260424-172649-502184_prune_graph.pt",
+    "/workspace/demos/subgraph/gemmascope-transcoder-16k/gemmascope-transcoder-16k-p04-fact-the-capital-of-20260424-173259-420935_prune_graph.pt",
+    "/workspace/demos/subgraph/gemmascope-transcoder-16k/gemmascope-transcoder-16k-p05-fact-the-language-spoken-20260424-173930-964822_prune_graph.pt"
+  ],
+  "output_dir": "/workspace/eval_outputs/clustering",
+  "method_grid": [
+    {
+      "mean_method": "harm",
+      "normalization": "cos",
+      "similarity_mode": "node"
+    },
+    {
+      "mean_method": "harm",
+      "normalization": "cos",
+      "similarity_mode": "edge"
+    },
+    {
+      "mean_method": "harm",
+      "normalization": "cos_relu",
+      "similarity_mode": "node"
+    },
+    {
+      "mean_method": "harm",
+      "normalization": "cos_relu",
+      "similarity_mode": "edge"
+    },
+    {
+      "mean_method": "arith",
+      "normalization": "cos",
+      "similarity_mode": "node"
+    },
+    {
+      "mean_method": "arith",
+      "normalization": "cos",
+      "similarity_mode": "edge"
+    },
+    {
+      "mean_method": "arith",
+      "normalization": "cos_relu",
+      "similarity_mode": "node"
+    },
+    {
+      "mean_method": "arith",
+      "normalization": "cos_relu",
+      "similarity_mode": "edge"
+    }
+  ],
+  "baselines": [
+    "baseline-kmeans-node-profile",
+    "baseline-spectral-adjacency"
+  ],
+  "summary_csv": "/workspace/eval_outputs/clustering/summary.csv",
+  "results_json": "/workspace/eval_outputs/clustering/results.json",
+  "n_graphs": 14,
+  "n_runs": 140,
+  "config": {
+    "k_min": null,
+    "k_max": null,
+    "max_layer_span": 4,
+    "mediation_penalty": 0.1,
+    "enforce_dag": false,
+    "map_location": "cpu",
+    "random_state": 42,
+    "n_init": 20,
+    "weights": {
+      "w_intra": 0.3,
+      "w_dag": 0.25,
+      "w_attr": 0.25,
+      "w_size": 0.2
+    }
+  }
+}

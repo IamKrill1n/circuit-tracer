@@ -1,0 +1,428 @@
+{
+  "graph_name": "clt-hp-p01-fact-the-capital-of-20260424-170840-165461_prune_graph",
+  "dataset": "clt-hp",
+  "graph_path": "/workspace/demos/subgraph/clt-hp/clt-hp-p01-fact-the-capital-of-20260424-170840-165461_prune_graph.pt",
+  "method": "ours-harm-cos-node",
+  "method_family": "ours",
+  "mean_method": "harm",
+  "normalization": "cos",
+  "similarity_mode": "node",
+  "best_k": 2,
+  "auto_k_candidates": 2,
+  "n_supernodes": 20,
+  "total": 0.75,
+  "total_base": 0.75,
+  "intra_sim": 1.0,
+  "dag_safety": 1.0,
+  "attr_balance": 0.0,
+  "size_score": 1.0,
+  "n_middle": 2,
+  "n_warnings": 0,
+  "inf_conservation": 0.9999999999999382,
+  "edge_conservation": 0.8333333333333056,
+  "within_cluster_weighted_edge_cosine_mean": 0.8988441391035908,
+  "F_phi": 0.6999999999999942,
+  "path_score": 0.9999999999999855,
+  "residual_score": 0.0,
+  "shortcut_score": 1.0,
+  "D_phi": 1.454392162258955e-14,
+  "R_phi": 1.5637918527458106,
+  "R_phi_balance": 1.5637918527458106,
+  "R_phi_suppressive": 0.4607773851586771,
+  "R_phi_max": 1.5637918527458106,
+  "shortcut_frac": 0.0,
+  "sigma_phi": 0.0,
+  "top_k_frac": 0.9999999999999855,
+  "n_paths": 10,
+  "n_shortcuts": 0,
+  "n_direct": 14,
+  "n_suppressive": 1,
+  "n_balanced": 1,
+  "result_path": "/workspace/eval_outputs/clustering/runs/clt-hp-p01-fact-the-capital-of-20260424-170840-165461_prune_graph/ours-harm-cos-node/result.json",
+  "supernode_map_path": "/workspace/eval_outputs/clustering/runs/clt-hp-p01-fact-the-capital-of-20260424-170840-165461_prune_graph/ours-harm-cos-node/supernode_map.json",
+  "auto_k_sweep_path": "/workspace/eval_outputs/clustering/runs/clt-hp-p01-fact-the-capital-of-20260424-170840-165461_prune_graph/ours-harm-cos-node/auto_k_sweep.json",
+  "flow_report_path": "/workspace/eval_outputs/clustering/runs/clt-hp-p01-fact-the-capital-of-20260424-170840-165461_prune_graph/ours-harm-cos-node/flow_report.json",
+  "final_supernodes": {
+    "SN_0": [
+      "0_5200_16",
+      "12_5597_16",
+      "12_27348_16"
+    ],
+    "SN_1": [
+      "15_70752_16"
+    ],
+    "SN_EMB_0": [
+      "E_2_0"
+    ],
+    "SN_EMB_1": [
+      "E_18143_1"
+    ],
+    "SN_EMB_2": [
+      "E_235292_2"
+    ],
+    "SN_EMB_3": [
+      "E_714_3"
+    ],
+    "SN_EMB_4": [
+      "E_6037_4"
+    ],
+    "SN_EMB_5": [
+      "E_576_5"
+    ],
+    "SN_EMB_6": [
+      "E_573_6"
+    ],
+    "SN_EMB_7": [
+      "E_3170_7"
+    ],
+    "SN_EMB_8": [
+      "E_674_8"
+    ],
+    "SN_EMB_9": [
+      "E_31127_9"
+    ],
+    "SN_EMB_10": [
+      "E_573_10"
+    ],
+    "SN_EMB_11": [
+      "E_3520_11"
+    ],
+    "SN_EMB_12": [
+      "E_3858_12"
+    ],
+    "SN_EMB_13": [
+      "E_577_13"
+    ],
+    "SN_EMB_14": [
+      "E_573_14"
+    ],
+    "SN_EMB_15": [
+      "E_7923_15"
+    ],
+    "SN_EMB_16": [
+      "E_603_16"
+    ],
+    "SN_LOGIT_0": [
+      "27_780_16"
+    ]
+  },
+  "score_details": {
+    "SN_0": {
+      "intra_sim": 0.9952773650487264,
+      "n": 3
+    },
+    "SN_1": {
+      "intra_sim": 1.0,
+      "n": 1
+    }
+  },
+  "flow_report": {
+    "path_decomposition": {
+      "paths": [
+        {
+          "path": [
+            "SN_EMB_16",
+            "SN_LOGIT_0"
+          ],
+          "flow": 43.5,
+          "frac": 0.6352781634664361,
+          "length": 2
+        },
+        {
+          "path": [
+            "SN_EMB_0",
+            "SN_LOGIT_0"
+          ],
+          "flow": 7.78125,
+          "frac": 0.11363811975800472,
+          "length": 2
+        },
+        {
+          "path": [
+            "SN_EMB_2",
+            "SN_LOGIT_0"
+          ],
+          "flow": 5.21875,
+          "frac": 0.07621512449633248,
+          "length": 2
+        },
+        {
+          "path": [
+            "SN_EMB_5",
+            "SN_LOGIT_0"
+          ],
+          "flow": 2.765625,
+          "frac": 0.040389452203146256,
+          "length": 2
+        },
+        {
+          "path": [
+            "SN_EMB_1",
+            "SN_LOGIT_0"
+          ],
+          "flow": 2.375,
+          "frac": 0.03468472731569622,
+          "length": 2
+        },
+        {
+          "path": [
+            "SN_EMB_16",
+            "SN_0",
+            "SN_LOGIT_0"
+          ],
+          "flow": 2.312012687246194,
+          "frac": 0.033764854571606016,
+          "length": 3
+        },
+        {
+          "path": [
+            "SN_EMB_8",
+            "SN_LOGIT_0"
+          ],
+          "flow": 2.140625,
+          "frac": 0.0312618923832262,
+          "length": 2
+        },
+        {
+          "path": [
+            "SN_EMB_4",
+            "SN_LOGIT_0"
+          ],
+          "flow": 1.5390625,
+          "frac": 0.022476616056553142,
+          "length": 2
+        },
+        {
+          "path": [
+            "SN_EMB_6",
+            "SN_LOGIT_0"
+          ],
+          "flow": 0.69921875,
+          "frac": 0.010211457548535564,
+          "length": 2
+        },
+        {
+          "path": [
+            "SN_EMB_7",
+            "SN_0",
+            "SN_LOGIT_0"
+          ],
+          "flow": 0.1423978753274171,
+          "frac": 0.002079592200448829,
+          "length": 3
+        }
+      ],
+      "total_flow": 68.47394181257361,
+      "n_paths": 10,
+      "concentration": {
+        "1": 0.6352781634664361,
+        "2": 0.7489162832244407,
+        "3": 0.8251314077207732,
+        "4": 0.8655208599239195,
+        "5": 0.9002055872396156,
+        "6": 0.9339704418112217,
+        "7": 0.9652323341944479,
+        "8": 0.987708950251001,
+        "9": 0.9979204077995366,
+        "10": 0.9999999999999855
+      },
+      "D_phi": 1.454392162258955e-14,
+      "top_k": 10,
+      "top_k_frac": 0.9999999999999855
+    },
+    "local_residuals": {
+      "per_sn": {
+        "SN_0": {
+          "in_flow_pos": 2.6595051288604736,
+          "in_flow_neg": -4.486328125,
+          "in_flow_net": -1.8268229961395264,
+          "out_flow_pos": 0.4596354216337204,
+          "out_flow_neg": 0.0,
+          "inf_exit": 0.5703125,
+          "total_out": 1.0299479216337204,
+          "residual_abs": 2.8567709177732468,
+          "residual_rel": 1.5637918527458106,
+          "balance": -2.8567709177732468,
+          "is_suppressive": false,
+          "suppression_rel": null
+        },
+        "SN_1": {
+          "in_flow_pos": 0.955078125,
+          "in_flow_neg": -2.3369140625,
+          "in_flow_net": -1.3818359375,
+          "out_flow_pos": 0.0,
+          "out_flow_neg": -0.63671875,
+          "inf_exit": -0.63671875,
+          "total_out": -1.2734375,
+          "residual_abs": 0.1083984375,
+          "residual_rel": 0.07844522968192202,
+          "balance": -0.1083984375,
+          "is_suppressive": true,
+          "suppression_rel": 0.4607773851586771
+        }
+      },
+      "R_phi_balance": 1.5637918527458106,
+      "R_phi_suppressive": 0.4607773851586771,
+      "R_phi_max": 1.5637918527458106,
+      "R_phi": 1.5637918527458106,
+      "n_middle": 2,
+      "n_suppressive": 1,
+      "n_balanced": 1
+    },
+    "shortcut_analysis": {
+      "edges": [
+        {
+          "src": "SN_EMB_16",
+          "tgt": "SN_LOGIT_0",
+          "weight": 10.875,
+          "shortcut_ratio": 0.9828194864968329,
+          "is_shortcut": false,
+          "best_mediator": "SN_0",
+          "mediation_strength": 0.1901041716337204
+        },
+        {
+          "src": "SN_EMB_16",
+          "tgt": "SN_0",
+          "weight": 2.5052082538604736,
+          "shortcut_ratio": 0.9999999999996008,
+          "is_shortcut": false,
+          "best_mediator": null,
+          "mediation_strength": 0.0
+        },
+        {
+          "src": "SN_EMB_0",
+          "tgt": "SN_LOGIT_0",
+          "weight": 1.9453125,
+          "shortcut_ratio": 0.9999999999994859,
+          "is_shortcut": false,
+          "best_mediator": null,
+          "mediation_strength": 0.0
+        },
+        {
+          "src": "SN_EMB_2",
+          "tgt": "SN_LOGIT_0",
+          "weight": 1.3046875,
+          "shortcut_ratio": 0.9999999999992335,
+          "is_shortcut": false,
+          "best_mediator": null,
+          "mediation_strength": 0.0
+        },
+        {
+          "src": "SN_EMB_5",
+          "tgt": "SN_LOGIT_0",
+          "weight": 0.69140625,
+          "shortcut_ratio": 0.9999999999985537,
+          "is_shortcut": false,
+          "best_mediator": null,
+          "mediation_strength": 0.0
+        },
+        {
+          "src": "SN_EMB_1",
+          "tgt": "SN_LOGIT_0",
+          "weight": 0.59375,
+          "shortcut_ratio": 0.9999999999983158,
+          "is_shortcut": false,
+          "best_mediator": null,
+          "mediation_strength": 0.0
+        },
+        {
+          "src": "SN_EMB_8",
+          "tgt": "SN_LOGIT_0",
+          "weight": 0.53515625,
+          "shortcut_ratio": 0.9999999999981314,
+          "is_shortcut": false,
+          "best_mediator": null,
+          "mediation_strength": 0.0
+        },
+        {
+          "src": "SN_EMB_4",
+          "tgt": "SN_LOGIT_0",
+          "weight": 0.384765625,
+          "shortcut_ratio": 0.9999999999974011,
+          "is_shortcut": false,
+          "best_mediator": null,
+          "mediation_strength": 0.0
+        },
+        {
+          "src": "SN_EMB_4",
+          "tgt": "SN_1",
+          "weight": 0.373046875,
+          "shortcut_ratio": 0.9999999999973195,
+          "is_shortcut": false,
+          "best_mediator": null,
+          "mediation_strength": 0.0
+        },
+        {
+          "src": "SN_EMB_1",
+          "tgt": "SN_1",
+          "weight": 0.3125,
+          "shortcut_ratio": 0.9999999999968001,
+          "is_shortcut": false,
+          "best_mediator": null,
+          "mediation_strength": 0.0
+        },
+        {
+          "src": "SN_0",
+          "tgt": "SN_1",
+          "weight": 0.26953125,
+          "shortcut_ratio": 0.99999999999629,
+          "is_shortcut": false,
+          "best_mediator": null,
+          "mediation_strength": 0.0
+        },
+        {
+          "src": "SN_0",
+          "tgt": "SN_LOGIT_0",
+          "weight": 0.1901041716337204,
+          "shortcut_ratio": 0.9999999999947397,
+          "is_shortcut": false,
+          "best_mediator": null,
+          "mediation_strength": 0.0
+        },
+        {
+          "src": "SN_EMB_6",
+          "tgt": "SN_LOGIT_0",
+          "weight": 0.1748046875,
+          "shortcut_ratio": 0.9999999999942792,
+          "is_shortcut": false,
+          "best_mediator": null,
+          "mediation_strength": 0.0
+        },
+        {
+          "src": "SN_EMB_7",
+          "tgt": "SN_0",
+          "weight": 0.154296875,
+          "shortcut_ratio": 0.999999999993519,
+          "is_shortcut": false,
+          "best_mediator": null,
+          "mediation_strength": 0.0
+        }
+      ],
+      "n_shortcuts": 0,
+      "n_direct": 14,
+      "n_total": 14,
+      "global_shortcut_frac": 0.0
+    },
+    "combined": {
+      "F_phi": 0.6999999999999942,
+      "path_score": 0.9999999999999855,
+      "residual_score": 0.0,
+      "shortcut_score": 1.0,
+      "D_phi": 1.454392162258955e-14,
+      "R_phi": 1.5637918527458106,
+      "R_phi_balance": 1.5637918527458106,
+      "R_phi_suppressive": 0.4607773851586771,
+      "R_phi_max": 1.5637918527458106,
+      "shortcut_frac": 0.0,
+      "Rbal_phi": 1.5637918527458106,
+      "Rsup_phi": 0.4607773851586771,
+      "sigma_phi": 0.0,
+      "n_paths": 10,
+      "top_k_frac": 0.9999999999999855,
+      "n_shortcuts": 0,
+      "n_direct": 14,
+      "n_suppressive": 1,
+      "n_balanced": 1
+    }
+  }
+}

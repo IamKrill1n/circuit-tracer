@@ -1,0 +1,215 @@
+{
+  "13": {
+    "total": 0.836909662476802,
+    "total_base": 0.836909662476802,
+    "intra_sim": 0.9615384615384616,
+    "dag_safety": 1.0,
+    "flow_balance": 0.843792496061054,
+    "attr_balance": 0.843792496061054,
+    "size_score": 0.4375,
+    "n_middle": 13,
+    "n_warnings": 0,
+    "inf_conservation": 0.9999999999999393,
+    "edge_conservation": 0.7777777777777727,
+    "details": {
+      "SN_0": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_1": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_2": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_3": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_4": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_5": {
+        "intra_sim": 0.05998801595220963,
+        "n": 4
+      },
+      "SN_6": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_7": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_8": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_9": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_10": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_11": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_12": {
+        "intra_sim": 1.0,
+        "n": 1
+      }
+    }
+  },
+  "14": {
+    "total": 0.8286768743221455,
+    "total_base": 0.8286768743221455,
+    "intra_sim": 0.9642857142857143,
+    "dag_safety": 1.0,
+    "flow_balance": 0.857564640145725,
+    "attr_balance": 0.857564640145725,
+    "size_score": 0.375,
+    "n_middle": 14,
+    "n_warnings": 0,
+    "inf_conservation": 0.9999999999999393,
+    "edge_conservation": 0.8496732026143735,
+    "details": {
+      "SN_0": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_1": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_2": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_3": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_4": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_5": {
+        "intra_sim": 0.11034291982650757,
+        "n": 3
+      },
+      "SN_6": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_7": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_8": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_9": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_10": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_11": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_12": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_13": {
+        "intra_sim": 1.0,
+        "n": 1
+      }
+    }
+  },
+  "15": {
+    "total": 0.8255242033816597,
+    "total_base": 0.8255242033816597,
+    "intra_sim": 0.9666666666666667,
+    "dag_safety": 1.0,
+    "flow_balance": 0.8920968135266383,
+    "attr_balance": 0.8920968135266383,
+    "size_score": 0.3125,
+    "n_middle": 15,
+    "n_warnings": 0,
+    "inf_conservation": 0.9999999999999393,
+    "edge_conservation": 0.9019607843137196,
+    "details": {
+      "SN_0": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_1": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_2": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_3": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_4": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_5": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_6": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_7": {
+        "intra_sim": 0.1449114978313446,
+        "n": 2
+      },
+      "SN_8": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_9": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_10": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_11": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_12": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_13": {
+        "intra_sim": 1.0,
+        "n": 1
+      },
+      "SN_14": {
+        "intra_sim": 1.0,
+        "n": 1
+      }
+    }
+  }
+}
