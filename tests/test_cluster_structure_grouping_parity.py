@@ -46,19 +46,44 @@ def _build_test_graph() -> PruneGraph:
 
 def test_compute_similarity_uses_edge_channels() -> None:
     prune_graph = _build_test_graph()
-    sim_out = compute_similarity(prune_graph, gamma=1.0, mediation_penalty=1.0)
-    sim_in = compute_similarity(prune_graph, gamma=0.0, mediation_penalty=1.0)
+    sim_out = compute_similarity(
+        prune_graph,
+        mean_method="arith",
+        mediation_penalty=1.0,
+        similarity_mode="edge",
+        normalization="cos",
+    )
+    sim_in = compute_similarity(
+        prune_graph,
+        mean_method="arith",
+        mediation_penalty=1.0,
+        similarity_mode="node",
+        normalization="cos",
+    )
 
     assert sim_out.shape == sim_in.shape == (len(prune_graph.kept_ids), len(prune_graph.kept_ids))
-    assert torch.all(sim_out >= 0.0) and torch.all(sim_out <= 1.0)
-    assert torch.all(sim_in >= 0.0) and torch.all(sim_in <= 1.0)
+    eps = 1e-4
+    assert torch.all(sim_out >= -eps) and torch.all(sim_out <= 1.0 + eps)
+    assert torch.all(sim_in >= -eps) and torch.all(sim_in <= 1.0 + eps)
     assert not torch.allclose(sim_out, sim_in)
 
 
 def test_mediation_penalty_reduces_similarity() -> None:
     prune_graph = _build_test_graph()
-    no_penalty = compute_similarity(prune_graph, gamma=0.5, mediation_penalty=1.0)
-    with_penalty = compute_similarity(prune_graph, gamma=0.5, mediation_penalty=0.1)
+    no_penalty = compute_similarity(
+        prune_graph,
+        mean_method="arith",
+        mediation_penalty=1.0,
+        similarity_mode="edge",
+        normalization="cos_relu",
+    )
+    with_penalty = compute_similarity(
+        prune_graph,
+        mean_method="arith",
+        mediation_penalty=0.1,
+        similarity_mode="edge",
+        normalization="cos_relu",
+    )
     assert torch.all(with_penalty <= no_penalty + 1e-8)
 
 

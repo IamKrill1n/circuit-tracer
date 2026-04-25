@@ -54,7 +54,13 @@ def _build_test_graph() -> PruneGraph:
 
 def test_eigengap_analysis_outputs_expected_keys() -> None:
     prune_graph = _build_test_graph()
-    similarity = compute_similarity(prune_graph, gamma=0.5, mediation_penalty=0.1)
+    similarity = compute_similarity(
+        prune_graph,
+        mean_method="arith",
+        mediation_penalty=0.1,
+        similarity_mode="edge",
+        normalization="cos_relu",
+    )
     result = eigengap_analysis(similarity, prune_graph, max_k=5)
     assert {"eigengap_k", "eigenvalues", "gaps", "search_range"} <= set(result.keys())
     assert result["search_range"][0] <= result["search_range"][1]
@@ -62,7 +68,13 @@ def test_eigengap_analysis_outputs_expected_keys() -> None:
 
 def test_score_k_includes_flow_metrics_when_enabled() -> None:
     prune_graph = _build_test_graph()
-    similarity = compute_similarity(prune_graph, gamma=0.5, mediation_penalty=0.1)
+    similarity = compute_similarity(
+        prune_graph,
+        mean_method="arith",
+        mediation_penalty=0.1,
+        similarity_mode="edge",
+        normalization="cos_relu",
+    )
     supernodes = [["1_0_0", "1_1_0"], ["2_0_0", "2_1_0"], ["E_0_0"], ["27_0_0"]]
     mapping = supernodes_to_mapping(prune_graph, supernodes)
     score = score_k(
@@ -79,9 +91,38 @@ def test_score_k_includes_flow_metrics_when_enabled() -> None:
     assert score["total"] >= 0.0
 
 
+def test_score_k_includes_intra_edge_cosine() -> None:
+    prune_graph = _build_test_graph()
+    similarity = compute_similarity(
+        prune_graph,
+        mean_method="arith",
+        mediation_penalty=0.1,
+        similarity_mode="edge",
+        normalization="cos_relu",
+    )
+    supernodes = [["1_0_0", "1_1_0"], ["2_0_0", "2_1_0"], ["E_0_0"], ["27_0_0"]]
+    mapping = supernodes_to_mapping(prune_graph, supernodes)
+    score = score_k(
+        mapping,
+        prune_graph,
+        similarity,
+        target_n_middle=4,
+        use_flow_faithfulness=False,
+        enforce_dag=False,
+    )
+    assert "intra_edge_cosine_mean" in score
+    assert -1.0 <= float(score["intra_edge_cosine_mean"]) <= 1.0
+
+
 def test_find_best_k_returns_flow_enhanced_results() -> None:
     prune_graph = _build_test_graph()
-    similarity = compute_similarity(prune_graph, gamma=0.5, mediation_penalty=0.1)
+    similarity = compute_similarity(
+        prune_graph,
+        mean_method="arith",
+        mediation_penalty=0.1,
+        similarity_mode="edge",
+        normalization="cos_relu",
+    )
     best_k, results = find_best_k(
         prune_graph,
         similarity=similarity,

@@ -8,6 +8,7 @@ from scipy.linalg import eigvalsh
 from summarization.cluster import (
     cluster_graph,
     compute_similarity,
+    _edge_channels_sender_indexed,
 )
 from summarization.flow_analysis import (
     build_supernode_graph,
@@ -81,6 +82,55 @@ def _check_dag_safety(final_supernodes: dict[str, list[str]]) -> list[tuple[str,
     return warns
 
 
+def _intra_cluster_edge_weight_cosine(
+    final_supernodes: dict[str, list[str]],
+    prune_graph: PruneGraph,
+) -> tuple[float, dict[str, float]]:
+    """
+    Mean cosine similarity of outgoing edge profiles within each middle supernode.
+
+    For each node i, the profile is the row vector
+    ``adj[i,j] * rel_sender[i,j] * inf_sender[i,j]`` (sender-indexed), matching
+    relevance- and influence-weighted edge weights used in similarity.
+    """
+    kept_ids = prune_graph.kept_ids
+    node_to_idx = {nid: i for i, nid in enumerate(kept_ids)}
+    adj = prune_graph.pruned_adj.float().T
+    rel_sender, inf_sender = _edge_channels_sender_indexed(prune_graph, adj)
+    w = (adj * rel_sender * inf_sender).detach().cpu().numpy()
+
+    middle_sns = [sn for sn in final_supernodes if "EMB" not in sn and "LOGIT" not in sn]
+    per_sn: dict[str, float] = {}
+    weighted_sum = 0.0
+    weight_total = 0.0
+
+    for sn in middle_sns:
+        members = final_supernodes.get(sn, [])
+        idx = [node_to_idx[m] for m in members if m in node_to_idx]
+        n_m = len(members)
+        if n_m < 2:
+            per_sn[sn] = 1.0
+            weighted_sum += 1.0 * n_m
+            weight_total += float(n_m)
+            continue
+        sims: list[float] = []
+        for a in range(len(idx)):
+            i = idx[a]
+            vi = w[i]
+            ni = float(np.linalg.norm(vi)) + 1e-12
+            for k in idx[a + 1 :]:
+                vk = w[k]
+                nk = float(np.linalg.norm(vk)) + 1e-12
+                sims.append(float(np.dot(vi, vk) / (ni * nk)))
+        m_cos = float(np.mean(sims)) if sims else 1.0
+        per_sn[sn] = m_cos
+        weighted_sum += m_cos * n_m
+        weight_total += float(n_m)
+
+    global_mean = weighted_sum / weight_total if weight_total > 0 else 0.0
+    return global_mean, per_sn
+
+
 def _evaluate_grouping(
     final_supernodes: dict[str, list[str]],
     prune_graph: PruneGraph,
@@ -128,6 +178,9 @@ def score_k(
         final_supernodes = supernodes_to_mapping(prune_graph, final_supernodes)
 
     stats = _evaluate_grouping(final_supernodes, prune_graph, similarity)
+    intra_edge_cos_mean, intra_edge_by_sn = _intra_cluster_edge_weight_cosine(
+        final_supernodes, prune_graph
+    )
     dag_warnings = _check_dag_safety(final_supernodes)
     sng = build_supernode_graph(prune_graph, final_supernodes, enforce_dag=enforce_dag)
     middle = {sn: st for sn, st in stats.items() if "EMB" not in sn and "LOGIT" not in sn}
@@ -136,6 +189,7 @@ def score_k(
         return {
             "total": 0.0,
             "intra_sim": 0.0,
+            "intra_edge_cosine_mean": 0.0,
             "dag_safety": 0.0,
             "attr_balance": 0.0,
             "size_score": 0.0,
@@ -189,10 +243,19 @@ def score_k(
     else:
         total = total_base
 
+    details = {
+        sn: {
+            "intra_sim": st["intra_sim_mean"],
+            "intra_edge_cosine": float(intra_edge_by_sn.get(sn, 0.0)),
+            "n": int(st["n"]),
+        }
+        for sn, st in middle.items()
+    }
     out = {
         "total": float(total),
         "total_base": float(total_base),
         "intra_sim": float(intra),
+        "intra_edge_cosine_mean": float(intra_edge_cos_mean),
         "dag_safety": float(dag_safety),
         "flow_balance": float(attr_balance),
         "attr_balance": float(attr_balance),
@@ -201,7 +264,7 @@ def score_k(
         "n_warnings": int(len(dag_warnings)),
         "inf_conservation": float(sng["inf_conservation"]),
         "edge_conservation": float(sng["edge_conservation"]),
-        "details": {sn: {"intra_sim": st["intra_sim_mean"], "n": int(st["n"])} for sn, st in middle.items()},
+        "details": details,
     }
     if use_flow_faithfulness and flow_report is not None:
         combined = flow_report["combined"]
