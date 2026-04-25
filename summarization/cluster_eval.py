@@ -129,15 +129,14 @@ def full_score_bundle(
     supernodes: list[list[str]],
     similarity: Any,
     target_n_middle: int,
-    use_flow_in_total: bool = False,
     w_flow: float = 0.40,
     enforce_dag: bool = False,
 ) -> dict[str, Any]:
     """
     `score_k` with flow metrics attached (flow_report) for evaluation tables.
 
-    When ``use_flow_in_total`` is False, ``total`` matches the non-flow objective
-    while flow diagnostics are still present.
+    ``total`` follows the non-flow objective; ``total_with_flow`` uses the same
+    weights with flow faithfulness blended in.
     """
     mapping = supernodes_to_mapping(prune_graph, supernodes)
     s_np = np.asarray(similarity.detach().cpu().numpy() if hasattr(similarity, "detach") else similarity)
@@ -240,7 +239,6 @@ def run_hyperparam_grid(
                     supernode_lists,
                     sim,
                     target_n_middle=n_middle,
-                    use_flow_in_total=False,
                     enforce_dag=enforce_dag,
                 )
                 row = {
