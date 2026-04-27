@@ -8,8 +8,7 @@ from summarization.auto_grouping import (
     find_best_k,
     score_k,
 )
-from summarization.cluster import compute_similarity
-from summarization.flow_analysis import build_supernode_graph, supernodes_to_mapping
+from summarization.cluster import build_supernode_graph, compute_similarity, supernodes_to_mapping
 from summarization.prune import PruneGraph
 
 
@@ -54,15 +53,27 @@ def _build_test_graph() -> PruneGraph:
 
 def test_eigengap_analysis_outputs_expected_keys() -> None:
     prune_graph = _build_test_graph()
-    similarity = compute_similarity(prune_graph, gamma=0.5, mediation_penalty=0.1)
+    similarity = compute_similarity(
+        prune_graph,
+        mean_method="arith",
+        mediation_penalty=0.1,
+        similarity_mode="edge",
+        normalization="cos",
+    )
     result = eigengap_analysis(similarity, prune_graph, max_k=5)
     assert {"eigengap_k", "eigenvalues", "gaps", "search_range"} <= set(result.keys())
     assert result["search_range"][0] <= result["search_range"][1]
 
 
-def test_score_k_includes_flow_metrics_when_enabled() -> None:
+def test_score_k_returns_base_metrics_only() -> None:
     prune_graph = _build_test_graph()
-    similarity = compute_similarity(prune_graph, gamma=0.5, mediation_penalty=0.1)
+    similarity = compute_similarity(
+        prune_graph,
+        mean_method="arith",
+        mediation_penalty=0.1,
+        similarity_mode="edge",
+        normalization="cos",
+    )
     supernodes = [["1_0_0", "1_1_0"], ["2_0_0", "2_1_0"], ["E_0_0"], ["27_0_0"]]
     mapping = supernodes_to_mapping(prune_graph, supernodes)
     score = score_k(
@@ -70,18 +81,23 @@ def test_score_k_includes_flow_metrics_when_enabled() -> None:
         prune_graph,
         similarity,
         target_n_middle=4,
-        use_flow_faithfulness=True,
-        w_flow=0.4,
         enforce_dag=False,
     )
-    assert "F_phi" in score
-    assert "sigma_phi" in score
+    assert "F_phi" not in score
+    assert "sigma_phi" not in score
+    assert "attr_balance" in score
     assert score["total"] >= 0.0
 
 
-def test_find_best_k_returns_flow_enhanced_results() -> None:
+def test_find_best_k_returns_scored_results() -> None:
     prune_graph = _build_test_graph()
-    similarity = compute_similarity(prune_graph, gamma=0.5, mediation_penalty=0.1)
+    similarity = compute_similarity(
+        prune_graph,
+        mean_method="arith",
+        mediation_penalty=0.1,
+        similarity_mode="edge",
+        normalization="cos",
+    )
     best_k, results = find_best_k(
         prune_graph,
         similarity=similarity,
@@ -89,10 +105,9 @@ def test_find_best_k_returns_flow_enhanced_results() -> None:
         k_min_override=2,
         k_max_override=3,
         max_sn=None,
-        use_flow_faithfulness=True,
-        w_flow=0.4,
         mediation_penalty=0.1,
         enforce_dag=False,
     )
     assert best_k in results
-    assert all("F_phi" in v for v in results.values())
+    assert all("total" in v for v in results.values())
+    assert all("final_supernodes" in v for v in results.values())

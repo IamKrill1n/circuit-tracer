@@ -10,15 +10,22 @@ import numpy as np
 import torch
 from sklearn.cluster import KMeans, SpectralClustering
 
-from summarization.auto_grouping import eigengap_analysis, find_best_k, score_k
-from summarization.cluster import cluster_graph, compute_similarity
-from summarization.flow_analysis import (
+from summarization.auto_grouping import (
+    eigengap_analysis,
+    find_best_k,
+    find_best_k_for_clusterer,
+    score_k,
+)
+from summarization.cluster import (
     build_supernode_graph,
-    flow_faithfulness_report,
+    cluster_graph,
+    compute_similarity,
+    labels_to_supernodes,
     supernodes_to_mapping,
 )
+from summarization.flow_analysis import flow_faithfulness_report
 from summarization.prune import PruneGraph, load_prune_graph
-from summarization.utils import _is_embedding, _is_fixed, _is_logit
+from summarization.utils import _is_fixed
 
 METHOD_GRID: list[dict[str, str]] = [
     {
@@ -224,81 +231,6 @@ def _adjacency_affinity(prune_graph: PruneGraph) -> np.ndarray:
     return affinity
 
 
-def _labels_to_supernodes(
-    prune_graph: PruneGraph,
-    middle_ids: list[str],
-    labels: np.ndarray,
-) -> list[list[str]]:
-    grouped: dict[int, list[str]] = {}
-    for node_id, label in zip(middle_ids, labels):
-        grouped.setdefault(int(label), []).append(node_id)
-
-    middle_clusters = [grouped[label] for label in sorted(grouped)]
-    emb_singletons = [[nid] for nid in prune_graph.kept_ids if _is_embedding(prune_graph.attr, nid)]
-    logit_singletons = [[nid] for nid in prune_graph.kept_ids if _is_logit(prune_graph.attr, nid)]
-    return middle_clusters + emb_singletons + logit_singletons
-
-
-def _generic_auto_k(
-    *,
-    prune_graph: PruneGraph,
-    similarity: np.ndarray,
-    clusterer: Callable[[int], list[list[str]]],
-    k_min_override: int | None,
-    k_max_override: int | None,
-    weights: dict[str, float] | None,
-    enforce_dag: bool,
-) -> tuple[int, dict[int, dict[str, Any]]]:
-    n_middle = len(_middle_indices(prune_graph))
-    target_n_middle = max(1, n_middle)
-    if n_middle < 3:
-        fallback_k = max(0, n_middle)
-        clusters = clusterer(fallback_k)
-        mapping = supernodes_to_mapping(prune_graph, clusters)
-        result = score_k(
-            mapping,
-            prune_graph,
-            similarity,
-            target_n_middle=target_n_middle,
-            w_intra=(weights or {}).get("w_intra", 0.30),
-            w_dag=(weights or {}).get("w_dag", 0.25),
-            w_attr=(weights or {}).get("w_attr", 0.25),
-            w_size=(weights or {}).get("w_size", 0.20),
-            use_flow_faithfulness=False,
-            enforce_dag=enforce_dag,
-        )
-        result["final_supernodes"] = mapping
-        return fallback_k, {fallback_k: result}
-
-    eigengap = eigengap_analysis(similarity, prune_graph, max_k=min(20, n_middle - 1))
-    k_min = k_min_override if k_min_override is not None else int(eigengap["search_range"][0])
-    k_max = k_max_override if k_max_override is not None else int(eigengap["search_range"][1])
-    k_min = max(2, min(k_min, n_middle))
-    k_max = max(k_min, min(k_max, n_middle))
-
-    results: dict[int, dict[str, Any]] = {}
-    for target_k in range(k_min, k_max + 1):
-        clusters = clusterer(target_k)
-        mapping = supernodes_to_mapping(prune_graph, clusters)
-        result = score_k(
-            mapping,
-            prune_graph,
-            similarity,
-            target_n_middle=target_n_middle,
-            w_intra=(weights or {}).get("w_intra", 0.30),
-            w_dag=(weights or {}).get("w_dag", 0.25),
-            w_attr=(weights or {}).get("w_attr", 0.25),
-            w_size=(weights or {}).get("w_size", 0.20),
-            use_flow_faithfulness=False,
-            enforce_dag=enforce_dag,
-        )
-        result["final_supernodes"] = mapping
-        results[target_k] = result
-
-    best_k = max(results, key=lambda k: float(results[k]["total"]))
-    return best_k, results
-
-
 def _within_cluster_mean_cosine(
     features: np.ndarray,
     final_supernodes: dict[str, list[str]],
@@ -431,11 +363,11 @@ def _evaluate_existing_method(
         k_min_override=k_min_override,
         k_max_override=k_max_override,
         weights=weights,
+        max_sn=None,
         mean_method=method_config["mean_method"],
         mediation_penalty=mediation_penalty,
         similarity_mode=method_config["similarity_mode"],
         normalization=method_config["normalization"],
-        use_flow_faithfulness=False,
         enforce_dag=enforce_dag,
         random_state=random_state,
         n_init=n_init,
@@ -470,7 +402,6 @@ def _evaluate_existing_method(
             w_dag=(weights or {}).get("w_dag", 0.25),
             w_attr=(weights or {}).get("w_attr", 0.25),
             w_size=(weights or {}).get("w_size", 0.20),
-            use_flow_faithfulness=False,
             enforce_dag=enforce_dag,
         )
 
@@ -548,7 +479,7 @@ def _evaluate_baseline(
     weights: dict[str, float] | None,
     enforce_dag: bool,
 ) -> dict[str, Any]:
-    best_k, sweep = _generic_auto_k(
+    best_k, sweep = find_best_k_for_clusterer(
         prune_graph=prune_graph,
         similarity=affinity,
         clusterer=clusterer,
@@ -663,7 +594,7 @@ def evaluate_prune_graph(
 
     def kmeans_clusterer(target_k: int) -> list[list[str]]:
         if len(middle_ids) == 0:
-            return _labels_to_supernodes(prune_graph, [], np.array([], dtype=np.int64))
+            return labels_to_supernodes(prune_graph, [], np.array([], dtype=np.int64))
         if target_k >= len(middle_ids):
             labels = np.arange(len(middle_ids), dtype=np.int64)
         elif target_k == 1:
@@ -674,7 +605,7 @@ def evaluate_prune_graph(
                 random_state=random_state,
                 n_init=n_init,
             ).fit_predict(node_features_mid)
-        return _labels_to_supernodes(prune_graph, middle_ids, labels)
+        return labels_to_supernodes(prune_graph, middle_ids, labels)
 
     rows.append(
         _evaluate_baseline(
@@ -699,7 +630,7 @@ def evaluate_prune_graph(
 
     def adjacency_spectral_clusterer(target_k: int) -> list[list[str]]:
         if len(middle_ids) == 0:
-            return _labels_to_supernodes(prune_graph, [], np.array([], dtype=np.int64))
+            return labels_to_supernodes(prune_graph, [], np.array([], dtype=np.int64))
         if target_k >= len(middle_ids):
             labels = np.arange(len(middle_ids), dtype=np.int64)
         elif target_k == 1:
@@ -712,7 +643,7 @@ def evaluate_prune_graph(
                 random_state=random_state,
                 n_init=n_init,
             ).fit_predict(adjacency_mid)
-        return _labels_to_supernodes(prune_graph, middle_ids, labels)
+        return labels_to_supernodes(prune_graph, middle_ids, labels)
 
     rows.append(
         _evaluate_baseline(

@@ -6,12 +6,9 @@ import numpy as np
 from scipy.linalg import eigvalsh
 
 from summarization.cluster import (
+    build_supernode_graph,
     cluster_graph,
     compute_similarity,
-)
-from summarization.flow_analysis import (
-    build_supernode_graph,
-    flow_faithfulness_report,
     supernodes_to_mapping,
 )
 from summarization.prune import PruneGraph
@@ -120,8 +117,6 @@ def score_k(
     w_dag: float = 0.25,
     w_attr: float = 0.25,
     w_size: float = 0.20,
-    use_flow_faithfulness: bool = False,
-    w_flow: float = 0.40,
     enforce_dag: bool = False,
 ) -> dict[str, Any]:
     if isinstance(final_supernodes, list):
@@ -179,19 +174,11 @@ def score_k(
     dev = abs(n_middle - ideal_k) / max(target_n_middle, 1)
     size_score = max(0.0, 1.0 - dev)
 
-    total_base = w_intra * intra + w_dag * dag_safety + w_attr * attr_balance + w_size * size_score
-    flow_report: dict[str, Any] | None = None
-    f_phi = 0.0
-    if use_flow_faithfulness:
-        flow_report = flow_faithfulness_report(sng, final_supernodes, top_k=10)
-        f_phi = float(flow_report["combined"]["F_phi"])
-        total = (1.0 - w_flow) * total_base + w_flow * f_phi
-    else:
-        total = total_base
+    total = w_intra * intra + w_dag * dag_safety + w_attr * attr_balance + w_size * size_score
 
     out = {
         "total": float(total),
-        "total_base": float(total_base),
+        "total_base": float(total),
         "intra_sim": float(intra),
         "dag_safety": float(dag_safety),
         "flow_balance": float(attr_balance),
@@ -203,20 +190,6 @@ def score_k(
         "edge_conservation": float(sng["edge_conservation"]),
         "details": {sn: {"intra_sim": st["intra_sim_mean"], "n": int(st["n"])} for sn, st in middle.items()},
     }
-    if use_flow_faithfulness and flow_report is not None:
-        combined = flow_report["combined"]
-        out.update(
-            {
-                "F_phi": f_phi,
-                "D_phi": float(combined["D_phi"]),
-                "R_phi": float(combined["R_phi"]),
-                "R_phi_balance": float(combined["R_phi_balance"]),
-                "R_phi_suppressive": float(combined["R_phi_suppressive"]),
-                "sigma_phi": float(combined.get("sigma_phi", combined.get("shortcut_frac", 0.0))),
-                "shortcut_frac": float(combined["shortcut_frac"]),
-                "flow_report": flow_report,
-            }
-        )
     return out
 
 
@@ -232,8 +205,6 @@ def find_best_k(
     mediation_penalty: float = 0.1,
     similarity_mode: Literal["edge", "node"] = "edge",
     normalization: Literal["cos", "cos_relu"] = "cos",
-    use_flow_faithfulness: bool = True,
-    w_flow: float = 0.40,
     enforce_dag: bool = False,
     random_state: int = 42,
     n_init: int = 20,
@@ -291,8 +262,6 @@ def find_best_k(
             w_dag=w.get("w_dag", 0.25),
             w_attr=w.get("w_attr", 0.25),
             w_size=w.get("w_size", 0.20),
-            use_flow_faithfulness=use_flow_faithfulness,
-            w_flow=w_flow,
             enforce_dag=enforce_dag,
         )
         sc["final_supernodes"] = final_supernodes
@@ -301,4 +270,67 @@ def find_best_k(
     if not results:
         return int(eg["eigengap_k"]), {}
     best_k = max(results, key=lambda x: float(results[x]["total"]))
+    return best_k, results
+
+
+def find_best_k_for_clusterer(
+    *,
+    prune_graph: PruneGraph,
+    similarity: Any,
+    clusterer: Any,
+    k_min_override: int | None = None,
+    k_max_override: int | None = None,
+    weights: dict[str, float] | None = None,
+    enforce_dag: bool = False,
+) -> tuple[int, dict[int, dict[str, Any]]]:
+    """
+    Auto-select k for an arbitrary clusterer using the same scoring objective
+    as `find_best_k`.
+    """
+    s_np = np.asarray(similarity.detach().cpu().numpy() if hasattr(similarity, "detach") else similarity)
+    n_middle = len(_middle_indices(prune_graph))
+    target_n_middle = max(1, n_middle)
+    if n_middle < 3:
+        fallback_k = max(0, n_middle)
+        clusters = clusterer(fallback_k)
+        mapping = supernodes_to_mapping(prune_graph, clusters)
+        result = score_k(
+            mapping,
+            prune_graph,
+            s_np,
+            target_n_middle=target_n_middle,
+            w_intra=(weights or {}).get("w_intra", 0.30),
+            w_dag=(weights or {}).get("w_dag", 0.25),
+            w_attr=(weights or {}).get("w_attr", 0.25),
+            w_size=(weights or {}).get("w_size", 0.20),
+            enforce_dag=enforce_dag,
+        )
+        result["final_supernodes"] = mapping
+        return fallback_k, {fallback_k: result}
+
+    eigengap = eigengap_analysis(s_np, prune_graph, max_k=min(20, n_middle - 1))
+    k_min = k_min_override if k_min_override is not None else int(eigengap["search_range"][0])
+    k_max = k_max_override if k_max_override is not None else int(eigengap["search_range"][1])
+    k_min = max(2, min(k_min, n_middle))
+    k_max = max(k_min, min(k_max, n_middle))
+
+    results: dict[int, dict[str, Any]] = {}
+    for target_k in range(k_min, k_max + 1):
+        clusters = clusterer(target_k)
+        mapping = supernodes_to_mapping(prune_graph, clusters)
+        result = score_k(
+            mapping,
+            prune_graph,
+            s_np,
+            target_n_middle=target_n_middle,
+            w_intra=(weights or {}).get("w_intra", 0.30),
+            w_dag=(weights or {}).get("w_dag", 0.25),
+            w_attr=(weights or {}).get("w_attr", 0.25),
+            w_size=(weights or {}).get("w_size", 0.20),
+            enforce_dag=enforce_dag,
+        )
+        result["final_supernodes"] = mapping
+        results[target_k] = result
+
+    best_k = max(results, key=lambda k: float(results[k]["total"]))
     return best_k, results

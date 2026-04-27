@@ -16,9 +16,8 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from summarization.cluster import cluster_graph
+from summarization.cluster import build_supernode_graph, cluster_graph, supernodes_to_mapping
 from summarization.cluster_viz import supernode_graph_figure
-from summarization.flow_analysis import build_supernode_graph, supernodes_to_mapping
 from summarization.prune import load_prune_graph, prune_graph_pipeline
 
 _DEFAULT_JSON_DIR = _ROOT / "demos" / "temp_graph_files"
@@ -149,7 +148,9 @@ def main() -> None:
         target_k = st.number_input("Target k (middle supernodes)", min_value=1, max_value=50, value=7)
         max_layer_span = st.number_input("Max layer span", min_value=1, max_value=32, value=4)
         max_sn = st.number_input("Max supernodes cap (0 = no cap)", min_value=0, max_value=100, value=0)
-        gamma = st.slider("Gamma (out/in similarity blend)", 0.0, 1.0, 1.0, 0.05)
+        mean_method = st.selectbox("Mean method", ("geo", "harm", "arith"), index=2)
+        similarity_mode = st.selectbox("Similarity mode", ("edge", "node"), index=0)
+        normalization = st.selectbox("Normalization", ("cos", "cos_relu"), index=0)
         mediation = st.slider("Mediation penalty", 0.0, 1.0, 0.1, 0.05)
         enforce_dag = st.checkbox("Enforce DAG constraints on clusters", value=True)
 
@@ -201,8 +202,10 @@ def main() -> None:
                 k_min_override=None,
                 k_max_override=None,
                 max_sn=int(max_sn) if max_sn > 0 else None,
-                gamma=float(gamma),
+                mean_method=str(mean_method),
                 mediation_penalty=float(mediation),
+                similarity_mode=str(similarity_mode),
+                normalization=str(normalization),
                 enforce_dag=enforce_dag,
             )
             k_use = int(best_k)
@@ -213,8 +216,10 @@ def main() -> None:
             target_k=k_use,
             max_layer_span=int(max_layer_span),
             max_sn=int(max_sn) if max_sn > 0 else None,
-            gamma=float(gamma),
+            mean_method=str(mean_method),
             mediation_penalty=float(mediation),
+            similarity_mode=str(similarity_mode),
+            normalization=str(normalization),
             enforce_dag=enforce_dag,
         )
         mapped = supernodes_to_mapping(prune_graph, supernodes)

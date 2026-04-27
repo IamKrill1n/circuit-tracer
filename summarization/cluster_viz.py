@@ -8,7 +8,7 @@ import networkx as nx
 import numpy as np
 import plotly.graph_objects as go
 
-from summarization.cluster import _parse_layer
+from summarization.utils import _parse_layer
 from summarization.flow_analysis import _classify_sn
 
 

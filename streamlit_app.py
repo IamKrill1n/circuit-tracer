@@ -12,13 +12,9 @@ import streamlit as st
 
 from api import save_subgraph
 from summarization.auto_grouping import find_best_k
-from summarization.cluster import cluster_graph
+from summarization.cluster import build_supernode_graph, cluster_graph, supernodes_to_mapping
 from summarization.cluster_viz import supernode_graph_figure
-from summarization.flow_analysis import (
-    build_supernode_graph,
-    flow_faithfulness_report,
-    supernodes_to_mapping,
-)
+from summarization.flow_analysis import flow_faithfulness_report
 from summarization.prune import PruneGraph, load_prune_graph, prune_graph_pipeline, save_prune_graph
 
 FULL_GRAPH_MODE = "Existing full graph JSON"
@@ -233,8 +229,6 @@ def _cluster_from_prune(
             mediation_penalty=float(cluster_cfg["mediation_penalty"]),
             similarity_mode=cluster_cfg["similarity_mode"],
             normalization=cluster_cfg["normalization"],
-            use_flow_faithfulness=bool(auto_k_cfg["use_flow_faithfulness"]),
-            w_flow=float(auto_k_cfg["w_flow"]),
             enforce_dag=enforce_dag,
             random_state=int(cluster_cfg["random_state"]),
             n_init=int(cluster_cfg["n_init"]),
@@ -564,22 +558,6 @@ def main() -> None:
         )
     with col_c:
         st.markdown("**Auto-k (`find_best_k`)**")
-        use_flow_faithfulness = st.checkbox(
-            "use_flow_faithfulness",
-            value=True,
-            help="If enabled, the auto-k objective blends in `flow_faithfulness_report` metrics (F_phi, etc.).",
-        )
-        w_flow = st.slider(
-            "w_flow (blend with flow faithfulness)",
-            min_value=0.0,
-            max_value=1.0,
-            value=0.4,
-            step=0.05,
-            help=(
-                "When flow faithfulness is on: `total = (1 - w_flow) * base_score + w_flow * F_phi`, where "
-                "base_score combines intra-cluster similarity, DAG safety, balance, and size terms."
-            ),
-        )
         k_min_override_raw = st.number_input(
             "k_min_override (0 = use eigengap range)",
             min_value=0,
@@ -644,8 +622,6 @@ def main() -> None:
         "n_init": int(n_init),
     }
     auto_k_cfg = {
-        "use_flow_faithfulness": bool(use_flow_faithfulness),
-        "w_flow": float(w_flow),
         "k_min_override": None if int(k_min_override_raw) == 0 else int(k_min_override_raw),
         "k_max_override": None if int(k_max_override_raw) == 0 else int(k_max_override_raw),
         "weights": {

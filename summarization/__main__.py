@@ -9,13 +9,9 @@ import requests
 
 from api import generate_graph, save_subgraph
 from summarization.auto_grouping import find_best_k
-from summarization.cluster import cluster_graph
+from summarization.cluster import build_supernode_graph, cluster_graph, supernodes_to_mapping
 from summarization.cluster_viz import supernode_graph_figure
-from summarization.flow_analysis import (
-    build_supernode_graph,
-    flow_faithfulness_report,
-    supernodes_to_mapping,
-)
+from summarization.flow_analysis import flow_faithfulness_report
 from summarization.prune import prune_graph_pipeline
 
 
@@ -151,8 +147,6 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             mediation_penalty=args.mediation_penalty,
             similarity_mode=args.similarity_mode,
             normalization=args.normalization,
-            use_flow_faithfulness=args.use_flow_faithfulness,
-            w_flow=args.w_flow,
             enforce_dag=args.enforce_dag,
             random_state=args.random_state,
             n_init=args.n_init,
@@ -303,8 +297,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--random-state", type=int, default=42)
     parser.add_argument("--n-init", type=int, default=20)
 
-    parser.add_argument("--use-flow-faithfulness", action="store_true")
-    parser.add_argument("--w-flow", type=float, default=0.4)
     parser.add_argument("--w-intra", type=float, default=0.30)
     parser.add_argument("--w-dag", type=float, default=0.25)
     parser.add_argument("--w-attr", type=float, default=0.25)

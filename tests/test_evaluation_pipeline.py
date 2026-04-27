@@ -5,7 +5,7 @@ import json
 
 import torch
 
-from summarization.evaluation_pipeline import run_evaluation
+from evaluation_pipeline import run_evaluation
 from summarization.prune import PruneGraph, save_prune_graph
 
 

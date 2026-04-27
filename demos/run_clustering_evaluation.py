@@ -1,4 +1,4 @@
-from summarization.evaluation_pipeline import main
+from evaluation_pipeline import main
 
 
 if __name__ == "__main__":

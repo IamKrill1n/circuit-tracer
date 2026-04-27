@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 import torch
@@ -8,6 +8,14 @@ from sklearn.cluster import SpectralClustering
 
 from summarization.prune import PruneGraph
 from summarization.utils import _is_embedding, _is_fixed, _is_logit, _parse_layer
+
+
+def _classify_node(node_id: str, attr: dict[str, dict[str, Any]]) -> str:
+    if _is_embedding(attr, node_id):
+        return "emb"
+    if _is_logit(attr, node_id):
+        return "logit"
+    return "middle"
 
 
 def _cosine_norm(matrix: torch.Tensor) -> torch.Tensor:
@@ -271,6 +279,21 @@ def _name_middle_supernodes(clusters: list[list[str]], attr: dict[str, dict]) ->
     return {f"SN_{i}": members for i, members in enumerate(clusters)}
 
 
+def labels_to_supernodes(
+    prune_graph: PruneGraph,
+    middle_ids: list[str],
+    labels: np.ndarray,
+) -> list[list[str]]:
+    grouped: dict[int, list[str]] = {}
+    for node_id, label in zip(middle_ids, labels):
+        grouped.setdefault(int(label), []).append(node_id)
+
+    middle_clusters = [grouped[label] for label in sorted(grouped)]
+    emb_singletons = [[nid] for nid in prune_graph.kept_ids if _is_embedding(prune_graph.attr, nid)]
+    logit_singletons = [[nid] for nid in prune_graph.kept_ids if _is_logit(prune_graph.attr, nid)]
+    return middle_clusters + emb_singletons + logit_singletons
+
+
 def cluster_graph(
     prune_graph: PruneGraph,
     target_k: int = 7,
@@ -382,3 +405,141 @@ def cluster_graph_with_labels(
             continue
         out.append([f"cluster_{i}", *members])
     return out
+
+
+def supernodes_to_mapping(
+    prune_graph: PruneGraph,
+    supernodes: list[list[str]],
+    middle_prefix: str = "SN",
+) -> dict[str, list[str]]:
+    """Convert `cluster_graph` output into a named supernode mapping."""
+    attr = prune_graph.attr
+    middle: list[list[str]] = []
+    emb: list[list[str]] = []
+    logit: list[list[str]] = []
+
+    for sn in supernodes:
+        if not sn:
+            continue
+        first = sn[0]
+        kind = _classify_node(first, attr)
+        if kind == "emb":
+            emb.append(sn)
+        elif kind == "logit":
+            logit.append(sn)
+        else:
+            middle.append(sn)
+
+    middle = sorted(middle, key=lambda m: min(_parse_layer(attr, n) for n in m))
+    named: dict[str, list[str]] = {f"{middle_prefix}_{i}": sn for i, sn in enumerate(middle)}
+    named.update({f"SN_EMB_{i}": sn for i, sn in enumerate(emb)})
+    named.update({f"SN_LOGIT_{i}": sn for i, sn in enumerate(logit)})
+    return named
+
+
+def build_supernode_graph(
+    prune_graph: PruneGraph,
+    final_supernodes: dict[str, list[str]] | list[list[str]],
+    enforce_dag: bool = False,
+) -> dict[str, Any]:
+    """
+    Build a clustered supernode graph from a pruned node-level graph.
+
+    Returns sn-level adjacency and influence metrics that downstream consumers
+    can use for scoring, reporting, and visualization.
+    """
+    if isinstance(final_supernodes, list):
+        final_supernodes = supernodes_to_mapping(prune_graph, final_supernodes)
+
+    kept_ids = prune_graph.kept_ids
+    attr = prune_graph.attr
+    adj = prune_graph.pruned_adj.clone().float().T  # sender-indexed
+
+    node_to_idx = {nid: i for i, nid in enumerate(kept_ids)}
+    sn_names = list(final_supernodes.keys())
+    sn_members_idx: list[list[int]] = []
+    for sn in sn_names:
+        members = [node_to_idx[n] for n in final_supernodes[sn] if n in node_to_idx]
+        if not members:
+            continue
+        sn_members_idx.append(members)
+
+    sn_names = [sn for sn, members in zip(sn_names, sn_members_idx) if members]
+    k = len(sn_names)
+    sn_adj = np.zeros((k, k), dtype=np.float64)
+
+    for i, src in enumerate(sn_members_idx):
+        for j, dst in enumerate(sn_members_idx):
+            if i == j:
+                continue
+            block = adj[np.ix_(src, dst)].detach().cpu().numpy()
+            nz = block[block != 0.0]
+            if nz.size == 0:
+                continue
+            w = float(nz.mean())
+            if w != 0.0:
+                sn_adj[i, j] = w
+
+    if enforce_dag:
+        for i in range(k):
+            for j in range(i + 1, k):
+                w_ij = float(sn_adj[i, j])
+                w_ji = float(sn_adj[j, i])
+                if w_ij == 0.0 or w_ji == 0.0:
+                    continue
+                if abs(w_ij) >= abs(w_ji):
+                    sn_adj[j, i] = 0.0
+                else:
+                    sn_adj[i, j] = 0.0
+
+    logit_idx = [i for i, nid in enumerate(kept_ids) if _is_logit(attr, nid)]
+    sn_inf = np.zeros(k, dtype=np.float64)
+    if logit_idx:
+        for i, src in enumerate(sn_members_idx):
+            block = adj[np.ix_(src, logit_idx)].detach().cpu().numpy()
+            sn_inf[i] = float(block.sum())
+
+    f_sn = np.maximum(sn_adj, 0.0)
+    sn_reach = np.maximum(f_sn.sum(axis=1), 0.0)
+    sn_act_norm = sn_reach / (sn_reach.max() + 1e-12) if k else sn_reach
+
+    total_node_inf = float(adj[:, logit_idx].sum().item()) if logit_idx else 0.0
+    total_sn_inf = float(sn_inf.sum())
+    inf_conservation = (
+        total_sn_inf / (total_node_inf + 1e-12) if abs(total_node_inf) > 1e-12 else 1.0
+    )
+
+    node_nonzero = float((adj != 0).sum().item())
+    sn_nonzero = float(np.count_nonzero(sn_adj))
+    edge_conservation = sn_nonzero / (node_nonzero + 1e-12) if node_nonzero > 0 else 1.0
+
+    dominant_paths = [
+        {"src": sn_names[i], "tgt": sn_names[j], "weight": float(sn_adj[i, j])}
+        for i in range(k)
+        for j in range(k)
+        if i != j and sn_adj[i, j] > 0
+    ]
+    dominant_paths.sort(key=lambda x: -x["weight"])
+    dominant_paths = dominant_paths[:20]
+
+    bottleneck_sns = [
+        {"sn": sn_names[i], "in_minus_out": float(sn_adj[:, i].sum() - sn_adj[i, :].sum())}
+        for i in range(k)
+    ]
+    bottleneck_sns.sort(key=lambda x: -abs(x["in_minus_out"]))
+
+    return {
+        "sn_names": sn_names,
+        "sn_adj": sn_adj,
+        "F_sn": f_sn,
+        "sn_reach": sn_reach,
+        "sn_act_norm": sn_act_norm,
+        "sn_inf": sn_inf,
+        "preservation": {"inf_conservation": inf_conservation, "edge_conservation": edge_conservation},
+        "orig_reach_total": float(node_nonzero),
+        "surr_reach_total": float(sn_nonzero),
+        "inf_conservation": inf_conservation,
+        "edge_conservation": edge_conservation,
+        "dominant_paths": dominant_paths,
+        "bottleneck_sns": bottleneck_sns,
+    }
