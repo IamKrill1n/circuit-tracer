@@ -30,11 +30,9 @@ from summarization.utils import _is_fixed
 METHOD_GRID: list[dict[str, str]] = [
     {
         "mean_method": mean_method,
-        "normalization": normalization,
         "similarity_mode": similarity_mode,
     }
     for mean_method in ("harm", "arith")
-    for normalization in ("cos", "cos_relu")
     for similarity_mode in ("node", "edge")
 ]
 
@@ -45,19 +43,16 @@ SUMMARY_COLUMNS = [
     "method",
     "method_family",
     "mean_method",
-    "normalization",
     "similarity_mode",
     "best_k",
     "auto_k_candidates",
     "n_supernodes",
     "total",
     "total_base",
-    "intra_sim",
-    "dag_safety",
-    "attr_balance",
-    "size_score",
+    "silhouette",
+    "silhouette_norm",
+    "dag_score",
     "n_middle",
-    "n_warnings",
     "inf_conservation",
     "edge_conservation",
     "within_cluster_weighted_edge_cosine_mean",
@@ -261,7 +256,6 @@ def _flatten_metrics(
     method: str,
     method_family: str,
     mean_method: str | None,
-    normalization: str | None,
     similarity_mode: str | None,
     best_k: int,
     auto_k_candidates: int,
@@ -282,19 +276,16 @@ def _flatten_metrics(
         "method": method,
         "method_family": method_family,
         "mean_method": mean_method,
-        "normalization": normalization,
         "similarity_mode": similarity_mode,
         "best_k": best_k,
         "auto_k_candidates": auto_k_candidates,
         "n_supernodes": len(final_supernodes),
         "total": base_score.get("total"),
         "total_base": base_score.get("total_base"),
-        "intra_sim": base_score.get("intra_sim"),
-        "dag_safety": base_score.get("dag_safety"),
-        "attr_balance": base_score.get("attr_balance"),
-        "size_score": base_score.get("size_score"),
+        "silhouette": base_score.get("silhouette"),
+        "silhouette_norm": base_score.get("silhouette_norm"),
+        "dag_score": base_score.get("dag_score"),
         "n_middle": base_score.get("n_middle"),
-        "n_warnings": base_score.get("n_warnings"),
         "inf_conservation": base_score.get("inf_conservation"),
         "edge_conservation": base_score.get("edge_conservation"),
         "within_cluster_weighted_edge_cosine_mean": weighted_edge_cosine_mean,
@@ -354,7 +345,6 @@ def _evaluate_existing_method(
         mean_method=method_config["mean_method"],
         mediation_penalty=mediation_penalty,
         similarity_mode=method_config["similarity_mode"],
-        normalization=method_config["normalization"],
     )
     best_k, sweep = find_best_k(
         prune_graph=prune_graph,
@@ -367,7 +357,6 @@ def _evaluate_existing_method(
         mean_method=method_config["mean_method"],
         mediation_penalty=mediation_penalty,
         similarity_mode=method_config["similarity_mode"],
-        normalization=method_config["normalization"],
         enforce_dag=enforce_dag,
         random_state=random_state,
         n_init=n_init,
@@ -387,7 +376,6 @@ def _evaluate_existing_method(
             mean_method=method_config["mean_method"],
             mediation_penalty=mediation_penalty,
             similarity_mode=method_config["similarity_mode"],
-            normalization=method_config["normalization"],
             enforce_dag=enforce_dag,
             random_state=random_state,
             n_init=n_init,
@@ -398,16 +386,11 @@ def _evaluate_existing_method(
             prune_graph,
             similarity,
             target_n_middle=max(1, len(_middle_indices(prune_graph))),
-            w_intra=(weights or {}).get("w_intra", 0.30),
-            w_dag=(weights or {}).get("w_dag", 0.25),
-            w_attr=(weights or {}).get("w_attr", 0.25),
-            w_size=(weights or {}).get("w_size", 0.20),
             enforce_dag=enforce_dag,
         )
 
     method_slug = (
-        f"ours-{method_config['mean_method']}-"
-        f"{method_config['normalization']}-{method_config['similarity_mode']}"
+        f"ours-{method_config['mean_method']}-{method_config['similarity_mode']}"
     )
     run_dir = output_dir / "runs" / graph_name / method_slug
     supernode_map_path = run_dir / "supernode_map.json"
@@ -440,7 +423,6 @@ def _evaluate_existing_method(
         method=method_slug,
         method_family="ours",
         mean_method=method_config["mean_method"],
-        normalization=method_config["normalization"],
         similarity_mode=method_config["similarity_mode"],
         best_k=best_k,
         auto_k_candidates=len(sweep),
@@ -523,7 +505,6 @@ def _evaluate_baseline(
         method=method,
         method_family="baseline",
         mean_method=None,
-        normalization=None,
         similarity_mode=None,
         best_k=best_k,
         auto_k_candidates=len(sweep),

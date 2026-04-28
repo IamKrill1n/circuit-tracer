@@ -73,18 +73,18 @@ def test_evaluation_pipeline_writes_summary_and_runs_all_methods(tmp_path) -> No
     result = run_evaluation(args)
 
     assert result["n_graphs"] == 1
-    assert result["n_runs"] == 10
+    assert result["n_runs"] == 6
     assert (output_dir / "summary.csv").exists()
     assert (output_dir / "results.json").exists()
     assert (output_dir / "manifest.json").exists()
 
     rows = json.loads((output_dir / "results.json").read_text(encoding="utf-8"))
-    assert len(rows) == 10
+    assert len(rows) == 6
     methods = {row["method"] for row in rows}
     assert "baseline-kmeans-node-profile" in methods
     assert "baseline-spectral-adjacency" in methods
-    assert "ours-harm-cos-node" in methods
-    assert "ours-arith-cos_relu-edge" in methods
+    assert "ours-harm-node" in methods
+    assert "ours-arith-edge" in methods
 
     for row in rows:
         assert "within_cluster_weighted_edge_cosine_mean" in row

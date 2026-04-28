@@ -58,7 +58,6 @@ def test_eigengap_analysis_outputs_expected_keys() -> None:
         mean_method="arith",
         mediation_penalty=0.1,
         similarity_mode="edge",
-        normalization="cos",
     )
     result = eigengap_analysis(similarity, prune_graph, max_k=5)
     assert {"eigengap_k", "eigenvalues", "gaps", "search_range"} <= set(result.keys())
@@ -72,7 +71,6 @@ def test_score_k_returns_base_metrics_only() -> None:
         mean_method="arith",
         mediation_penalty=0.1,
         similarity_mode="edge",
-        normalization="cos",
     )
     supernodes = [["1_0_0", "1_1_0"], ["2_0_0", "2_1_0"], ["E_0_0"], ["27_0_0"]]
     mapping = supernodes_to_mapping(prune_graph, supernodes)
@@ -85,7 +83,9 @@ def test_score_k_returns_base_metrics_only() -> None:
     )
     assert "F_phi" not in score
     assert "sigma_phi" not in score
-    assert "attr_balance" in score
+    assert "silhouette" in score
+    assert "silhouette_norm" in score
+    assert "dag_score" in score
     assert score["total"] >= 0.0
 
 
@@ -96,7 +96,6 @@ def test_find_best_k_returns_scored_results() -> None:
         mean_method="arith",
         mediation_penalty=0.1,
         similarity_mode="edge",
-        normalization="cos",
     )
     best_k, results = find_best_k(
         prune_graph,

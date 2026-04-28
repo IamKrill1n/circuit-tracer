@@ -228,7 +228,6 @@ def _cluster_from_prune(
             mean_method=mean_method,
             mediation_penalty=float(cluster_cfg["mediation_penalty"]),
             similarity_mode=cluster_cfg["similarity_mode"],
-            normalization=cluster_cfg["normalization"],
             enforce_dag=enforce_dag,
             random_state=int(cluster_cfg["random_state"]),
             n_init=int(cluster_cfg["n_init"]),
@@ -258,7 +257,6 @@ def _cluster_from_prune(
         mean_method=mean_method,
         mediation_penalty=float(cluster_cfg["mediation_penalty"]),
         similarity_mode=cluster_cfg["similarity_mode"],
-        normalization=cluster_cfg["normalization"],
         enforce_dag=enforce_dag,
         random_state=int(cluster_cfg["random_state"]),
         n_init=int(cluster_cfg["n_init"]),
@@ -495,15 +493,6 @@ def main() -> None:
                 "node influence and node relevance scores."
             ),
         )
-        normalization = st.selectbox(
-            "normalization",
-            options=["cos", "cos_relu"],
-            index=0,
-            help=(
-                "Normalization for similarity channels: **cos** keeps signed cosine values; "
-                "**cos_relu** clips negatives to 0 before combination."
-            ),
-        )
     with col_b:
         mean_method = st.selectbox(
             "mean_method",
@@ -617,7 +606,6 @@ def main() -> None:
         "mean_method": str(mean_method),
         "mediation_penalty": float(mediation_penalty),
         "similarity_mode": str(similarity_mode),
-        "normalization": str(normalization),
         "random_state": int(random_state),
         "n_init": int(n_init),
     }

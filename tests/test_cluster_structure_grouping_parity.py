@@ -50,14 +50,12 @@ def test_compute_similarity_uses_edge_channels() -> None:
         prune_graph,
         mean_method="arith",
         similarity_mode="edge",
-        normalization="cos",
         mediation_penalty=1.0,
     )
     sim_in = compute_similarity(
         prune_graph,
         mean_method="arith",
         similarity_mode="node",
-        normalization="cos",
         mediation_penalty=1.0,
     )
 
@@ -73,14 +71,12 @@ def test_mediation_penalty_reduces_similarity() -> None:
         prune_graph,
         mean_method="arith",
         similarity_mode="edge",
-        normalization="cos",
         mediation_penalty=1.0,
     )
     with_penalty = compute_similarity(
         prune_graph,
         mean_method="arith",
         similarity_mode="edge",
-        normalization="cos",
         mediation_penalty=0.1,
     )
     assert torch.all(with_penalty <= no_penalty + 1e-8)

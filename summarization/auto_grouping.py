@@ -4,6 +4,7 @@ from typing import Any, Literal
 
 import numpy as np
 from scipy.linalg import eigvalsh
+from sklearn.metrics import silhouette_score
 
 from summarization.cluster import (
     build_supernode_graph,
@@ -55,57 +56,120 @@ def eigengap_analysis(
     return {"eigengap_k": k_hat, "eigenvalues": evals, "gaps": gaps, "search_range": (k_min, k_max)}
 
 
-def _check_dag_safety(final_supernodes: dict[str, list[str]]) -> list[tuple[str, str]]:
-    names = list(final_supernodes.keys())
-    layer_ranges = {}
-    for sn, members in final_supernodes.items():
-        layers = [int(m.split("_")[0]) for m in members if "_" in m and m.split("_")[0].isdigit()]
-        if not layers:
+def _layer_range_from_members(members: list[str]) -> tuple[int, int] | None:
+    layers: list[int] = []
+    for m in members:
+        if "_" not in m:
             continue
-        layer_ranges[sn] = (min(layers), max(layers))
-    warns = []
-    for i, a in enumerate(names):
-        if a not in layer_ranges:
-            continue
-        a_lo, a_hi = layer_ranges[a]
-        for b in names[i + 1 :]:
-            if b not in layer_ranges:
-                continue
-            b_lo, b_hi = layer_ranges[b]
-            interleave = (a_lo < b_lo < a_hi < b_hi) or (b_lo < a_lo < b_hi < a_hi)
-            if interleave:
-                warns.append((a, b))
-    return warns
+        head = m.split("_")[0]
+        if head.isdigit():
+            layers.append(int(head))
+    if not layers:
+        return None
+    return min(layers), max(layers)
 
 
-def _evaluate_grouping(
-    final_supernodes: dict[str, list[str]],
+def _interleaving_pairs(layer_ranges: dict[str, tuple[int, int]]) -> set[frozenset[str]]:
+    pairs: set[frozenset[str]] = set()
+    items = list(layer_ranges.items())
+    for i, (a, (a_lo, a_hi)) in enumerate(items):
+        for b, (b_lo, b_hi) in items[i + 1 :]:
+            if (a_lo < b_lo < a_hi < b_hi) or (b_lo < a_lo < b_hi < a_hi):
+                pairs.add(frozenset((a, b)))
+    return pairs
+
+
+def _silhouette_over_middle(
+    similarity: np.ndarray,
     prune_graph: PruneGraph,
-    similarity: Any,
-) -> dict[str, dict[str, float]]:
-    s = similarity
+    final_supernodes: dict[str, list[str]],
+) -> tuple[float, float]:
+    """
+    Mean silhouette score over middle nodes, plus its [0, 1]-normalized form.
+
+    Returns (silhouette_raw, silhouette_norm) where silhouette_norm = (sil + 1) / 2.
+    Returns (0.0, 0.5) when silhouette is undefined (single cluster, all singletons,
+    or no middle nodes assigned).
+    """
     ids = prune_graph.kept_ids
-    idx = {nid: i for i, nid in enumerate(ids)}
-    out: dict[str, dict[str, float]] = {}
+    id_to_idx = {nid: i for i, nid in enumerate(ids)}
+
+    nid_to_label: dict[str, int] = {}
+    label_idx = 0
     for sn, members in final_supernodes.items():
-        member_idx = [idx[n] for n in members if n in idx]
-        if not member_idx:
+        if "EMB" in sn or "LOGIT" in sn:
             continue
-        if len(member_idx) == 1:
-            intra_vals = [1.0]
-        else:
-            block = s[np.ix_(member_idx, member_idx)] if isinstance(s, np.ndarray) else s[member_idx][:, member_idx].detach().cpu().numpy()
-            upper = block[np.triu_indices(len(member_idx), k=1)]
-            intra_vals = upper.tolist() if upper.size else [1.0]
-        layers = [int(n.split("_")[0]) for n in members if "_" in n and n.split("_")[0].isdigit()]
-        out[sn] = {
-            "n": float(len(members)),
-            "intra_sim_mean": float(np.mean(intra_vals)),
-            "intra_sim_min": float(np.min(intra_vals)),
-            "layer_lo": float(min(layers) if layers else -1),
-            "layer_hi": float(max(layers) if layers else -1),
-        }
-    return out
+        assigned = False
+        for nid in members:
+            if nid in id_to_idx:
+                nid_to_label[nid] = label_idx
+                assigned = True
+        if assigned:
+            label_idx += 1
+
+    if not nid_to_label:
+        return 0.0, 0.5
+
+    node_indices = [id_to_idx[nid] for nid in nid_to_label]
+    labels_arr = np.fromiter(
+        (nid_to_label[ids[i]] for i in node_indices),
+        dtype=np.int64,
+        count=len(node_indices),
+    )
+    n_distinct = int(len(set(labels_arr.tolist())))
+    if n_distinct < 2 or n_distinct >= len(labels_arr):
+        return 0.0, 0.5
+
+    s_block = similarity[np.ix_(node_indices, node_indices)]
+    s_block = (s_block + s_block.T) / 2.0
+    s_block = np.clip(s_block, 0.0, 1.0)
+    distance = 1.0 - s_block
+    np.fill_diagonal(distance, 0.0)
+    sil = float(silhouette_score(distance, labels_arr, metric="precomputed"))
+    return sil, float((sil + 1.0) / 2.0)
+
+
+def _dag_interleave_edge_fraction(
+    sn_adj: np.ndarray,
+    sn_names: list[str],
+    final_supernodes: dict[str, list[str]],
+) -> float:
+    """
+    Edge-weighted DAG-safety score in [0, 1]:
+
+        1 - (sum of |sn_adj| weight between layer-interleaving SN pairs)
+            / (sum of all |sn_adj| weight)
+
+    Higher is better; 1.0 means no flow occurs between supernode pairs whose
+    layer ranges interleave.
+    """
+    layer_ranges: dict[str, tuple[int, int]] = {}
+    for sn, members in final_supernodes.items():
+        if "EMB" in sn or "LOGIT" in sn:
+            continue
+        rng = _layer_range_from_members(members)
+        if rng is not None:
+            layer_ranges[sn] = rng
+
+    abs_adj = np.abs(sn_adj)
+    total_w = float(abs_adj.sum())
+    if total_w <= 1e-12:
+        return 1.0
+
+    pairs = _interleaving_pairs(layer_ranges)
+    if not pairs:
+        return 1.0
+
+    name_to_idx = {name: idx for idx, name in enumerate(sn_names)}
+    violation_w = 0.0
+    for pair in pairs:
+        a, b = tuple(pair)
+        if a not in name_to_idx or b not in name_to_idx:
+            continue
+        i, j = name_to_idx[a], name_to_idx[b]
+        violation_w += float(abs_adj[i, j] + abs_adj[j, i])
+
+    return float(max(0.0, 1.0 - violation_w / (total_w + 1e-12)))
 
 
 def score_k(
@@ -113,84 +177,68 @@ def score_k(
     prune_graph: PruneGraph,
     similarity: Any,
     target_n_middle: int,
-    w_intra: float = 0.30,
-    w_dag: float = 0.25,
-    w_attr: float = 0.25,
-    w_size: float = 0.20,
     enforce_dag: bool = False,
+    **_legacy_weight_kwargs: Any,
 ) -> dict[str, Any]:
+    """
+    Score a clustering using two complementary metrics:
+
+      total = silhouette_norm * dag_score
+
+    where:
+      - silhouette_norm = (mean silhouette over middle nodes + 1) / 2, in [0, 1].
+      - dag_score = 1 - (interleaving-edge weight / total SN edge weight), in [0, 1].
+
+    The legacy components (intra_sim, attr_balance, size_score, dag_safety) are no
+    longer computed. Legacy weight kwargs (`w_intra`, `w_dag`, `w_attr`, `w_size`)
+    are accepted for backward compatibility but ignored.
+    """
+    del target_n_middle
+    del _legacy_weight_kwargs
+
     if isinstance(final_supernodes, list):
         final_supernodes = supernodes_to_mapping(prune_graph, final_supernodes)
 
-    stats = _evaluate_grouping(final_supernodes, prune_graph, similarity)
-    dag_warnings = _check_dag_safety(final_supernodes)
     sng = build_supernode_graph(prune_graph, final_supernodes, enforce_dag=enforce_dag)
-    middle = {sn: st for sn, st in stats.items() if "EMB" not in sn and "LOGIT" not in sn}
-    n_middle = len(middle)
+    middle_keys = [sn for sn in final_supernodes if "EMB" not in sn and "LOGIT" not in sn]
+    n_middle = len(middle_keys)
+
     if n_middle == 0:
         return {
             "total": 0.0,
-            "intra_sim": 0.0,
-            "dag_safety": 0.0,
-            "attr_balance": 0.0,
-            "size_score": 0.0,
+            "total_base": 0.0,
+            "silhouette": 0.0,
+            "silhouette_norm": 0.0,
+            "dag_score": 1.0,
             "n_middle": 0,
-            "n_warnings": 0,
-            "inf_conservation": 0.0,
-            "edge_conservation": 0.0,
+            "inf_conservation": float(sng.get("inf_conservation", 0.0)),
+            "edge_conservation": float(sng.get("edge_conservation", 0.0)),
             "details": {},
         }
 
-    sizes = [int(st["n"]) for st in middle.values()]
-    total_n = max(1, sum(sizes))
-    intra_raw = sum(st["intra_sim_mean"] * int(st["n"]) / total_n for st in middle.values())
-    s = np.asarray(similarity.detach().cpu().numpy() if hasattr(similarity, "detach") else similarity)
-    mid_idx = _middle_indices(prune_graph)
-    s_mid = s[np.ix_(mid_idx, mid_idx)]
-    upper = s_mid[np.triu_indices(len(mid_idx), k=1)]
-    global_mean = float(upper.mean()) + 1e-8 if upper.size else 1.0
-    intra = min(1.0, intra_raw / (2.0 * global_mean))
-    weak = sum(1 for st in middle.values() if st["intra_sim_min"] < 0.3)
-    intra *= 1.0 - 0.5 * weak / max(n_middle, 1)
-
-    pairs = n_middle * (n_middle - 1) / 2
-    dag_safety = 1.0 - len(dag_warnings) / max(pairs, 1)
-
-    sn_names = sng["sn_names"]
-    sn_inf = sng["sn_inf"]
-    attr_vals = np.array(
-        [max(float(sn_inf[sn_names.index(sn)]), 0.0) for sn in middle if sn in sn_names],
+    s = np.asarray(
+        similarity.detach().cpu().numpy() if hasattr(similarity, "detach") else similarity,
         dtype=np.float64,
     )
-    probs = attr_vals / (attr_vals.sum() + 1e-8)
-    probs = probs[probs > 1e-10]
-    if len(probs) > 1:
-        entropy = -np.sum(probs * np.log(probs + 1e-10))
-        attr_balance = float(entropy / np.log(len(probs)))
-    else:
-        attr_balance = 0.0
+    sil_raw, sil_norm = _silhouette_over_middle(s, prune_graph, final_supernodes)
 
-    ideal_k = max(2, int(np.sqrt(target_n_middle)))
-    dev = abs(n_middle - ideal_k) / max(target_n_middle, 1)
-    size_score = max(0.0, 1.0 - dev)
+    sn_names = list(sng["sn_names"])
+    sn_adj = np.asarray(sng["sn_adj"], dtype=np.float64)
+    dag_score = _dag_interleave_edge_fraction(sn_adj, sn_names, final_supernodes)
 
-    total = w_intra * intra + w_dag * dag_safety + w_attr * attr_balance + w_size * size_score
+    total = sil_norm * dag_score
 
-    out = {
+    return {
         "total": float(total),
         "total_base": float(total),
-        "intra_sim": float(intra),
-        "dag_safety": float(dag_safety),
-        "flow_balance": float(attr_balance),
-        "attr_balance": float(attr_balance),
-        "size_score": float(size_score),
+        "silhouette": float(sil_raw),
+        "silhouette_norm": float(sil_norm),
+        "dag_score": float(dag_score),
         "n_middle": int(n_middle),
-        "n_warnings": int(len(dag_warnings)),
         "inf_conservation": float(sng["inf_conservation"]),
         "edge_conservation": float(sng["edge_conservation"]),
-        "details": {sn: {"intra_sim": st["intra_sim_mean"], "n": int(st["n"])} for sn, st in middle.items()},
+        "details": {sn: {"n": int(len(final_supernodes[sn]))} for sn in middle_keys},
     }
-    return out
 
 
 def find_best_k(
@@ -204,7 +252,6 @@ def find_best_k(
     mean_method: Literal["geo", "harm", "arith"] = "arith",
     mediation_penalty: float = 0.1,
     similarity_mode: Literal["edge", "node"] = "edge",
-    normalization: Literal["cos", "cos_relu"] = "cos",
     enforce_dag: bool = False,
     random_state: int = 42,
     n_init: int = 20,
@@ -221,7 +268,6 @@ def find_best_k(
             mean_method=mean_method,
             mediation_penalty=mediation_penalty,
             similarity_mode=similarity_mode,
-            normalization=normalization,
         )
     s_np = np.asarray(sim.detach().cpu().numpy() if hasattr(sim, "detach") else sim)
     n_middle = len(_middle_indices(prune_graph))
@@ -236,7 +282,7 @@ def find_best_k(
     if k_min > k_max:
         k_min = k_max
 
-    w = weights or {}
+    del weights  # legacy weight kwargs are no longer used by score_k
     results: dict[int, dict[str, Any]] = {}
     for k in range(k_min, k_max + 1):
         supernodes = cluster_graph(
@@ -247,7 +293,6 @@ def find_best_k(
             mean_method=mean_method,
             mediation_penalty=mediation_penalty,
             similarity_mode=similarity_mode,
-            normalization=normalization,
             enforce_dag=enforce_dag,
             random_state=random_state,
             n_init=n_init,
@@ -258,10 +303,6 @@ def find_best_k(
             prune_graph,
             s_np,
             target_n_middle=n_middle,
-            w_intra=w.get("w_intra", 0.30),
-            w_dag=w.get("w_dag", 0.25),
-            w_attr=w.get("w_attr", 0.25),
-            w_size=w.get("w_size", 0.20),
             enforce_dag=enforce_dag,
         )
         sc["final_supernodes"] = final_supernodes
@@ -287,6 +328,7 @@ def find_best_k_for_clusterer(
     Auto-select k for an arbitrary clusterer using the same scoring objective
     as `find_best_k`.
     """
+    del weights  # legacy weight kwargs are no longer used by score_k
     s_np = np.asarray(similarity.detach().cpu().numpy() if hasattr(similarity, "detach") else similarity)
     n_middle = len(_middle_indices(prune_graph))
     target_n_middle = max(1, n_middle)
@@ -299,10 +341,6 @@ def find_best_k_for_clusterer(
             prune_graph,
             s_np,
             target_n_middle=target_n_middle,
-            w_intra=(weights or {}).get("w_intra", 0.30),
-            w_dag=(weights or {}).get("w_dag", 0.25),
-            w_attr=(weights or {}).get("w_attr", 0.25),
-            w_size=(weights or {}).get("w_size", 0.20),
             enforce_dag=enforce_dag,
         )
         result["final_supernodes"] = mapping
@@ -323,10 +361,6 @@ def find_best_k_for_clusterer(
             prune_graph,
             s_np,
             target_n_middle=target_n_middle,
-            w_intra=(weights or {}).get("w_intra", 0.30),
-            w_dag=(weights or {}).get("w_dag", 0.25),
-            w_attr=(weights or {}).get("w_attr", 0.25),
-            w_size=(weights or {}).get("w_size", 0.20),
             enforce_dag=enforce_dag,
         )
         result["final_supernodes"] = mapping

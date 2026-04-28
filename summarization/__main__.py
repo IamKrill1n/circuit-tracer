@@ -146,7 +146,6 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             mean_method=args.mean_method,
             mediation_penalty=args.mediation_penalty,
             similarity_mode=args.similarity_mode,
-            normalization=args.normalization,
             enforce_dag=args.enforce_dag,
             random_state=args.random_state,
             n_init=args.n_init,
@@ -162,7 +161,6 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         mean_method=args.mean_method,
         mediation_penalty=args.mediation_penalty,
         similarity_mode=args.similarity_mode,
-        normalization=args.normalization,
         enforce_dag=args.enforce_dag,
         random_state=args.random_state,
         n_init=args.n_init,
@@ -285,13 +283,6 @@ def build_parser() -> argparse.ArgumentParser:
             "'edge' uses edge influence/relevance channels; "
             "'node' uses node influence/relevance pairwise weighting."
         ),
-    )
-    parser.add_argument(
-        "--normalization",
-        type=str,
-        choices=["cos", "cos_relu"],
-        default="cos",
-        help="Similarity normalization method for output/input structure matrices.",
     )
     parser.add_argument("--enforce-dag", action="store_true")
     parser.add_argument("--random-state", type=int, default=42)

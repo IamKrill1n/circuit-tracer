@@ -117,13 +117,15 @@ def compute_similarity(
     mean_method: Literal["geo", "harm", "arith"] = "arith",
     mediation_penalty: float = 0.1,
     similarity_mode: Literal["edge", "node"] = "node",
-    normalization: Literal['cos', 'cos_relu'] = 'cos_relu',
 ) -> torch.Tensor:
     """
     Compute node similarity from weighted shared out/in structure.
 
     - `edge` mode uses edge influence/relevance channels (current behavior).
     - `node` mode applies node influence/relevance pairwise weights.
+
+    Output/input cosine similarities are always clamped to ``[0, 1]`` before
+    being combined.
     """
     kept_ids = prune_graph.kept_ids
     attr = prune_graph.attr
@@ -139,26 +141,20 @@ def compute_similarity(
         n_nodes = adj.shape[0]
         node_inf = _normalize_node_weights(prune_graph.node_influence, n_nodes, adj.device)
         node_rel = _normalize_node_weights(prune_graph.node_relevance, n_nodes, adj.device)
-        s_out= adj @ torch.diag(node_inf) @ adj.T
-        s_in= adj.T @ torch.diag(node_rel) @ adj
+        s_out = adj @ torch.diag(node_inf) @ adj.T
+        s_in = adj.T @ torch.diag(node_rel) @ adj
     else:
         raise ValueError("Unsupported similarity_mode. Expected 'edge' or 'node'.")
 
-    # s_out_cos = _weighted_row_cosine(weighted_out)
-    # s_in_cos = _weighted_row_cosine(weighted_in)
-    if normalization == 'cos':
-        s_out_cos = _cosine_norm(s_out)
-        s_in_cos = _cosine_norm(s_in)
-    elif normalization == 'cos_relu':
-        s_out_cos = torch.relu(_cosine_norm(s_out))
-        s_in_cos = torch.relu(_cosine_norm(s_in))
-    else:
-        raise ValueError(f"Unsupported normalization={normalization!r}.")
+    s_out_cos = _cosine_norm(s_out).clamp(0.0, 1.0)
+    s_in_cos = _cosine_norm(s_in).clamp(0.0, 1.0)
 
     if mean_method == "geo":
         s = (s_out_cos * s_in_cos).sqrt()
     elif mean_method == "harm":
-        s = 2.0 / (1.0 / s_out_cos + 1.0 / s_in_cos)
+        # Equivalent to 2 / (1/a + 1/b) but safe when a or b is exactly 0
+        # (cosine values are clamped to [0, 1] above, so zeros are common).
+        s = (2.0 * s_out_cos * s_in_cos) / (s_out_cos + s_in_cos + 1e-12)
     elif mean_method == "arith":
         s = (s_out_cos + s_in_cos) / 2.0
     else:
@@ -302,7 +298,6 @@ def cluster_graph(
     mean_method: Literal["geo", "harm", "arith"] = "arith",
     mediation_penalty: float = 0.1,
     similarity_mode: Literal["edge", "node"] = "edge",
-    normalization: Literal["cos", "cos_relu"] = "cos",
     enforce_dag: bool = True,
     random_state: int = 42,
     n_init: int = 20,
@@ -317,7 +312,7 @@ def cluster_graph(
         max_sn: Optional hard cap on number of middle supernodes.
         mean_method: Mean used to combine output/input cosine similarities.
         mediation_penalty: Penalty factor for mediated non-adjacent pairs.
-        normalization: Similarity normalization mode (`cos` or `cos_relu`).
+        similarity_mode: `edge` or `node` similarity construction.
         random_state: Random seed for spectral clustering k-means init.
         n_init: Number of k-means runs for `SpectralClustering(assign_labels="kmeans")`.
 
@@ -336,7 +331,6 @@ def cluster_graph(
         mean_method=mean_method,
         mediation_penalty=mediation_penalty,
         similarity_mode=similarity_mode,
-        normalization=normalization,
     )
 
     middle_idx = [i for i, nid in enumerate(kept_ids) if not _is_fixed(attr, nid)]
