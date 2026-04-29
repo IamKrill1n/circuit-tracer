@@ -433,7 +433,7 @@ def compute_graph_scores(graph: Graph) -> tuple[float, float]:
     replacement_score = token_influence / (token_influence + error_influence)
 
     non_error_fractions = 1 - normalized_matrix[:, error_start:error_end].sum(dim=-1)
-    output_influence = node_influence + logit_weights
+    output_influence = node_influence # + logit_weights
     completeness_score = (non_error_fractions * output_influence).sum() / output_influence.sum()
 
     return replacement_score.item(), completeness_score.item()

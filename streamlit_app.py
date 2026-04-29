@@ -16,6 +16,7 @@ from summarization.cluster import build_supernode_graph, cluster_graph, supernod
 from summarization.cluster_viz import supernode_graph_figure
 from summarization.flow_analysis import flow_faithfulness_report
 from summarization.prune import PruneGraph, load_prune_graph, prune_graph_pipeline, save_prune_graph
+from summarization.token_attribution import get_token_attribution_from_graph
 
 FULL_GRAPH_MODE = "Existing full graph JSON"
 PRUNED_GRAPH_MODE = "Existing pruned graph (.pt)"
@@ -34,20 +35,36 @@ def _list_files(paths: list[Path], suffix: str) -> list[Path]:
     return sorted(files)
 
 
+def _list_pruned_graphs(root: Path) -> list[Path]:
+    """List all pruned-graph .pt files under `demos/subgraph` recursively.
+
+    Excludes the `cache/` subtree (auto-generated streamlit cache) and any
+    companion `*_token_weights.pt` files which are not PruneGraph payloads.
+    """
+    if not root.exists():
+        return []
+    found: list[Path] = []
+    for path in sorted(root.rglob("*.pt")):
+        if not path.is_file():
+            continue
+        try:
+            rel_parts = path.relative_to(root).parts
+        except ValueError:
+            rel_parts = path.parts
+        if rel_parts and rel_parts[0] == "cache":
+            continue
+        if path.name.endswith("_token_weights.pt"):
+            continue
+        found.append(path)
+    return found
+
+
 def _format_path_for_ui(path: Path) -> str:
     root = _repo_root()
     try:
         return str(path.relative_to(root))
     except ValueError:
         return str(path)
-
-
-def _parse_token_weights(raw: str) -> list[float] | None:
-    cleaned = raw.strip()
-    if not cleaned:
-        return None
-    items = [part.strip() for part in cleaned.split(",") if part.strip()]
-    return [float(item) for item in items]
 
 
 def _slugify(text: str) -> str:
@@ -65,12 +82,16 @@ def _prune_cache_path(repo_root: Path, input_path: Path, prune_cfg: dict[str, An
         "input_path": rel_input,
         "logit_weights": prune_cfg["logit_weights"],
         "token_weights": prune_cfg["token_weights"],
-        "node_threshold": float(prune_cfg["node_threshold"]),
-        "edge_threshold": float(prune_cfg["edge_threshold"]),
+        "node_influence_threshold": float(prune_cfg["node_influence_threshold"]),
+        "node_relevance_threshold": float(prune_cfg["node_relevance_threshold"]),
+        "edge_influence_threshold": float(prune_cfg["edge_influence_threshold"]),
+        "edge_relevance_threshold": float(prune_cfg["edge_relevance_threshold"]),
         "keep_all_tokens_and_logits": bool(prune_cfg["keep_all_tokens_and_logits"]),
         "filter_act_density": bool(prune_cfg["filter_act_density"]),
         "act_density_lb": float(prune_cfg["act_density_lb"]),
         "act_density_ub": float(prune_cfg["act_density_ub"]),
+        "token_attribution_model": prune_cfg.get("token_attribution_model"),
+        "token_attribution_normalize": prune_cfg.get("token_attribution_normalize"),
     }
     key_raw = json.dumps(key_payload, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(key_raw.encode("utf-8")).hexdigest()[:16]
@@ -159,14 +180,38 @@ def _load_prune_graph(input_mode: str, input_path: Path, prune_cfg: dict[str, An
             json_path=str(input_path),
             logit_weights=prune_cfg["logit_weights"],
             token_weights=prune_cfg["token_weights"],
-            node_threshold=prune_cfg["node_threshold"],
-            edge_threshold=prune_cfg["edge_threshold"],
+            node_influence_threshold=prune_cfg["node_influence_threshold"],
+            node_relevance_threshold=prune_cfg["node_relevance_threshold"],
+            edge_influence_threshold=prune_cfg["edge_influence_threshold"],
+            edge_relevance_threshold=prune_cfg["edge_relevance_threshold"],
             keep_all_tokens_and_logits=prune_cfg["keep_all_tokens_and_logits"],
             filter_act_density=prune_cfg["filter_act_density"],
             act_density_lb=prune_cfg["act_density_lb"],
             act_density_ub=prune_cfg["act_density_ub"],
         )
     return load_prune_graph(str(input_path))
+
+
+def _resolve_device(device_flag: str) -> str:
+    if device_flag == "auto":
+        try:
+            import torch
+
+            return "cuda" if torch.cuda.is_available() else "cpu"
+        except Exception:  # noqa: BLE001
+            return "cpu"
+    return device_flag
+
+
+def _compute_shap_token_weights(input_path: Path, prune_cfg: dict[str, Any]) -> list[float]:
+    device = _resolve_device(str(prune_cfg.get("token_attribution_device", "auto")))
+    weights = get_token_attribution_from_graph(
+        graph_path=input_path,
+        model_name=str(prune_cfg["token_attribution_model"]),
+        normalize_method=prune_cfg["token_attribution_normalize"],
+        device=device,
+    )
+    return [float(value) for value in weights.detach().cpu().tolist()]
 
 
 def _load_or_build_prune_graph(
@@ -182,12 +227,15 @@ def _load_or_build_prune_graph(
             "source": "provided_pt",
         }
 
+    prune_cfg["token_weights"] = _compute_shap_token_weights(input_path, prune_cfg)
+
     cached_path = _prune_cache_path(repo_root, input_path, prune_cfg)
     if cached_path.exists():
         return load_prune_graph(str(cached_path)), {
             "cache_hit": True,
             "prune_graph_path": str(cached_path),
             "source": "cache",
+            "token_weights": prune_cfg["token_weights"],
         }
 
     prune_graph = _load_prune_graph(input_mode, input_path, prune_cfg)
@@ -196,6 +244,7 @@ def _load_or_build_prune_graph(
         "cache_hit": False,
         "prune_graph_path": str(cached_path),
         "source": "fresh",
+        "token_weights": prune_cfg["token_weights"],
     }
 
 
@@ -284,15 +333,15 @@ def main() -> None:
         ],
         ".json",
     )
-    default_pruned_files = _list_files([repo_root / "demos" / "subgraph"], ".pt")
+    default_pruned_files = _list_pruned_graphs(repo_root / "demos" / "subgraph")
 
     input_mode = st.radio(
         "Input graph type",
         options=[FULL_GRAPH_MODE, PRUNED_GRAPH_MODE],
         horizontal=True,
         help=(
-            "Full JSON: run the pruning pipeline from scratch, then cluster. "
-            "Pruned .pt: load a saved `PruneGraph` (pruning controls below are for reference / reproduction only)."
+            "Full JSON: run the pruning pipeline (with SHAP+sparsemax token weights), then cluster. "
+            "Pruned .pt: load a saved `PruneGraph` directly."
         ),
     )
 
@@ -344,104 +393,119 @@ def main() -> None:
     prune_cfg: dict[str, Any] = {
         "logit_weights": "target",
         "token_weights": None,
-        "node_threshold": 0.8,
-        "edge_threshold": 0.98,
+        "node_influence_threshold": 0.8,
+        "node_relevance_threshold": 0.8,
+        "edge_influence_threshold": 0.98,
+        "edge_relevance_threshold": 0.98,
         "keep_all_tokens_and_logits": True,
         "filter_act_density": False,
         "act_density_lb": 2e-5,
         "act_density_ub": 0.1,
+        "use_shap_token_weights": True,
+        "token_attribution_model": "google/gemma-2-2b",
+        "token_attribution_normalize": "sparsemax",
+        "token_attribution_device": "auto",
     }
 
-    prune_expander_title = (
-        "Pruning parameters (full JSON only)"
-        if input_mode == FULL_GRAPH_MODE
-        else "Pruning parameters (optional overrides for .pt — not applied to loaded graph)"
-    )
-    with st.expander(prune_expander_title, expanded=input_mode == FULL_GRAPH_MODE):
-        prune_col_a, prune_col_b, prune_col_c = st.columns(3)
-        with prune_col_a:
-            prune_cfg["logit_weights"] = st.selectbox(
-                "logit_weights",
-                options=["target", "probs"],
-                help=(
-                    "How logit nodes seed backward influence: **target** puts mass on the target-logit "
-                    "node(s); **probs** uses each logit node’s `token_prob` from graph attributes."
-                ),
-            )
-            prune_cfg["node_threshold"] = st.slider(
-                "node_threshold",
-                min_value=0.0,
-                max_value=1.0,
-                value=0.8,
-                step=0.01,
-                help=(
-                    "Quantile-style cutoff on combined node scores (influence + relevance): "
-                    "keep nodes at or above the threshold implied by this value in [0, 1]."
-                ),
-            )
-            prune_cfg["edge_threshold"] = st.slider(
-                "edge_threshold",
-                min_value=0.0,
-                max_value=1.0,
-                value=0.98,
-                step=0.01,
-                help="Same idea as node threshold but for edge influence/relevance when building the edge mask.",
-            )
-        with prune_col_b:
-            st.caption(
-                "Node and edge thresholds are applied as paired influence/relevance cutoffs "
-                "inside `prune_graph_pipeline`."
-            )
-        with prune_col_c:
-            prune_cfg["keep_all_tokens_and_logits"] = st.checkbox(
-                "keep_all_tokens_and_logits",
-                value=True,
-                help=(
-                    "If true, every embedding and every logit node is forced into the kept set regardless "
-                    "of score; if false, only target logit(s) are forced and other boundaries follow the mask."
-                ),
-            )
-            prune_cfg["filter_act_density"] = st.checkbox(
-                "filter_act_density",
-                value=False,
-                help=(
-                    "After pruning, optionally drop cross-layer transcoder features whose Neuronpedia "
-                    "`frac_nonzero` lies outside [act_density_lb, act_density_ub] (requires live API calls)."
-                ),
-            )
-            prune_cfg["act_density_lb"] = st.number_input(
-                "act_density_lb",
-                value=2e-5,
-                format="%.8f",
-                help="Lower bound on activation density when filter_act_density is enabled.",
-            )
-            prune_cfg["act_density_ub"] = st.number_input(
-                "act_density_ub",
-                value=0.1,
-                format="%.6f",
-                help="Upper bound on activation density when filter_act_density is enabled.",
-            )
+    if input_mode == FULL_GRAPH_MODE:
+        with st.expander("Pruning parameters", expanded=True):
+            prune_col_a, prune_col_b = st.columns(2)
+            with prune_col_a:
+                prune_cfg["logit_weights"] = st.selectbox(
+                    "logit_weights",
+                    options=["target", "probs"],
+                    help=(
+                        "How logit nodes seed backward influence: **target** puts mass on the target-logit "
+                        "node(s); **probs** uses each logit node’s `token_prob` from graph attributes."
+                    ),
+                )
+                prune_cfg["node_influence_threshold"] = st.slider(
+                    "node_influence_threshold",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=0.8,
+                    step=0.01,
+                    help="Quantile-style cutoff on node *influence* (target-logit backward flow).",
+                )
+                prune_cfg["node_relevance_threshold"] = st.slider(
+                    "node_relevance_threshold",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=0.8,
+                    step=0.01,
+                    help="Quantile-style cutoff on node *relevance* (token forward flow).",
+                )
+                prune_cfg["edge_influence_threshold"] = st.slider(
+                    "edge_influence_threshold",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=0.98,
+                    step=0.01,
+                    help="Quantile-style cutoff on edge *influence*.",
+                )
+                prune_cfg["edge_relevance_threshold"] = st.slider(
+                    "edge_relevance_threshold",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=0.98,
+                    step=0.01,
+                    help="Quantile-style cutoff on edge *relevance*.",
+                )
+            with prune_col_b:
+                prune_cfg["keep_all_tokens_and_logits"] = st.checkbox(
+                    "keep_all_tokens_and_logits",
+                    value=True,
+                    help=(
+                        "If true, every embedding and every logit node is forced into the kept set regardless "
+                        "of score; if false, only target logit(s) are forced."
+                    ),
+                )
+                prune_cfg["filter_act_density"] = st.checkbox(
+                    "filter_act_density",
+                    value=False,
+                    help=(
+                        "After pruning, optionally drop cross-layer transcoder features whose Neuronpedia "
+                        "`frac_nonzero` lies outside [act_density_lb, act_density_ub]."
+                    ),
+                )
+                prune_cfg["act_density_lb"] = st.number_input(
+                    "act_density_lb",
+                    value=2e-5,
+                    format="%.8f",
+                    help="Lower bound on activation density.",
+                )
+                prune_cfg["act_density_ub"] = st.number_input(
+                    "act_density_ub",
+                    value=0.1,
+                    format="%.6f",
+                    help="Upper bound on activation density.",
+                )
 
-        token_weights_raw = st.text_area(
-            "token_weights (comma-separated floats, optional)",
-            value="",
-            height=80,
-            placeholder="0, 0, 0.33, 0, 0.67",
-            help=(
-                "Optional per-embedding weights for forward relevance seeding. Length must match the number "
-                "of embedding nodes; if empty, embeddings get uniform weights."
-            ),
-        )
-        try:
-            prune_cfg["token_weights"] = _parse_token_weights(token_weights_raw)
-        except ValueError as exc:
-            st.error(f"Invalid token_weights: {exc}")
-            st.stop()
-        if input_mode == PRUNED_GRAPH_MODE:
-            st.caption(
-                "These values match `prune_graph_pipeline` so you can reproduce pruning; "
-                "they are not re-applied when loading an existing `.pt` file."
+            st.markdown(
+                "**Token weights** are computed from SHAP token attribution on the target-logit, "
+                "normalized via `sparsemax` (see `summarization.token_attribution`)."
             )
+            tok_col_a, tok_col_b, tok_col_c = st.columns(3)
+            with tok_col_a:
+                prune_cfg["token_attribution_model"] = st.text_input(
+                    "token_attribution_model",
+                    value="google/gemma-2-2b",
+                    help="HuggingFace model name used by SHAP to score per-token contribution.",
+                )
+            with tok_col_b:
+                prune_cfg["token_attribution_normalize"] = st.selectbox(
+                    "token_attribution_normalize",
+                    options=["sparsemax", "softmax"],
+                    index=0,
+                    help="Normalization applied to raw SHAP scores before pruning.",
+                )
+            with tok_col_c:
+                prune_cfg["token_attribution_device"] = st.selectbox(
+                    "token_attribution_device",
+                    options=["auto", "cpu", "cuda"],
+                    index=0,
+                    help="Device used to run the SHAP explainer.",
+                )
 
     st.subheader("Clustering parameters")
     col_a, col_b, col_c = st.columns(3)
@@ -699,6 +763,11 @@ def main() -> None:
     prune_graph_path = prune_meta.get("prune_graph_path")
     if prune_graph_path:
         st.caption(f"Pruned graph source: `{prune_graph_path}`")
+
+    token_weights_used = prune_meta.get("token_weights")
+    if token_weights_used:
+        formatted = ", ".join(f"{w:.3f}" for w in token_weights_used)
+        st.caption(f"SHAP+sparsemax token weights: [{formatted}]")
 
     if run_meta.get("auto_k"):
         tk_auto = run_meta.get("target_k_auto")
