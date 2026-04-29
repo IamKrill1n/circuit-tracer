@@ -2,40 +2,14 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Any
 
 import torch
 
 from summarization.prune import LogitWeightMode
 from summarization.prune import prune_graph_pipeline, save_prune_graph
-from summarization.token_attribution import format_prompt
-from summarization.utils import _build_index_sets, get_data_from_json
+from summarization.token_attribution import get_token_attribution_from_graph
 
 DEFAULT_SOURCE_SETS = ("clt-hp", "gemmascope-transcoder-16k")
-
-
-def _normalize_scores(values: torch.Tensor, method: str) -> torch.Tensor:
-    if method == "softmax":
-        return torch.softmax(values, dim=0)
-    if method == "relu_softmax":
-        return torch.softmax(torch.relu(values), dim=0)
-    raise ValueError(f"Invalid normalize method: {method}")
-
-
-def _extract_shap_values(raw_explanation: Any) -> torch.Tensor:
-    explanation = raw_explanation
-    if isinstance(explanation, list):
-        if not explanation:
-            raise ValueError("SHAP explainer returned an empty explanation list.")
-        explanation = explanation[0]
-    values = getattr(explanation, "values", None)
-    if values is None:
-        raise ValueError("SHAP explanation does not include values.")
-    tensor_values = torch.as_tensor(values, dtype=torch.float32).squeeze()
-    if tensor_values.ndim != 1:
-        tensor_values = tensor_values.reshape(-1)
-    return tensor_values
-
 
 def _resolve_device(device_flag: str) -> str:
     if device_flag == "auto":
@@ -43,28 +17,6 @@ def _resolve_device(device_flag: str) -> str:
     if device_flag == "cuda" and not torch.cuda.is_available():
         raise ValueError("Requested --device cuda, but CUDA is not available.")
     return device_flag
-
-
-def _build_explainer(model_name: str, device: str):
-    import shap
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-
-    tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
-    model = AutoModelForCausalLM.from_pretrained(model_name).to(device)
-    model.eval()
-    model.config.is_decoder = True
-    if model.config.task_specific_params is None:
-        model.config.task_specific_params = {}
-    model.config.task_specific_params["text-generation"] = {
-        "do_sample": False,
-        "max_new_tokens": 1,
-        "temperature": 0,
-    }
-    explainer = shap.Explainer(model, tokenizer)
-    return explainer
 
 
 def _discover_graph_files(graphs_root: Path, source_sets: tuple[str, ...]) -> dict[str, list[Path]]:
@@ -76,43 +28,12 @@ def _discover_graph_files(graphs_root: Path, source_sets: tuple[str, ...]) -> di
     return discovered
 
 
-def _compute_token_weights_batch(
-    explainer: Any,
-    prompts: list[str],
-    normalize_method: str,
-) -> list[torch.Tensor]:
-    if not prompts:
-        return []
-    normalized_prompts = [format_prompt(prompt) for prompt in prompts]
-    shap_values = explainer(normalized_prompts)
-
-    explanations: list[Any]
-    if isinstance(shap_values, list):
-        explanations = shap_values
-    else:
-        explanations = [shap_values[i] for i in range(len(normalized_prompts))]
-
-    if len(explanations) != len(normalized_prompts):
-        raise ValueError(
-            f"SHAP output count mismatch: got {len(explanations)} explanations for {len(normalized_prompts)} prompts."
-        )
-
-    out: list[torch.Tensor] = []
-    for explanation in explanations:
-        shap_tensor = _extract_shap_values(explanation)
-        weights = _normalize_scores(shap_tensor, normalize_method).detach().cpu().to(torch.float32)
-        out.append(weights)
-    return out
-
-
 def run(args: argparse.Namespace) -> None:
     graphs_root = Path(args.graphs_root)
     output_root = Path(args.output_root)
     source_sets = tuple(args.source_sets)
     device = _resolve_device(args.device)
     discovered = _discover_graph_files(graphs_root, source_sets)
-
-    explainer = _build_explainer(args.model_name, device)
 
     totals = {}
     for source_set, paths in discovered.items():
@@ -126,47 +47,16 @@ def run(args: argparse.Namespace) -> None:
         if args.limit is not None:
             graph_paths = graph_paths[: args.limit]
 
-        # Stage 1: collect valid prompts/metadata for batched SHAP call.
-        records: list[tuple[Path, list[str], dict[str, Any], str]] = []
         for graph_path in graph_paths:
-            try:
-                _adj, node_ids, attr, metadata = get_data_from_json(str(graph_path))
-                prompt = metadata.get("prompt", "")
-                if not prompt:
-                    raise ValueError("Graph metadata does not include prompt.")
-                records.append((graph_path, node_ids, attr, prompt))
-            except Exception as exc:
-                totals[source_set]["failed"] += 1
-                failure = f"{source_set}/{graph_path.name}: {exc}"
-                failures.append(failure)
-                print(f"[failed] {failure}")
-
-        # Stage 2: run SHAP once on list of prompts.
-        try:
-            prompt_batch = [record[3] for record in records]
-            weights_batch = _compute_token_weights_batch(
-                explainer=explainer,
-                prompts=prompt_batch,
-                normalize_method=args.normalize_method,
-            )
-        except Exception as exc:
-            for graph_path, _node_ids, _attr, _prompt in records:
-                totals[source_set]["failed"] += 1
-                failure = f"{source_set}/{graph_path.name}: batched SHAP failed ({exc})"
-                failures.append(failure)
-                print(f"[failed] {failure}")
-            continue
-
-        # Stage 3: prune/save per graph.
-        for (graph_path, node_ids, attr, _prompt), token_weights_tensor in zip(records, weights_batch):
             stem = graph_path.stem
             try:
+                token_weights_tensor = get_token_attribution_from_graph(
+                    graph_path=graph_path,
+                    model_name=args.model_name,
+                    normalize_method=args.normalize_method,
+                    device=device,
+                ).detach().cpu().to(torch.float32)
                 token_weights = token_weights_tensor.tolist()
-                emb_count = len(_build_index_sets(node_ids, attr)["embedding"])
-                if len(token_weights) != emb_count:
-                    raise ValueError(
-                        f"token_weights length ({len(token_weights)}) must equal embedding node count ({emb_count})."
-                    )
 
                 prune_graph = prune_graph_pipeline(
                     json_path=str(graph_path),
@@ -265,8 +155,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--normalize-method",
-        choices=["softmax", "relu_softmax"],
-        default="softmax",
+        choices=["softmax", "sparsemax"],
+        default="sparsemax",
         help="Normalization applied to SHAP attribution scores.",
     )
     parser.add_argument(
