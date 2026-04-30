@@ -92,6 +92,7 @@ def _prune_cache_path(repo_root: Path, input_path: Path, prune_cfg: dict[str, An
         "act_density_ub": float(prune_cfg["act_density_ub"]),
         "token_attribution_model": prune_cfg.get("token_attribution_model"),
         "token_attribution_normalize": prune_cfg.get("token_attribution_normalize"),
+        "token_attribution_masker_keep_prefix": prune_cfg.get("token_attribution_masker_keep_prefix"),
     }
     key_raw = json.dumps(key_payload, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(key_raw.encode("utf-8")).hexdigest()[:16]
@@ -210,6 +211,7 @@ def _compute_shap_token_weights(input_path: Path, prune_cfg: dict[str, Any]) -> 
         model_name=str(prune_cfg["token_attribution_model"]),
         normalize_method=prune_cfg["token_attribution_normalize"],
         device=device,
+        masker_keep_prefix=prune_cfg.get("token_attribution_masker_keep_prefix"),
     )
     return [float(value) for value in weights.detach().cpu().tolist()]
 
@@ -404,6 +406,7 @@ def main() -> None:
         "use_shap_token_weights": True,
         "token_attribution_model": "google/gemma-2-2b",
         "token_attribution_normalize": "sparsemax",
+        "token_attribution_masker_keep_prefix": None,
         "token_attribution_device": "auto",
     }
 
@@ -482,10 +485,10 @@ def main() -> None:
                 )
 
             st.markdown(
-                "**Token weights** are computed from SHAP token attribution on the target-logit, "
-                "normalized via `sparsemax` (see `summarization.token_attribution`)."
+                "**Token weights** are computed from SHAP teacher-forcing attribution and "
+                "normalized via the selected method (see `summarization.token_attribution`)."
             )
-            tok_col_a, tok_col_b, tok_col_c = st.columns(3)
+            tok_col_a, tok_col_b, tok_col_c, tok_col_d = st.columns(4)
             with tok_col_a:
                 prune_cfg["token_attribution_model"] = st.text_input(
                     "token_attribution_model",
@@ -495,11 +498,25 @@ def main() -> None:
             with tok_col_b:
                 prune_cfg["token_attribution_normalize"] = st.selectbox(
                     "token_attribution_normalize",
-                    options=["sparsemax", "softmax"],
+                    options=["sparsemax", "softmax", "entmax15", "relu_l1"],
                     index=0,
                     help="Normalization applied to raw SHAP scores before pruning.",
                 )
             with tok_col_c:
+                keep_prefix_raw = st.number_input(
+                    "token_attribution_masker_keep_prefix (-1 disables)",
+                    min_value=-1,
+                    value=-1,
+                    step=1,
+                    help=(
+                        "Optionally pin the first k token segments during SHAP masking. "
+                        "Set to -1 to disable."
+                    ),
+                )
+                prune_cfg["token_attribution_masker_keep_prefix"] = (
+                    None if int(keep_prefix_raw) < 0 else int(keep_prefix_raw)
+                )
+            with tok_col_d:
                 prune_cfg["token_attribution_device"] = st.selectbox(
                     "token_attribution_device",
                     options=["auto", "cpu", "cuda"],
@@ -767,7 +784,8 @@ def main() -> None:
     token_weights_used = prune_meta.get("token_weights")
     if token_weights_used:
         formatted = ", ".join(f"{w:.3f}" for w in token_weights_used)
-        st.caption(f"SHAP+sparsemax token weights: [{formatted}]")
+        norm_name = str(prune_cfg.get("token_attribution_normalize", "unknown"))
+        st.caption(f"SHAP+{norm_name} token weights: [{formatted}]")
 
     if run_meta.get("auto_k"):
         tk_auto = run_meta.get("target_k_auto")
