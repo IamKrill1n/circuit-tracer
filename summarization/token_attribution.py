@@ -84,8 +84,17 @@ def _cached_tokenizer(model_name: str):
 def _cached_model(model_name: str, device: str):
     from transformers import AutoModelForCausalLM
 
-    model: Any = AutoModelForCausalLM.from_pretrained(model_name)
-    model.to(device)
+    # Load directly onto the requested device to avoid moving from potential
+    # meta-initialized parameters via `model.to(...)`.
+    device_l = str(device).lower()
+    if device_l in {"cpu", "cuda"}:
+        model: Any = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            device_map={"": device_l},
+        )
+    else:
+        model = AutoModelForCausalLM.from_pretrained(model_name)
+        model = model.to(device)
     model.eval()
     return model
 

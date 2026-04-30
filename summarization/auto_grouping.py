@@ -226,7 +226,8 @@ def score_k(
     sn_adj = np.asarray(sng["sn_adj"], dtype=np.float64)
     dag_score = _dag_interleave_edge_fraction(sn_adj, sn_names, final_supernodes)
 
-    total = sil_norm * dag_score
+    print(f"sil_norm: {sil_norm}, dag_score: {dag_score}")
+    total = (sil_norm + dag_score) / 2.0
 
     return {
         "total": float(total),
