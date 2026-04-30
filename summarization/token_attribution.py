@@ -5,7 +5,6 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
-import numpy as np
 import torch
 from entmax import sparsemax, entmax15  # type: ignore[import-not-found]
 
@@ -14,11 +13,6 @@ from summarization.utils import get_data_from_json
 NormalizeMethod = Literal["softmax", "sparsemax", "entmax15", "relu_l1"]
 SPECIAL_TOKEN_RE = re.compile(r"<[^>]+>")
 SPARSEMAX_MASK_VALUE = -1e9
-
-
-def format_prompt(prompt: str) -> str:
-    """Deprecated compatibility shim: keep prompt text unchanged."""
-    return prompt
 
 
 def _special_token_mask(prompt_tokens: list[str]) -> torch.Tensor:
@@ -96,26 +90,20 @@ def _cached_model(model_name: str, device: str):
     return model
 
 
-def _canonical_prompt_for_notebook_shap(
+def _strip_leading_bos_for_shap(
     prompt: str,
     prompt_tokens: list[str],
     tokenizer,
-) -> tuple[str, list[str]]:
-    """Match `token_attribution_compare/shap.ipynb`: prompt text without a literal `<bos>` prefix.
-
-    Graph JSON often stores ``'<bos>Fact: ...'`` while the notebook passes ``'Fact: ...'``.
-    Using the same raw string as the notebook keeps SHAP's Text segments identical to
-    ``shap.Explainer(model, tokenizer)``. We drop the leading ``<bos>`` token from
-    ``prompt_tokens`` so lengths stay aligned with SHAP's per-token attributions.
-    """
+) -> tuple[str, list[str], int]:
+    """Drop a leading BOS token from SHAP input while tracking removed prefix length."""
     bos_tok = getattr(tokenizer, "bos_token", None) or ""
     if prompt.startswith("<bos>") and prompt_tokens and prompt_tokens[0] == "<bos>":
         rest = prompt[len("<bos>") :].lstrip()
-        return rest, prompt_tokens[1:]
+        return rest, prompt_tokens[1:], 1
     if bos_tok and prompt.startswith(bos_tok) and prompt_tokens and prompt_tokens[0] == bos_tok:
         rest = prompt[len(bos_tok) :].lstrip()
-        return rest, prompt_tokens[1:]
-    return prompt, prompt_tokens
+        return rest, prompt_tokens[1:], 1
+    return prompt, prompt_tokens, 0
 
 
 def _apply_shap_notebook_generation_defaults(model: Any) -> None:
@@ -143,6 +131,7 @@ def _apply_shap_notebook_generation_defaults(model: Any) -> None:
 def _build_shap_lm_explainer(
     model_name: str,
     device: str,
+    keep_prefix: int | None = None,
 ):
     """Same construction as ``shap.Explainer(hf_causal_lm, hf_tokenizer)`` for LMs.
 
@@ -151,15 +140,6 @@ def _build_shap_lm_explainer(
     ``Text`` masker in :class:`shap.maskers.OutputComposite` with ``TextGeneration``
     so the explained target ``Y`` matches ``model.generate`` on the **original**
     (unmasked) prompt.
-
-    .. warning::
-
-        Raising ``masker.keep_prefix`` beyond the tokenizer default (**1**, BOS pin)
-        triggers buggy batches inside ``TeacherForcing.model_inference`` (HF causal LM +
-        SHAP ≥ 0.46): batched masked prompts no longer align with ``Y``. True “never mask
-        the first *k* segments” is therefore approximated by zeroing the first *k*
-        attribution slots **after** running the standard explainer — see
-        ``pin_first_prefix_slots`` in :func:`get_token_attribution`.
 
     This matches the notebook's scoring path: **log-odds** of producing the generated
     continuation, not a fixed vocab-id logit from circuit-tracer graphs.
@@ -172,6 +152,10 @@ def _build_shap_lm_explainer(
     tokenizer = _cached_tokenizer(model_name)
 
     masker = Text(tokenizer, mask_token="...", collapse_mask_token=True)
+    if keep_prefix is not None:
+        if keep_prefix < 0:
+            raise ValueError(f"keep_prefix must be >= 0, got {keep_prefix}")
+        masker.keep_prefix = int(keep_prefix)
 
     return shap.Explainer(model, masker=masker)
 
@@ -199,7 +183,7 @@ def _cached_prompt_payload_from_graph(graph_path: str) -> tuple[str, tuple[str, 
     if target_token_id is None:
         raise ValueError(f"No is_target_logit node with feature id found in graph: {graph_path}")
 
-    return format_prompt(prompt), prompt_tokens, target_token_id
+    return prompt, prompt_tokens, target_token_id
 
 
 def _extract_shap_values(raw_explanation: Any) -> torch.Tensor:
@@ -212,6 +196,7 @@ def _extract_shap_values(raw_explanation: Any) -> torch.Tensor:
     SHAP's Text masker prepends; we drop it to align with `prompt_tokens`.
     """
     explanation = raw_explanation
+    # print("explanation:", explanation)
     if isinstance(explanation, list):
         if not explanation:
             raise ValueError("SHAP explainer returned an empty explanation list.")
@@ -234,8 +219,7 @@ def get_token_attribution(
     normalize_method: NormalizeMethod = "sparsemax",
     device: str | torch.device = "cpu",
     *,
-    match_notebook_prompt: bool = True,
-    pin_first_prefix_slots: int | None = 2,
+    masker_keep_prefix: int | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Same pipeline as ``shap.Explainer(model, tokenizer)`` on an HF causal LM.
 
@@ -245,51 +229,50 @@ def get_token_attribution(
 
     Parameters
     ----------
-    match_notebook_prompt
-        If True (default), strip a leading literal ``<bos>`` from graph prompts so the
-        string matches ``token_attribution_compare/shap.ipynb``; ``prompt_tokens`` is
-        aligned by dropping the first ``<bos>`` entry when present.
-    pin_first_prefix_slots
-        After SHAP, set the first *k* attribution entries to 0 (default **2** =
-        ``Fact`` + ``:`` when using a canonical ``Fact:`` prompt). This **approximates**
-        “do not put mass on the template prefix” because ``masker.keep_prefix > 1`` is
-        unstable with SHAP's TeacherForcing batching. Use ``0`` to match the notebook
-        with no post-processing.
-
+    masker_keep_prefix
+        Optional SHAP masker setting to keep the first *k* token segments fixed
+        (unmasked) during masking.
     Returns
     -------
     tuple[torch.Tensor, torch.Tensor]
         Raw SHAP values and normalized weights, both length ``len(prompt_tokens)``.
-        If ``match_notebook_prompt`` strips a leading BOS token for SHAP, a matching
-        zero prefix is prepended so lengths stay aligned with graph ``prompt_tokens``.
     """
     device_str = str(device)
     tokenizer = _cached_tokenizer(model_name)
-    full_prompt_token_count = len(prompt_tokens)
-    if match_notebook_prompt:
-        work_prompt, work_tokens = _canonical_prompt_for_notebook_shap(
-            prompt, list(prompt_tokens), tokenizer
-        )
-    else:
-        work_prompt, work_tokens = format_prompt(prompt), list(prompt_tokens)
-    n_prefix_tokens_dropped = full_prompt_token_count - len(work_tokens)
+    work_prompt, work_tokens, n_prefix_tokens_dropped = _strip_leading_bos_for_shap(
+        prompt, list(prompt_tokens), tokenizer
+    )
 
     explainer = _build_shap_lm_explainer(
         model_name=model_name,
         device=device_str,
+        keep_prefix=masker_keep_prefix,
     )
-    shap_values = explainer([work_prompt], batch_size=1)
+    try:
+        shap_values = explainer([work_prompt], batch_size=1)
+    except RuntimeError as exc:
+        # SHAP TeacherForcing may fail for keep_prefix > 1 due to batch-shape mismatch.
+        # Fall back to standard masking and emulate prefix pinning post-hoc.
+        msg = str(exc)
+        if masker_keep_prefix is None or "Sizes of tensors must match" not in msg:
+            raise
+        explainer = _build_shap_lm_explainer(
+            model_name=model_name,
+            device=device_str,
+            keep_prefix=None,
+        )
+        shap_values = explainer([work_prompt], batch_size=1)
     values = _extract_shap_values(shap_values)
     if values.shape[0] != len(work_tokens):
         raise ValueError(
             f"SHAP token length mismatch: got {values.shape[0]}, expected {len(work_tokens)} from prompt_tokens."
         )
-    if pin_first_prefix_slots and pin_first_prefix_slots > 0:
-        k = min(pin_first_prefix_slots, values.shape[0])
-        values = values.clone()
-        values[:k] = 0.0
 
     special_mask = _special_token_mask(work_tokens)
+    if masker_keep_prefix is not None and masker_keep_prefix > 0:
+        k = min(int(masker_keep_prefix), special_mask.shape[0])
+        special_mask = special_mask.clone()
+        special_mask[:k] = True
     normalized = _normalize_scores(values, normalize_method, special_mask)
     if n_prefix_tokens_dropped > 0:
         prefix = torch.zeros(
@@ -309,8 +292,7 @@ def get_token_attribution_from_graph(
     model_name: str,
     normalize_method: NormalizeMethod = "sparsemax",
     device: str | torch.device = "cpu",
-    match_notebook_prompt: bool = True,
-    pin_first_prefix_slots: int | None = 2,
+    masker_keep_prefix: int | None = None,
 ) -> torch.Tensor:
     """Compute normalized SHAP token weights from a graph's prompt metadata.
 
@@ -323,8 +305,7 @@ def get_token_attribution_from_graph(
         model_name=model_name,
         normalize_method=normalize_method,
         device=device,
-        match_notebook_prompt=match_notebook_prompt,
-        pin_first_prefix_slots=pin_first_prefix_slots,
+        masker_keep_prefix=masker_keep_prefix,
     )
     return normalized
 
@@ -337,6 +318,7 @@ if __name__ == "__main__":
         model_name="google/gemma-2-2b",
         normalize_method="relu_l1",
         device="cuda",
+        masker_keep_prefix=2,
     )
     print("raw:", raw)
     print("normalized:", normalized)
