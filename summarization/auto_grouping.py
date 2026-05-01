@@ -252,7 +252,7 @@ def find_best_k(
     max_sn: int | None = None,
     mean_method: Literal["geo", "harm", "arith"] = "arith",
     mediation_penalty: float = 0.1,
-    similarity_mode: Literal["edge", "node"] = "edge",
+    similarity_mode: Literal["edge", "node"] = "node",
     enforce_dag: bool = False,
     random_state: int = 42,
     n_init: int = 20,

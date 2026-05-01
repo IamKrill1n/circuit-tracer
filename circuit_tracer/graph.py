@@ -439,6 +439,120 @@ def compute_graph_scores(graph: Graph) -> tuple[float, float]:
     return replacement_score.item(), completeness_score.item()
 
 
+def _combined_node_scores(
+    node_influence: torch.Tensor,
+    node_relevance: torch.Tensor,
+    combined_scores_method: str = "geometric",
+    normalization: str = "min_max",
+    alpha: float = 0.5,
+    eps: float = 1e-10,
+) -> torch.Tensor:
+    if combined_scores_method == "geometric":
+        return combine_scores_geometric(
+            node_influence,
+            node_relevance,
+            normalization=normalization,
+            alpha=alpha,
+            eps=eps,
+        )
+    if combined_scores_method == "arithmetic":
+        return combined_scores_arithmetic(
+            node_influence,
+            node_relevance,
+            normalization=normalization,
+            alpha=alpha,
+            eps=eps,
+        )
+    if combined_scores_method == "harmonic":
+        return combined_scores_harmonic(
+            node_influence,
+            node_relevance,
+            normalization=normalization,
+            alpha=alpha,
+            eps=eps,
+        )
+    raise ValueError(
+        "combined_scores_method must be one of "
+        "'geometric', 'arithmetic', or 'harmonic'"
+    )
+
+
+def compute_combined_prune_scores(
+    graph: Graph,
+    node_mask: torch.Tensor,
+    combined_scores_method: str = "geometric",
+    normalization: str = "min_max",
+    alpha: float = 0.5,
+    eps: float = 1e-10,
+) -> tuple[float, float]:
+    """Evaluate a pruned graph using influence+relevance combined metrics.
+
+    Args:
+        graph: Full graph before pruning.
+        node_mask: Boolean tensor over all graph nodes. True indicates a kept node.
+        combined_scores_method: How to combine influence/relevance.
+        normalization: Score normalization mode passed to combine functions.
+        alpha: Influence/relevance tradeoff weight for combined scores.
+        eps: Numerical stability constant.
+
+    Returns:
+        tuple[float, float]:
+            - combined_retention: Fraction of total combined node score retained by node_mask.
+            - combined_completeness_score: Within retained nodes, weighted average of the
+              non-error incoming-edge fraction, weighted by combined node score.
+    """
+    num_nodes = graph.adjacency_matrix.shape[0]
+    if node_mask.ndim != 1 or node_mask.shape[0] != num_nodes:
+        raise ValueError(
+            f"node_mask must have shape ({num_nodes},), got {tuple(node_mask.shape)}"
+        )
+    node_mask = node_mask.to(device=graph.adjacency_matrix.device, dtype=torch.bool)
+
+    n_logits = len(graph.logit_tokens)
+    n_tokens = len(graph.input_tokens)
+    n_features = len(graph.selected_features)
+    error_start = n_features
+    error_end = error_start + n_tokens * graph.cfg.n_layers  # type: ignore
+    embed_start_idx = num_nodes - n_logits - n_tokens
+    embed_end_idx = num_nodes - n_logits
+
+    logit_weights = torch.zeros(num_nodes, device=graph.adjacency_matrix.device)
+    logit_weights[-n_logits:] = graph.logit_probabilities
+
+    emb_weights = torch.zeros(num_nodes, device=graph.adjacency_matrix.device)
+    emb_weights[embed_start_idx:embed_end_idx] = 1 / max(n_tokens, 1)
+
+    node_influence = compute_node_influence(graph.adjacency_matrix, logit_weights)
+    node_relevance = compute_node_relevance(graph.adjacency_matrix, emb_weights)
+    combined_scores = _combined_node_scores(
+        node_influence=node_influence,
+        node_relevance=node_relevance,
+        combined_scores_method=combined_scores_method,
+        normalization=normalization,
+        alpha=alpha,
+        eps=eps,
+    )
+
+    total_combined = combined_scores.sum().clamp(min=eps)
+    kept_combined = combined_scores[node_mask].sum()
+    combined_retention = kept_combined / total_combined
+
+    pruned_matrix = graph.adjacency_matrix.clone()
+    pruned_matrix[~node_mask] = 0
+    pruned_matrix[:, ~node_mask] = 0
+    normalized_pruned = normalize_matrix(pruned_matrix)
+    non_error_fractions = 1 - normalized_pruned[:, error_start:error_end].sum(dim=-1)
+
+    kept_non_error = non_error_fractions[node_mask]
+    combined_weights = combined_scores[node_mask]
+    combined_completeness_score = (
+        (kept_non_error * combined_weights).sum()
+        / combined_weights.sum().clamp(min=eps)
+    )
+
+    return combined_retention.item(), combined_completeness_score.item()
+
+
 def compute_partial_influences(
     edge_matrix: torch.Tensor,
     logit_p: torch.Tensor,

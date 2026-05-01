@@ -174,6 +174,125 @@ def _graph_pruning_ops() -> tuple[Any, Any, Any, Any, Any]:
         find_threshold,
     )
 
+
+def _normalize_scores_min_max(scores: torch.Tensor, eps: float = 1e-10) -> torch.Tensor:
+    out = scores.clone()
+    out = out - out.min()
+    return out / (out.max() + eps)
+
+
+def _normalize_scores_rank(scores: torch.Tensor) -> torch.Tensor:
+    ranks = torch.argsort(torch.argsort(scores))
+    denom = max(len(scores) - 1, 1)
+    return ranks.float() / denom
+
+
+def _combine_scores(
+    influence: torch.Tensor,
+    relevance: torch.Tensor,
+    method: str = "geometric",
+    normalization: str = "min_max",
+    alpha: float = 0.5,
+    eps: float = 1e-10,
+) -> torch.Tensor:
+    if normalization == "min_max":
+        i_norm = _normalize_scores_min_max(influence, eps)
+        r_norm = _normalize_scores_min_max(relevance, eps)
+    elif normalization == "rank":
+        i_norm = _normalize_scores_rank(influence)
+        r_norm = _normalize_scores_rank(relevance)
+    else:
+        raise ValueError(f"normalization must be 'min_max' or 'rank', got {normalization}")
+
+    if method == "geometric":
+        return (i_norm + eps) ** alpha * (r_norm + eps) ** (1 - alpha)
+    if method == "arithmetic":
+        return i_norm * alpha + r_norm * (1 - alpha)
+    if method == "harmonic":
+        # Keep this algebra aligned with circuit_tracer.graph.combined_scores_harmonic
+        return 1 / ((1 / (i_norm + eps) + alpha) + (1 / (r_norm + eps) + alpha))
+    raise ValueError(
+        "method must be one of 'geometric', 'arithmetic', or 'harmonic', "
+        f"got {method}"
+    )
+
+
+def _normalize_matrix(matrix: torch.Tensor) -> torch.Tensor:
+    normalized = matrix.abs()
+    return normalized / normalized.sum(dim=1, keepdim=True).clamp(min=1e-10)
+
+
+def compute_combined_prune_graph_scores(
+    prune_graph: PruneGraph,
+    node_mask: Optional[torch.Tensor] = None,
+    method: str = "geometric",
+    normalization: str = "min_max",
+    alpha: float = 0.5,
+    eps: float = 1e-10,
+) -> tuple[float, float]:
+    """Compute influence+relevance combined metrics directly on a PruneGraph.
+
+    Returns:
+        (combined_retention, combined_completeness_score)
+    """
+    if prune_graph.node_influence is None or prune_graph.node_relevance is None:
+        raise ValueError(
+            "PruneGraph must include both node_influence and node_relevance to "
+            "compute combined scores."
+        )
+    if prune_graph.pruned_adj.ndim != 2 or prune_graph.pruned_adj.shape[0] != prune_graph.pruned_adj.shape[1]:
+        raise ValueError(
+            f"pruned_adj must be a square matrix, got shape={tuple(prune_graph.pruned_adj.shape)}"
+        )
+
+    num_nodes = prune_graph.num_nodes
+    if len(prune_graph.node_influence) != num_nodes or len(prune_graph.node_relevance) != num_nodes:
+        raise ValueError(
+            "node_influence and node_relevance must have length equal to number of kept nodes."
+        )
+
+    if node_mask is None:
+        node_mask = torch.ones(num_nodes, dtype=torch.bool, device=prune_graph.pruned_adj.device)
+    else:
+        if node_mask.ndim != 1 or node_mask.shape[0] != num_nodes:
+            raise ValueError(
+                f"node_mask must have shape ({num_nodes},), got {tuple(node_mask.shape)}"
+            )
+        node_mask = node_mask.to(device=prune_graph.pruned_adj.device, dtype=torch.bool)
+
+    combined_scores = _combine_scores(
+        prune_graph.node_influence.to(prune_graph.pruned_adj.device),
+        prune_graph.node_relevance.to(prune_graph.pruned_adj.device),
+        method=method,
+        normalization=normalization,
+        alpha=alpha,
+        eps=eps,
+    )
+
+    total_combined = combined_scores.sum().clamp(min=eps)
+    kept_combined = combined_scores[node_mask].sum()
+    combined_retention = kept_combined / total_combined
+
+    error_idx = [
+        i
+        for i, node_id in enumerate(prune_graph.kept_ids)
+        if prune_graph.attr.get(node_id, {}).get("feature_type") == "mlp reconstruction error"
+    ]
+    normalized_pruned = _normalize_matrix(prune_graph.pruned_adj)
+    if error_idx:
+        error_tensor = torch.tensor(error_idx, dtype=torch.long, device=prune_graph.pruned_adj.device)
+        non_error_fractions = 1 - normalized_pruned[:, error_tensor].sum(dim=-1)
+    else:
+        non_error_fractions = torch.ones(num_nodes, device=prune_graph.pruned_adj.device)
+
+    kept_non_error = non_error_fractions[node_mask]
+    kept_weights = combined_scores[node_mask]
+    combined_completeness_score = (
+        (kept_non_error * kept_weights).sum() / kept_weights.sum().clamp(min=eps)
+    )
+
+    return combined_retention.item(), combined_completeness_score.item()
+
 def prune_combined(
     adj: torch.Tensor,
     node_ids: List[str],
