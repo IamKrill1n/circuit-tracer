@@ -1,0 +1,39 @@
+{
+  "graphs_root": "demos/temp_graph_files",
+  "output_root": "demos/eval_shap_prune",
+  "shap_values_json": "demos/shap_values.json",
+  "source_sets": [
+    "clt-hp"
+  ],
+  "masker_keep_prefix": 3,
+  "eval_normalizations": [
+    "softmax",
+    "relu_l1",
+    "entmax15"
+  ],
+  "sweep_node_start": 0.0,
+  "sweep_node_end": 1.0,
+  "sweep_node_step": 0.1,
+  "node_thresholds": [
+    0.0,
+    0.1,
+    0.2,
+    0.3,
+    0.4,
+    0.5,
+    0.6,
+    0.7,
+    0.8,
+    0.9,
+    1.0
+  ],
+  "edge_threshold": 0.95,
+  "logit_weights": "target",
+  "limit": null,
+  "total_grid_cells_attempted": 825,
+  "successful_runs": 825,
+  "n_result_rows": 825,
+  "results_json": "demos/eval_shap_prune/clt-hp/results.json",
+  "summary_csv": "demos/eval_shap_prune/clt-hp/summary.csv",
+  "failures": []
+}
