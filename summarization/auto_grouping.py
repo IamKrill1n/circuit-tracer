@@ -176,9 +176,7 @@ def score_k(
     final_supernodes: dict[str, list[str]] | list[list[str]],
     prune_graph: PruneGraph,
     similarity: Any,
-    target_n_middle: int,
-    enforce_dag: bool = False,
-    **_legacy_weight_kwargs: Any,
+    enforce_dag: bool = False
 ) -> dict[str, Any]:
     """
     Score a clustering using two complementary metrics:
@@ -193,8 +191,6 @@ def score_k(
     longer computed. Legacy weight kwargs (`w_intra`, `w_dag`, `w_attr`, `w_size`)
     are accepted for backward compatibility but ignored.
     """
-    del target_n_middle
-    del _legacy_weight_kwargs
 
     if isinstance(final_supernodes, list):
         final_supernodes = supernodes_to_mapping(prune_graph, final_supernodes)
@@ -205,15 +201,13 @@ def score_k(
 
     if n_middle == 0:
         return {
-            "total": 0.0,
-            "total_base": 0.0,
-            "silhouette": 0.0,
-            "silhouette_norm": 0.0,
+            "score_arith": 0.0,
+            "score_harm": 0.0,
+            "score_geo": 0.0,
+            "sil_raw": 0.0,
+            "sil_norm": 0.0,
             "dag_score": 1.0,
             "n_middle": 0,
-            "inf_conservation": float(sng.get("inf_conservation", 0.0)),
-            "edge_conservation": float(sng.get("edge_conservation", 0.0)),
-            "details": {},
         }
 
     s = np.asarray(
@@ -227,18 +221,18 @@ def score_k(
     dag_score = _dag_interleave_edge_fraction(sn_adj, sn_names, final_supernodes)
 
     print(f"sil_norm: {sil_norm}, dag_score: {dag_score}")
-    total = (sil_norm + dag_score) / 2.0
+    score_arith = (sil_norm + dag_score) / 2.0
+    score_harm = 2 / ((1 / (sil_norm + 1e-12)) + (1 / (dag_score + 1e-12)))
+    score_geo = np.sqrt(sil_norm * dag_score)
 
     return {
-        "total": float(total),
-        "total_base": float(total),
-        "silhouette": float(sil_raw),
-        "silhouette_norm": float(sil_norm),
+        "score_arith": float(score_arith),
+        "score_harm": float(score_harm),
+        "score_geo": float(score_geo),
+        "sil_raw": float(sil_raw),
+        "sil_norm": float(sil_norm),
         "dag_score": float(dag_score),
         "n_middle": int(n_middle),
-        "inf_conservation": float(sng["inf_conservation"]),
-        "edge_conservation": float(sng["edge_conservation"]),
-        "details": {sn: {"n": int(len(final_supernodes[sn]))} for sn in middle_keys},
     }
 
 
@@ -303,7 +297,6 @@ def find_best_k(
             final_supernodes,
             prune_graph,
             s_np,
-            target_n_middle=n_middle,
             enforce_dag=enforce_dag,
         )
         sc["final_supernodes"] = final_supernodes
@@ -311,7 +304,7 @@ def find_best_k(
 
     if not results:
         return int(eg["eigengap_k"]), {}
-    best_k = max(results, key=lambda x: float(results[x]["total"]))
+    best_k = max(results, key=lambda x: float(results[x]["score_arith"]))
     return best_k, results
 
 
@@ -332,7 +325,6 @@ def find_best_k_for_clusterer(
     del weights  # legacy weight kwargs are no longer used by score_k
     s_np = np.asarray(similarity.detach().cpu().numpy() if hasattr(similarity, "detach") else similarity)
     n_middle = len(_middle_indices(prune_graph))
-    target_n_middle = max(1, n_middle)
     if n_middle < 3:
         fallback_k = max(0, n_middle)
         clusters = clusterer(fallback_k)
@@ -341,7 +333,6 @@ def find_best_k_for_clusterer(
             mapping,
             prune_graph,
             s_np,
-            target_n_middle=target_n_middle,
             enforce_dag=enforce_dag,
         )
         result["final_supernodes"] = mapping
@@ -361,11 +352,10 @@ def find_best_k_for_clusterer(
             mapping,
             prune_graph,
             s_np,
-            target_n_middle=target_n_middle,
             enforce_dag=enforce_dag,
         )
         result["final_supernodes"] = mapping
         results[target_k] = result
 
-    best_k = max(results, key=lambda k: float(results[k]["total"]))
+    best_k = max(results, key=lambda k: float(results[k]["score_arith"]))
     return best_k, results
