@@ -181,3 +181,4 @@ cython_debug/
 demos/graphs/
 demos/temp_graph_files/
 nohup.out
+runs/

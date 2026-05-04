@@ -69,16 +69,6 @@ def _layer_range_from_members(members: list[str]) -> tuple[int, int] | None:
     return min(layers), max(layers)
 
 
-def _interleaving_pairs(layer_ranges: dict[str, tuple[int, int]]) -> set[frozenset[str]]:
-    pairs: set[frozenset[str]] = set()
-    items = list(layer_ranges.items())
-    for i, (a, (a_lo, a_hi)) in enumerate(items):
-        for b, (b_lo, b_hi) in items[i + 1 :]:
-            if (a_lo < b_lo < a_hi < b_hi) or (b_lo < a_lo < b_hi < a_hi):
-                pairs.add(frozenset((a, b)))
-    return pairs
-
-
 def _silhouette_over_middle(
     similarity: np.ndarray,
     prune_graph: PruneGraph,
@@ -135,41 +125,49 @@ def _dag_interleave_edge_fraction(
     final_supernodes: dict[str, list[str]],
 ) -> float:
     """
-    Edge-weighted DAG-safety score in [0, 1]:
+    Edge-weighted DAG-safety score in [0, 1] using backward-edge mass ratio:
 
-        1 - (sum of |sn_adj| weight between layer-interleaving SN pairs)
-            / (sum of all |sn_adj| weight)
+        1 - (sum of |sn_adj[i, j]| for SN_i -> SN_j with layer_j <= layer_i)
+            / (sum of all off-diagonal |sn_adj| among middle supernodes)
 
-    Higher is better; 1.0 means no flow occurs between supernode pairs whose
-    layer ranges interleave.
+    Higher is better; 1.0 means no backward flow by layer ordering.
     """
-    layer_ranges: dict[str, tuple[int, int]] = {}
+    layer_centers: dict[str, float] = {}
     for sn, members in final_supernodes.items():
         if "EMB" in sn or "LOGIT" in sn:
             continue
         rng = _layer_range_from_members(members)
         if rng is not None:
-            layer_ranges[sn] = rng
+            lo, hi = rng
+            layer_centers[sn] = float(lo + hi) / 2.0
+
+    name_to_idx = {name: idx for idx, name in enumerate(sn_names)}
+    valid_names = [name for name in sn_names if name in layer_centers]
+    if len(valid_names) < 2:
+        return 1.0
 
     abs_adj = np.abs(sn_adj)
-    total_w = float(abs_adj.sum())
+    total_w = 0.0
+    backward_w = 0.0
+    for src_name in valid_names:
+        i = name_to_idx[src_name]
+        src_layer = layer_centers[src_name]
+        for dst_name in valid_names:
+            if src_name == dst_name:
+                continue
+            j = name_to_idx[dst_name]
+            w = float(abs_adj[i, j])
+            if w <= 0.0:
+                continue
+            total_w += w
+            dst_layer = layer_centers[dst_name]
+            if dst_layer <= src_layer:
+                backward_w += w
+
     if total_w <= 1e-12:
         return 1.0
 
-    pairs = _interleaving_pairs(layer_ranges)
-    if not pairs:
-        return 1.0
-
-    name_to_idx = {name: idx for idx, name in enumerate(sn_names)}
-    violation_w = 0.0
-    for pair in pairs:
-        a, b = tuple(pair)
-        if a not in name_to_idx or b not in name_to_idx:
-            continue
-        i, j = name_to_idx[a], name_to_idx[b]
-        violation_w += float(abs_adj[i, j] + abs_adj[j, i])
-
-    return float(max(0.0, 1.0 - violation_w / (total_w + 1e-12)))
+    return float(max(0.0, 1.0 - backward_w / (total_w + 1e-12)))
 
 
 def score_k(
@@ -185,7 +183,7 @@ def score_k(
 
     where:
       - silhouette_norm = (mean silhouette over middle nodes + 1) / 2, in [0, 1].
-      - dag_score = 1 - (interleaving-edge weight / total SN edge weight), in [0, 1].
+      - dag_score = 1 - (backward-edge mass / total middle SN edge mass), in [0, 1].
 
     The legacy components (intra_sim, attr_balance, size_score, dag_safety) are no
     longer computed. Legacy weight kwargs (`w_intra`, `w_dag`, `w_attr`, `w_size`)

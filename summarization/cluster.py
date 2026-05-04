@@ -133,8 +133,9 @@ def compute_similarity(
     adj = prune_graph.pruned_adj.clone().float().T
     if similarity_mode == "edge":
         rel_sender, inf_sender = _edge_channels_sender_indexed(prune_graph, adj)
-        weighted_out = adj * inf_sender
-        weighted_in = (adj * rel_sender).T
+        adj_sign = adj.sign()
+        weighted_out = adj_sign * inf_sender
+        weighted_in = (adj_sign * rel_sender).T
         s_out = weighted_out @ weighted_out.T
         s_in = weighted_in @ weighted_in.T
     elif similarity_mode == "node":

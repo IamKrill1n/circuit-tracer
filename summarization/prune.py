@@ -71,19 +71,34 @@ class PruneGraph:
             "graph_scores",
         }
         missing = required - set(payload.keys())
-        if missing:
+        # support legacy pay load with no graph scores
+        if missing and "graph_scores" not in payload:
+            payload["graph_scores"] = 0.0
+            return cls(
+                kept_ids=payload["kept_ids"],
+                pruned_adj=payload["pruned_adj"],
+                node_influence=payload.get("node_influence"),
+                node_relevance=payload.get("node_relevance"),
+                edge_influence=payload.get("edge_influence"),
+                edge_relevance=payload.get("edge_relevance"),
+                attr=payload["attr"],
+                metadata=payload["metadata"],
+                graph_scores=payload.get("graph_scores"),
+            )
+        elif missing:
             raise ValueError(f"Invalid PruneGraph payload. Missing keys: {sorted(missing)}")
-        return cls(
-            kept_ids=payload["kept_ids"],
-            pruned_adj=payload["pruned_adj"],
-            node_influence=payload.get("node_influence"),
-            node_relevance=payload.get("node_relevance"),
-            edge_influence=payload.get("edge_influence"),
-            edge_relevance=payload.get("edge_relevance"),
-            attr=payload["attr"],
-            metadata=payload["metadata"],
-            graph_scores=payload.get("graph_scores"),
-        )
+        else:
+            return cls(
+                kept_ids=payload["kept_ids"],
+                pruned_adj=payload["pruned_adj"],
+                node_influence=payload.get("node_influence"),
+                node_relevance=payload.get("node_relevance"),
+                edge_influence=payload.get("edge_influence"),
+                edge_relevance=payload.get("edge_relevance"),
+                attr=payload["attr"],
+                metadata=payload["metadata"],
+                graph_scores=payload.get("graph_scores"),
+            )
 
 
 def save_prune_graph(prune_graph: PruneGraph, output_path: str) -> None:

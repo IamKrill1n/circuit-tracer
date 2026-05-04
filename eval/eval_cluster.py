@@ -3,14 +3,15 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Literal, Sequence, cast
 
 import numpy as np
 import torch
 from sklearn.cluster import KMeans, SpectralClustering
 
-from summarization.auto_grouping import find_best_k, find_best_k_for_clusterer, score_k
+from summarization.auto_grouping import score_k
 from summarization.cluster import (
     build_supernode_graph,
     cluster_graph,
@@ -35,6 +36,8 @@ SUMMARY_COLUMNS = [
     "graph_name",
     "dataset",
     "graph_path",
+    "num_nodes",
+    "k_selection",
     "method",
     "method_family",
     "mean_method",
@@ -108,7 +111,43 @@ def _safe_slug(text: str) -> str:
     return slug or "graph"
 
 
-def _discover_prune_graphs(input_paths: Sequence[str]) -> list[Path]:
+_RE_NODE_INF_REL = re.compile(
+    r"^node_inf_(?P<inf>\d+(?:\.\d+)?)_rel_(?P<rel>\d+(?:\.\d+)?)$",
+    re.IGNORECASE,
+)
+_RE_NODE_SIMPLE = re.compile(
+    r"^node_(?P<v>\d+(?:\.\d+)?)$",
+    re.IGNORECASE,
+)
+
+
+def _path_matches_node_threshold(
+    graph_path: Path, threshold: float, *, eps: float = 1e-5
+) -> bool:
+    """True if a parent folder encodes this threshold (SHAP or simple layouts)."""
+
+    def close(x: float) -> bool:
+        return abs(x - threshold) <= eps
+
+    for part in graph_path.parts:
+        m = _RE_NODE_INF_REL.match(part)
+        if m:
+            inf = float(m.group("inf"))
+            rel = float(m.group("rel"))
+            if close(inf) and close(rel):
+                return True
+            continue
+        m = _RE_NODE_SIMPLE.match(part)
+        if m and close(float(m.group("v"))):
+            return True
+    return False
+
+
+def _discover_prune_graphs(
+    input_paths: Sequence[str],
+    *,
+    node_threshold: float | None,
+) -> list[Path]:
     discovered: list[Path] = []
     for raw_path in input_paths:
         path = Path(raw_path).expanduser().resolve()
@@ -129,18 +168,28 @@ def _discover_prune_graphs(input_paths: Sequence[str]) -> list[Path]:
         raise FileNotFoundError(
             "No prune-graph .pt files were found in the provided --input-path locations."
         )
-    return unique
+    if node_threshold is None:
+        return unique
+    filtered = [p for p in unique if _path_matches_node_threshold(p, node_threshold)]
+    if not filtered:
+        raise FileNotFoundError(
+            f"No prune-graph .pt files matched --node-threshold {node_threshold:g}. "
+            "Expected a path directory like 'node_0.7' or 'node_inf_0.7_rel_0.7' "
+            "under --input-path."
+        )
+    return filtered
 
 
 def _default_input_paths() -> list[str]:
     candidates = [
-        "demos/subgraph/clt",
+        "demos/eval_shap_prune",
         "demos/subgraph/clt-hp",
+        "demos/subgraph/clt",
         "demos/subgraph/gemma-scope-16k",
         "demos/subgraph/gemmascope-transcoder-16k",
     ]
     existing = [path for path in candidates if Path(path).exists()]
-    return existing or candidates
+    return existing or ["demos/eval_shap_prune"]
 
 
 def _graph_identity(graph_path: Path, input_paths: Sequence[str]) -> tuple[str, str]:
@@ -166,6 +215,21 @@ def _graph_identity(graph_path: Path, input_paths: Sequence[str]) -> tuple[str, 
 
 def _middle_indices(prune_graph: PruneGraph) -> list[int]:
     return [i for i, nid in enumerate(prune_graph.kept_ids) if not _is_fixed(prune_graph.attr, nid)]
+
+
+def _fixed_k_from_num_nodes(n_middle: int, divisor: int) -> int:
+    """Integer k from round(num_nodes / divisor), clamped to [1, n_middle]."""
+    if n_middle <= 0:
+        return 1
+    return max(1, min(int(round(n_middle / float(divisor))), n_middle))
+
+
+def _fixed_k_schedule(n_middle: int) -> list[tuple[str, int]]:
+    """Two policies: k ≈ n/2 and k ≈ n/3 (middle-node count)."""
+    return [
+        ("n_over_2", _fixed_k_from_num_nodes(n_middle, 2)),
+        ("n_over_3", _fixed_k_from_num_nodes(n_middle, 3)),
+    ]
 
 
 def _normalize_edge_weights(weights: torch.Tensor) -> torch.Tensor:
@@ -247,6 +311,8 @@ def _flatten_metrics(
     graph_name: str,
     dataset: str,
     graph_path: Path,
+    num_nodes: int,
+    k_selection: str,
     method: str,
     method_family: str,
     mean_method: str | None,
@@ -267,6 +333,8 @@ def _flatten_metrics(
         "graph_name": graph_name,
         "dataset": dataset,
         "graph_path": str(graph_path),
+        "num_nodes": num_nodes,
+        "k_selection": k_selection,
         "method": method,
         "method_family": method_family,
         "mean_method": mean_method,
@@ -316,7 +384,7 @@ def _write_summary_csv(path: Path, rows: list[dict[str, Any]]) -> None:
             writer.writerow({column: row.get(column, "") for column in SUMMARY_COLUMNS})
 
 
-def _evaluate_existing_method(
+def _evaluate_ours_fixed_k(
     *,
     prune_graph: PruneGraph,
     graph_path: Path,
@@ -324,69 +392,48 @@ def _evaluate_existing_method(
     dataset: str,
     output_dir: Path,
     method_config: dict[str, str],
-    k_min_override: int | None,
-    k_max_override: int | None,
-    weights: dict[str, float] | None,
+    target_k: int,
+    k_selection: str,
+    num_nodes: int,
     max_layer_span: int,
     mediation_penalty: float,
     enforce_dag: bool,
     random_state: int,
     n_init: int,
 ) -> dict[str, Any]:
+    mean_method = cast(Literal["harm", "arith"], method_config["mean_method"])
+    similarity_mode = cast(Literal["node", "edge"], method_config["similarity_mode"])
     similarity = compute_similarity(
         prune_graph,
-        mean_method=method_config["mean_method"],
+        mean_method=mean_method,
         mediation_penalty=mediation_penalty,
-        similarity_mode=method_config["similarity_mode"],
+        similarity_mode=similarity_mode,
     )
-    best_k, sweep = find_best_k(
-        prune_graph=prune_graph,
-        similarity=similarity,
+    clusters = cluster_graph(
+        prune_graph,
+        target_k=target_k,
         max_layer_span=max_layer_span,
-        k_min_override=k_min_override,
-        k_max_override=k_max_override,
-        weights=weights,
-        max_sn=None,
-        mean_method=method_config["mean_method"],
+        mean_method=mean_method,
         mediation_penalty=mediation_penalty,
-        similarity_mode=method_config["similarity_mode"],
+        similarity_mode=similarity_mode,
         enforce_dag=enforce_dag,
         random_state=random_state,
         n_init=n_init,
     )
-
-    if sweep:
-        best_result = sweep[best_k]
-        final_supernodes = best_result["final_supernodes"]
-        base_score = {
-            key: value for key, value in best_result.items() if key not in ("final_supernodes",)
-        }
-    else:
-        clusters = cluster_graph(
-            prune_graph,
-            target_k=max(best_k, 1),
-            max_layer_span=max_layer_span,
-            mean_method=method_config["mean_method"],
-            mediation_penalty=mediation_penalty,
-            similarity_mode=method_config["similarity_mode"],
-            enforce_dag=enforce_dag,
-            random_state=random_state,
-            n_init=n_init,
-        )
-        final_supernodes = supernodes_to_mapping(prune_graph, clusters)
-        base_score = score_k(
-            final_supernodes,
-            prune_graph,
-            similarity,
-            enforce_dag=enforce_dag,
-        )
+    final_supernodes = supernodes_to_mapping(prune_graph, clusters)
+    base_score = score_k(
+        final_supernodes,
+        prune_graph,
+        similarity,
+        enforce_dag=enforce_dag,
+    )
 
     method_slug = (
         f"ours-{method_config['mean_method']}-{method_config['similarity_mode']}"
     )
-    run_dir = output_dir / "runs" / graph_name / method_slug
+    run_dir = output_dir / "runs" / graph_name / method_slug / k_selection
     supernode_map_path = run_dir / "supernode_map.json"
-    auto_k_sweep_path = run_dir / "auto_k_sweep.json"
+    auto_k_sweep_path = run_dir / "fixed_k_metrics.json"
     flow_report_path = run_dir / "flow_report.json"
     result_path = run_dir / "result.json"
 
@@ -398,12 +445,17 @@ def _evaluate_existing_method(
     sng = build_supernode_graph(prune_graph, final_supernodes, enforce_dag=enforce_dag)
     flow_report = flow_faithfulness_report(sng, final_supernodes)
 
+    sweep_single = {
+        key: value for key, value in base_score.items()
+    }
     _write_json(supernode_map_path, final_supernodes)
     _write_json(
         auto_k_sweep_path,
         {
-            str(k): {key: value for key, value in result.items() if key != "final_supernodes"}
-            for k, result in sweep.items()
+            "k_selection": k_selection,
+            "target_k": target_k,
+            "num_nodes": num_nodes,
+            "metrics": sweep_single,
         },
     )
     _write_json(flow_report_path, flow_report)
@@ -412,12 +464,14 @@ def _evaluate_existing_method(
         graph_name=graph_name,
         dataset=dataset,
         graph_path=graph_path,
+        num_nodes=num_nodes,
+        k_selection=k_selection,
         method=method_slug,
         method_family="ours",
         mean_method=method_config["mean_method"],
         similarity_mode=method_config["similarity_mode"],
-        best_k=best_k,
-        auto_k_candidates=len(sweep),
+        best_k=target_k,
+        auto_k_candidates=0,
         final_supernodes=final_supernodes,
         base_score=base_score,
         flow_report=flow_report,
@@ -437,7 +491,7 @@ def _evaluate_existing_method(
     return result_payload
 
 
-def _evaluate_baseline(
+def _evaluate_baseline_fixed_k(
     *,
     prune_graph: PruneGraph,
     graph_path: Path,
@@ -446,29 +500,29 @@ def _evaluate_baseline(
     output_dir: Path,
     method: str,
     features: np.ndarray | None,
-    affinity: np.ndarray,
+    affinity: np.ndarray | torch.Tensor,
     clusterer: Callable[[int], list[list[str]]],
-    k_min_override: int | None,
-    k_max_override: int | None,
-    weights: dict[str, float] | None,
+    target_k: int,
+    k_selection: str,
+    num_nodes: int,
     enforce_dag: bool,
 ) -> dict[str, Any]:
-    best_k, sweep = find_best_k_for_clusterer(
-        prune_graph=prune_graph,
-        similarity=affinity,
-        clusterer=clusterer,
-        k_min_override=k_min_override,
-        k_max_override=k_max_override,
-        weights=weights,
+    if isinstance(affinity, torch.Tensor):
+        s_np = affinity.detach().cpu().numpy().astype(np.float64, copy=False)
+    else:
+        s_np = np.asarray(affinity, dtype=np.float64)
+    clusters = clusterer(target_k)
+    final_supernodes = supernodes_to_mapping(prune_graph, clusters)
+    base_score = score_k(
+        final_supernodes,
+        prune_graph,
+        s_np,
         enforce_dag=enforce_dag,
     )
-    best_result = sweep[best_k]
-    final_supernodes = best_result["final_supernodes"]
-    base_score = {key: value for key, value in best_result.items() if key != "final_supernodes"}
 
-    run_dir = output_dir / "runs" / graph_name / method
+    run_dir = output_dir / "runs" / graph_name / method / k_selection
     supernode_map_path = run_dir / "supernode_map.json"
-    auto_k_sweep_path = run_dir / "auto_k_sweep.json"
+    auto_k_sweep_path = run_dir / "fixed_k_metrics.json"
     flow_report_path = run_dir / "flow_report.json"
     result_path = run_dir / "result.json"
 
@@ -480,12 +534,15 @@ def _evaluate_baseline(
     sng = build_supernode_graph(prune_graph, final_supernodes, enforce_dag=enforce_dag)
     flow_report = flow_faithfulness_report(sng, final_supernodes)
 
+    sweep_single = {key: value for key, value in base_score.items()}
     _write_json(supernode_map_path, final_supernodes)
     _write_json(
         auto_k_sweep_path,
         {
-            str(k): {key: value for key, value in result.items() if key != "final_supernodes"}
-            for k, result in sweep.items()
+            "k_selection": k_selection,
+            "target_k": target_k,
+            "num_nodes": num_nodes,
+            "metrics": sweep_single,
         },
     )
     _write_json(flow_report_path, flow_report)
@@ -494,12 +551,14 @@ def _evaluate_baseline(
         graph_name=graph_name,
         dataset=dataset,
         graph_path=graph_path,
+        num_nodes=num_nodes,
+        k_selection=k_selection,
         method=method,
         method_family="baseline",
         mean_method=None,
         similarity_mode=None,
-        best_k=best_k,
-        auto_k_candidates=len(sweep),
+        best_k=target_k,
+        auto_k_candidates=0,
         final_supernodes=final_supernodes,
         base_score=base_score,
         flow_report=flow_report,
@@ -526,9 +585,6 @@ def evaluate_prune_graph(
     input_paths: Sequence[str],
     output_dir: Path,
     map_location: str,
-    k_min_override: int | None,
-    k_max_override: int | None,
-    weights: dict[str, float] | None,
     max_layer_span: int,
     mediation_penalty: float,
     enforce_dag: bool,
@@ -539,25 +595,29 @@ def evaluate_prune_graph(
     graph_name, dataset = _graph_identity(graph_path, input_paths)
     rows: list[dict[str, Any]] = []
 
+    num_nodes = len(_middle_indices(prune_graph))
+    k_schedule = _fixed_k_schedule(num_nodes)
+
     for method_config in METHOD_GRID:
-        rows.append(
-            _evaluate_existing_method(
-                prune_graph=prune_graph,
-                graph_path=graph_path,
-                graph_name=graph_name,
-                dataset=dataset,
-                output_dir=output_dir,
-                method_config=method_config,
-                k_min_override=k_min_override,
-                k_max_override=k_max_override,
-                weights=weights,
-                max_layer_span=max_layer_span,
-                mediation_penalty=mediation_penalty,
-                enforce_dag=enforce_dag,
-                random_state=random_state,
-                n_init=n_init,
+        for k_selection, target_k in k_schedule:
+            rows.append(
+                _evaluate_ours_fixed_k(
+                    prune_graph=prune_graph,
+                    graph_path=graph_path,
+                    graph_name=graph_name,
+                    dataset=dataset,
+                    output_dir=output_dir,
+                    method_config=method_config,
+                    target_k=target_k,
+                    k_selection=k_selection,
+                    num_nodes=num_nodes,
+                    max_layer_span=max_layer_span,
+                    mediation_penalty=mediation_penalty,
+                    enforce_dag=enforce_dag,
+                    random_state=random_state,
+                    n_init=n_init,
+                )
             )
-        )
 
     mid_idx = _middle_indices(prune_graph)
     middle_ids = [prune_graph.kept_ids[i] for i in mid_idx]
@@ -576,27 +636,9 @@ def evaluate_prune_graph(
             labels = KMeans(
                 n_clusters=target_k,
                 random_state=random_state,
-                n_init=n_init,
+                n_init=n_init,  # type: ignore[arg-type]
             ).fit_predict(node_features_mid)
         return labels_to_supernodes(prune_graph, middle_ids, labels)
-
-    rows.append(
-        _evaluate_baseline(
-            prune_graph=prune_graph,
-            graph_path=graph_path,
-            graph_name=graph_name,
-            dataset=dataset,
-            output_dir=output_dir,
-            method="baseline-kmeans-node-profile",
-            features=node_features,
-            affinity=node_profile_similarity,
-            clusterer=kmeans_clusterer,
-            k_min_override=k_min_override,
-            k_max_override=k_max_override,
-            weights=weights,
-            enforce_dag=enforce_dag,
-        )
-    )
 
     adjacency_affinity = _adjacency_affinity(prune_graph)
     adjacency_mid = adjacency_affinity[np.ix_(mid_idx, mid_idx)]
@@ -614,33 +656,54 @@ def evaluate_prune_graph(
                 affinity="precomputed",
                 assign_labels="kmeans",
                 random_state=random_state,
-                n_init=n_init,
+                n_init=n_init,  # type: ignore[arg-type]
             ).fit_predict(adjacency_mid)
         return labels_to_supernodes(prune_graph, middle_ids, labels)
 
-    rows.append(
-        _evaluate_baseline(
-            prune_graph=prune_graph,
-            graph_path=graph_path,
-            graph_name=graph_name,
-            dataset=dataset,
-            output_dir=output_dir,
-            method="baseline-spectral-adjacency",
-            features=None,
-            affinity=adjacency_affinity,
-            clusterer=adjacency_spectral_clusterer,
-            k_min_override=k_min_override,
-            k_max_override=k_max_override,
-            weights=weights,
-            enforce_dag=enforce_dag,
+    for k_selection, target_k in k_schedule:
+        rows.append(
+            _evaluate_baseline_fixed_k(
+                prune_graph=prune_graph,
+                graph_path=graph_path,
+                graph_name=graph_name,
+                dataset=dataset,
+                output_dir=output_dir,
+                method="baseline-kmeans-node-profile",
+                features=node_features,
+                affinity=node_profile_similarity,
+                clusterer=kmeans_clusterer,
+                target_k=target_k,
+                k_selection=k_selection,
+                num_nodes=num_nodes,
+                enforce_dag=enforce_dag,
+            )
         )
-    )
+        rows.append(
+            _evaluate_baseline_fixed_k(
+                prune_graph=prune_graph,
+                graph_path=graph_path,
+                graph_name=graph_name,
+                dataset=dataset,
+                output_dir=output_dir,
+                method="baseline-spectral-adjacency",
+                features=None,
+                affinity=adjacency_affinity,
+                clusterer=adjacency_spectral_clusterer,
+                target_k=target_k,
+                k_selection=k_selection,
+                num_nodes=num_nodes,
+                enforce_dag=enforce_dag,
+            )
+        )
     return rows
 
 
 def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
     output_dir = Path(args.output_dir).expanduser().resolve()
-    graph_paths = _discover_prune_graphs(args.input_path)
+    graph_paths = _discover_prune_graphs(
+        args.input_path,
+        node_threshold=args.node_threshold,
+    )
     summary_rows: list[dict[str, Any]] = []
     for graph_path in graph_paths:
         summary_rows.extend(
@@ -649,14 +712,6 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
                 input_paths=args.input_path,
                 output_dir=output_dir,
                 map_location=args.map_location,
-                k_min_override=args.k_min,
-                k_max_override=args.k_max,
-                weights={
-                    "w_intra": args.w_intra,
-                    "w_dag": args.w_dag,
-                    "w_attr": args.w_attr,
-                    "w_size": args.w_size,
-                },
                 max_layer_span=args.max_layer_span,
                 mediation_penalty=args.mediation_penalty,
                 enforce_dag=args.enforce_dag,
@@ -674,6 +729,7 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
         manifest_path,
         {
             "input_paths": list(args.input_path),
+            "node_threshold": args.node_threshold,
             "graph_paths": [str(path) for path in graph_paths],
             "output_dir": str(output_dir),
             "method_grid": METHOD_GRID,
@@ -681,25 +737,23 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
                 "baseline-kmeans-node-profile",
                 "baseline-spectral-adjacency",
             ],
+            "cluster_k_policy": (
+                "Middle-node count n = |non-fixed nodes|. Run each method at "
+                "k = round(n/2) and k = round(n/3), clamped to [1, n]. "
+                "Columns num_nodes and k_selection identify the run."
+            ),
             "summary_csv": str(summary_path),
             "results_json": str(results_path),
             "n_graphs": len(graph_paths),
             "n_runs": len(summary_rows),
             "config": {
-                "k_min": args.k_min,
-                "k_max": args.k_max,
+                "node_threshold": args.node_threshold,
                 "max_layer_span": args.max_layer_span,
                 "mediation_penalty": args.mediation_penalty,
                 "enforce_dag": args.enforce_dag,
                 "map_location": args.map_location,
                 "random_state": args.random_state,
                 "n_init": args.n_init,
-                "weights": {
-                    "w_intra": args.w_intra,
-                    "w_dag": args.w_dag,
-                    "w_attr": args.w_attr,
-                    "w_size": args.w_size,
-                },
             },
         },
     )
@@ -735,17 +789,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory where summary CSV/JSON and per-run artifacts will be saved.",
     )
     parser.add_argument("--map-location", type=str, default="cpu")
-    parser.add_argument("--k-min", type=int, default=None)
-    parser.add_argument("--k-max", type=int, default=None)
+    parser.add_argument(
+        "--node-threshold",
+        type=float,
+        default=None,
+        metavar="T",
+        help=(
+            "Only evaluate prune graphs whose path includes a threshold folder, e.g. "
+            "'node_0.7' (…\\\\entmax15\\\\node_0.7\\\\…) or SHAP-style "
+            "'node_inf_0.7_rel_0.7'. Omit to use every discovered *_prune_graph.pt."
+        ),
+    )
     parser.add_argument("--max-layer-span", type=int, default=4)
     parser.add_argument("--mediation-penalty", type=float, default=0.1)
     parser.add_argument("--enforce-dag", action="store_true")
     parser.add_argument("--random-state", type=int, default=42)
     parser.add_argument("--n-init", type=int, default=20)
-    parser.add_argument("--w-intra", type=float, default=0.30)
-    parser.add_argument("--w-dag", type=float, default=0.25)
-    parser.add_argument("--w-attr", type=float, default=0.25)
-    parser.add_argument("--w-size", type=float, default=0.20)
     return parser
 
 
@@ -755,13 +814,15 @@ def main() -> None:
     if not args.input_path:
         args.input_path = _default_input_paths()
     result = run_evaluation(args)
-    print("\n=== Clustering Evaluation Pipeline ===")
+    print("\n=== Clustering Evaluation (fixed k = n/2 and n/3) ===")
     print(f"output_dir: {result['output_dir']}")
     print(f"summary_csv: {result['summary_csv']}")
     print(f"results_json: {result['results_json']}")
     print(f"manifest_json: {result['manifest_json']}")
     print(f"n_graphs: {result['n_graphs']}")
     print(f"n_runs: {result['n_runs']}")
+    if args.node_threshold is not None:
+        print(f"node_threshold filter: {args.node_threshold:g}")
 
 
 if __name__ == "__main__":
