@@ -113,7 +113,12 @@ def classify_features(
             continue
 
         json_data = json.loads(data)
-        clerp = json_data.get("explanations", [])[0].get("description", "") 
+        explanations = json_data.get("explanations", [])
+        clerp = ""
+        if isinstance(explanations, list) and explanations:
+            first_explanation = explanations[0]
+            if isinstance(first_explanation, dict):
+                clerp = first_explanation.get("description", "")
         act_density = json_data.get("frac_nonzero", 0)
         # remove too frequently activated features
         if act_density > 0.1:

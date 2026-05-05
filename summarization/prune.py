@@ -314,6 +314,9 @@ def prune_graph_pipeline(
         info = metadata.get("info", {})
         source_set = info.get("neuronpedia_source_set") or info.get("source_urls", [""])[0].split("/")[-1]
         for node_id in kept_ids:
+            if attr[node_id].get("feature_type") == 'embedding':
+                attr[node_id]['clerp'] = f"Emb: {metadata.get('prompt_tokens', [])[attr[node_id].get('ctx_idx')]}"
+                continue
             if attr[node_id].get("feature_type") != 'cross layer transcoder':
                 continue
 
@@ -328,7 +331,12 @@ def prune_graph_pipeline(
                 continue
 
             json_data = json.loads(data)
-            clerp = json_data.get("explanations", [])[0].get("description", "") 
+            explanations = json_data.get("explanations", [])
+            clerp = ""
+            if isinstance(explanations, list) and explanations:
+                first_explanation = explanations[0]
+                if isinstance(first_explanation, dict):
+                    clerp = first_explanation.get("description", "")
             act_density = json_data.get("frac_nonzero", 0)
             if attr[node_id].get("clerp", "") == "":
                 attr[node_id]['clerp'] = clerp
