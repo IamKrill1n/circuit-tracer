@@ -6,13 +6,14 @@ from pathlib import Path
 from typing import Any, Literal
 
 import torch
-from entmax import sparsemax, entmax15  # type: ignore[import-not-found]
+from entmax import entmax15, entmax_bisect, sparsemax  # type: ignore[import-not-found]
 
 from summarization.utils import get_data_from_json
 
-NormalizeMethod = Literal["softmax", "sparsemax", "entmax15", "relu_l1"]
+NormalizeMethod = Literal["softmax", "sparsemax", "entmax15", "entmax"]
 SPECIAL_TOKEN_RE = re.compile(r"<[^>]+>")
 SPARSEMAX_MASK_VALUE = -1e9
+DEFAULT_ENTMAX_ALPHA = 1.3
 
 
 def _special_token_mask(prompt_tokens: list[str]) -> torch.Tensor:
@@ -26,6 +27,7 @@ def _normalize_scores(
     values: torch.Tensor,
     method: NormalizeMethod,
     special_mask: torch.Tensor,
+    entmax_alpha: float | None = None,
 ) -> torch.Tensor:
     if values.ndim != 1:
         raise ValueError(f"Expected 1D token scores, got shape={tuple(values.shape)}")
@@ -48,11 +50,12 @@ def _normalize_scores(
     elif method == "entmax15":
         masked_scores[special_mask] = SPARSEMAX_MASK_VALUE
         normalized = entmax15(masked_scores, dim=0)
-    elif method == "relu_l1":
-        pos = torch.clamp(masked_scores, min=0)
-        pos[special_mask] = 0
-        s = pos.sum()
-        normalized = pos / s if s > 0 else torch.ones_like(pos) / pos.shape[0]
+    elif method == "entmax":
+        alpha = DEFAULT_ENTMAX_ALPHA if entmax_alpha is None else float(entmax_alpha)
+        if not (1.0 < alpha <= 2.0):
+            raise ValueError(f"entmax alpha must satisfy 1 < alpha <= 2, got {alpha}.")
+        masked_scores[special_mask] = SPARSEMAX_MASK_VALUE
+        normalized = entmax_bisect(masked_scores, alpha=alpha, dim=0)
     else:
         raise ValueError(f"Invalid normalize method: {method}")
 
@@ -229,6 +232,7 @@ def get_token_attribution(
     device: str | torch.device = "cpu",
     *,
     masker_keep_prefix: int | None = None,
+    entmax_alpha: float | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Same pipeline as ``shap.Explainer(model, tokenizer)`` on an HF causal LM.
 
@@ -241,6 +245,9 @@ def get_token_attribution(
     masker_keep_prefix
         Optional SHAP masker setting to keep the first *k* token segments fixed
         (unmasked) during masking.
+    entmax_alpha
+        Alpha for ``normalize_method='entmax'``. Ignored by other methods.
+        Uses ``DEFAULT_ENTMAX_ALPHA`` when unset.
     Returns
     -------
     tuple[torch.Tensor, torch.Tensor]
@@ -282,7 +289,12 @@ def get_token_attribution(
         k = min(int(masker_keep_prefix), special_mask.shape[0])
         special_mask = special_mask.clone()
         special_mask[:k] = True
-    normalized = _normalize_scores(values, normalize_method, special_mask)
+    normalized = _normalize_scores(
+        values,
+        normalize_method,
+        special_mask,
+        entmax_alpha=entmax_alpha,
+    )
     if n_prefix_tokens_dropped > 0:
         prefix = torch.zeros(
             n_prefix_tokens_dropped,
@@ -302,6 +314,7 @@ def get_token_attribution_from_graph(
     normalize_method: NormalizeMethod = "sparsemax",
     device: str | torch.device = "cpu",
     masker_keep_prefix: int | None = None,
+    entmax_alpha: float | None = None,
 ) -> torch.Tensor:
     """Compute normalized SHAP token weights from a graph's prompt metadata.
 
@@ -315,6 +328,7 @@ def get_token_attribution_from_graph(
         normalize_method=normalize_method,
         device=device,
         masker_keep_prefix=masker_keep_prefix,
+        entmax_alpha=entmax_alpha,
     )
     return normalized
 
@@ -325,7 +339,8 @@ if __name__ == "__main__":
         prompt=_prompt,
         prompt_tokens=list(_ptok),
         model_name="google/gemma-2-2b",
-        normalize_method="relu_l1",
+        normalize_method="entmax",
+        entmax_alpha=1.3,
         device="cuda",
         masker_keep_prefix=2,
     )

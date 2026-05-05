@@ -25,7 +25,7 @@ from summarization.utils import _build_index_sets, get_data_from_json
 DEFAULT_SOURCE_SETS = ("clt-hp", "gemmascope-transcoder-16k")
 DEFAULT_SHAP_EVAL_NORMALIZATIONS: tuple[NormalizeMethod, ...] = (
     "softmax",
-    "relu_l1",
+    "entmax",
     "entmax15",
 )
 DEFAULT_SHAP_VALUES_JSON = Path("demos") / "shap_values.json"
@@ -128,6 +128,7 @@ def normalize_shap_values_for_prune(
     normalize_method: NormalizeMethod,
     *,
     masker_keep_prefix: int | None = None,
+    entmax_alpha: float | None = None,
 ) -> torch.Tensor:
     """Map ``raw_shap`` onto full ``prompt_tokens`` and apply token normalization.
 
@@ -143,7 +144,12 @@ def normalize_shap_values_for_prune(
         k = min(int(masker_keep_prefix), int(special.shape[0]))
         special = special.clone()
         special[:k] = True
-    return _normalize_scores(values.clone(), normalize_method, special)
+    return _normalize_scores(
+        values.clone(),
+        normalize_method,
+        special,
+        entmax_alpha=entmax_alpha,
+    )
 
 
 def _token_weights_for_embeddings(
@@ -268,6 +274,7 @@ def run_shap_json_sweep(args: argparse.Namespace) -> None:
                         [float(x) for x in raw_shap],
                         norm_method,  # type: ignore[arg-type]
                         masker_keep_prefix=eff_keep_prefix,
+                        entmax_alpha=args.entmax_alpha,
                     )
                     token_weights = _token_weights_for_embeddings(normalized, node_ids, emb_idx)
 
@@ -419,6 +426,7 @@ def run_legacy(args: argparse.Namespace) -> None:
                     model_name=args.model_name,
                     normalize_method=args.normalize_method,
                     device=device,
+                    entmax_alpha=args.entmax_alpha,
                 ).detach().cpu().to(torch.float32)
                 token_weights = token_weights_tensor.tolist()
 
@@ -535,9 +543,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--eval-normalizations",
         nargs="+",
-        choices=["softmax", "relu_l1", "entmax15", "sparsemax"],
+        choices=["softmax", "entmax", "entmax15", "sparsemax"],
         default=list(DEFAULT_SHAP_EVAL_NORMALIZATIONS),
-        help="Token-weight normalizations in sweep mode (default: softmax relu_l1 entmax15).",
+        help="Token-weight normalizations in sweep mode (default: softmax entmax entmax15).",
     )
     parser.add_argument(
         "--masker-keep-prefix",
@@ -618,9 +626,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--normalize-method",
-        choices=["softmax", "sparsemax", "entmax15", "relu_l1"],
+        choices=["softmax", "sparsemax", "entmax15", "entmax"],
         default="sparsemax",
         help="Normalization applied to SHAP attribution scores (legacy mode only).",
+    )
+    parser.add_argument(
+        "--entmax-alpha",
+        type=float,
+        default=1.3,
+        help="Alpha used when normalize method is 'entmax' (must satisfy 1 < alpha <= 2).",
     )
     parser.add_argument(
         "--logit-weights",
