@@ -12,7 +12,7 @@ import streamlit as st
 
 from api import save_subgraph
 from summarization.auto_grouping import find_best_k
-from summarization.cluster import build_supernode_graph, cluster_graph, supernodes_to_mapping
+from summarization.cluster import build_supernode_graph, cluster_graph, clusters_to_supernodes
 from summarization.cluster_viz import supernode_graph_figure
 from summarization.flow_analysis import flow_faithfulness_report
 from summarization.prune import PruneGraph, load_prune_graph, prune_graph_pipeline, save_prune_graph
@@ -326,8 +326,9 @@ def _cluster_from_prune(
         random_state=int(cluster_cfg["random_state"]),
         n_init=int(cluster_cfg["n_init"]),
     )
-    supernode_map = supernodes_to_mapping(prune_graph, clusters)
-    sng = build_supernode_graph(prune_graph, supernode_map, enforce_dag=enforce_dag)
+    rows = clusters_to_supernodes(prune_graph, clusters)
+    supernode_map = {s.name: s.member_node_ids() for s in rows}
+    sng = build_supernode_graph(prune_graph, rows, enforce_dag=enforce_dag)
     return supernode_map, sng, run_meta
 
 

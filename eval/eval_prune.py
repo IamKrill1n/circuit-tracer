@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 import re
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -254,7 +255,9 @@ def run_shap_json_sweep(args: argparse.Namespace) -> None:
         for graph_path in graph_paths:
             stem = graph_path.stem
             try:
-                _adj, node_ids, attr, metadata = get_data_from_json(str(graph_path))
+                _adj, nodes, metadata = get_data_from_json(str(graph_path))
+                node_ids = [n.node_id for n in nodes]
+                attr = {n.node_id: asdict(n) for n in nodes}
                 idx = _build_index_sets(node_ids, attr)
                 emb_idx = idx["embedding"]
                 prompt_tokens = [str(t) for t in (metadata.get("prompt_tokens") or [])]

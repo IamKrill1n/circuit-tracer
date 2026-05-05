@@ -10,7 +10,7 @@ import requests
 
 from api import generate_graph, save_subgraph
 from summarization.auto_grouping import find_best_k
-from summarization.cluster import build_supernode_graph, cluster_graph, supernodes_to_mapping
+from summarization.cluster import build_supernode_graph, cluster_graph, clusters_to_supernodes
 from summarization.cluster_viz import supernode_graph_figure
 from summarization.flow_analysis import flow_faithfulness_report
 from summarization.prune import prune_graph_pipeline
@@ -170,8 +170,9 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         random_state=args.random_state,
         n_init=args.n_init,
     )
-    supernode_map = supernodes_to_mapping(prune_graph, clusters)
-    sng = build_supernode_graph(prune_graph, supernode_map, enforce_dag=args.enforce_dag)
+    rows = clusters_to_supernodes(prune_graph, clusters)
+    supernode_map = {s.name: s.member_node_ids() for s in rows}
+    sng = build_supernode_graph(prune_graph, rows, enforce_dag=args.enforce_dag)
     flow_report = flow_faithfulness_report(sng, supernode_map)
 
     labelled_supernodes = _clustered_supernodes_for_upload(clusters)

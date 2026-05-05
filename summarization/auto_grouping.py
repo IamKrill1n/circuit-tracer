@@ -22,19 +22,6 @@ def _middle_indices(prune_graph: PruneGraph) -> list[int]:
     return [i for i, nid in enumerate(prune_graph.kept_ids) if not _is_fixed(prune_graph.attr, nid)]
 
 
-def _as_supernode_rows(
-    prune_graph: PruneGraph,
-    final_supernodes: dict[str, list[str]] | list[list[str]] | list[Supernode],
-) -> list[Supernode]:
-    if isinstance(final_supernodes, list) and (
-        not final_supernodes or isinstance(final_supernodes[0], Supernode)
-    ):
-        return final_supernodes
-    if isinstance(final_supernodes, list):
-        return clusters_to_supernodes(prune_graph, final_supernodes)
-    return mapping_dict_to_supernodes(prune_graph, final_supernodes)
-
-
 def eigengap_analysis(
     similarity: Any,
     prune_graph: PruneGraph,
@@ -134,6 +121,69 @@ def _silhouette_over_middle(
     return sil, float((sil + 1.0) / 2.0)
 
 
+def _dbcv_over_middle(
+    similarity: np.ndarray,
+    prune_graph: PruneGraph,
+    rows: list[Supernode],
+) -> float:
+    """
+    DBCV score over middle nodes with a precomputed distance matrix.
+
+    Returns NaN when DBCV is undefined (single cluster, all singleton labels, too few nodes)
+    or when no compatible DBCV implementation is installed.
+    """
+    ids = prune_graph.kept_ids
+    id_to_idx = {nid: i for i, nid in enumerate(ids)}
+    nid_to_label: dict[str, int] = {}
+    label_idx = 0
+    for row in rows:
+        if row.type != "features":
+            continue
+        assigned = False
+        for nid in row.member_node_ids():
+            if nid in id_to_idx:
+                nid_to_label[nid] = label_idx
+                assigned = True
+        if assigned:
+            label_idx += 1
+
+    if not nid_to_label:
+        return float("nan")
+    node_indices = [id_to_idx[nid] for nid in nid_to_label]
+    labels_arr = np.fromiter(
+        (nid_to_label[ids[i]] for i in node_indices),
+        dtype=np.int64,
+        count=len(node_indices),
+    )
+    n_distinct = int(len(set(labels_arr.tolist())))
+    if n_distinct < 2 or n_distinct >= len(labels_arr):
+        return float("nan")
+
+    s_block = similarity[np.ix_(node_indices, node_indices)]
+    s_block = (s_block + s_block.T) / 2.0
+    s_block = np.clip(s_block, 0.0, 1.0)
+    distance = 1.0 - s_block
+    np.fill_diagonal(distance, 0.0)
+
+    try:
+        try:
+            from dbcv import DBCV as _DBCV  # type: ignore[import-not-found]
+
+            try:
+                return float(_DBCV(distance, labels_arr, metric="precomputed"))
+            except TypeError:
+                return float(_DBCV(distance, labels_arr))
+        except ImportError:
+            from dbcv import dbcv as _dbcv  # type: ignore[import-not-found]
+
+            try:
+                return float(_dbcv(distance, labels_arr, metric="precomputed"))
+            except TypeError:
+                return float(_dbcv(distance, labels_arr))
+    except Exception:
+        return float("nan")
+
+
 def _dag_interleave_edge_fraction(
     sn_adj: np.ndarray,
     sn_names: list[str],
@@ -183,7 +233,7 @@ def _dag_interleave_edge_fraction(
 
 
 def score_clusters(
-    final_supernodes: dict[str, list[str]] | list[list[str]] | list[Supernode],
+    supernode_rows: list[Supernode],
     prune_graph: PruneGraph,
     similarity: Any,
     enforce_dag: bool = False,
@@ -202,7 +252,7 @@ def score_clusters(
     are accepted for backward compatibility but ignored.
     """
 
-    rows = _as_supernode_rows(prune_graph, final_supernodes)
+    rows = supernode_rows
     sng = build_supernode_graph(prune_graph, rows, enforce_dag=enforce_dag)
     n_middle = sum(1 for r in rows if r.type == "features")
 
@@ -222,6 +272,7 @@ def score_clusters(
         dtype=np.float64,
     )
     sil_raw, sil_norm = _silhouette_over_middle(s, prune_graph, rows)
+    dbcv = _dbcv_over_middle(s, prune_graph, rows)
 
     sn_names = list(sng.sn_names)
     sn_adj = np.asarray(sng.sn_adj, dtype=np.float64)
@@ -236,9 +287,22 @@ def score_clusters(
         "score_geo": float(score_geo),
         "sil_raw": float(sil_raw),
         "sil_norm": float(sil_norm),
+        "dbcv": float(dbcv),
         "dag_score": float(dag_score),
         "n_middle": int(n_middle),
     }
+
+
+def score_k(
+    final_supernodes: dict[str, list[str]],
+    prune_graph: PruneGraph,
+    similarity: Any,
+    enforce_dag: bool = False,
+    **_: Any,
+) -> dict[str, Any]:
+    """Boundary helper: score a supernode mapping dict (used by eval pipelines)."""
+    rows = mapping_dict_to_supernodes(prune_graph, final_supernodes)
+    return score_clusters(rows, prune_graph, similarity, enforce_dag=enforce_dag)
 
 
 def find_best_k(

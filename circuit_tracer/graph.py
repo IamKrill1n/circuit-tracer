@@ -1,4 +1,4 @@
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import torch
 from circuit_tracer.utils.tl_nnsight_mapping import (
@@ -6,6 +6,15 @@ from circuit_tracer.utils.tl_nnsight_mapping import (
     UnifiedConfig,
 )
 from circuit_tracer.utils import get_default_device
+
+
+def _coerce_graph_cfg(cfg: Any) -> UnifiedConfig:
+    """Normalize serialized / HF / dict configs without double-converting ``UnifiedConfig``."""
+    if isinstance(cfg, UnifiedConfig):
+        return cfg
+    if isinstance(cfg, dict):
+        return UnifiedConfig.from_dict(cfg)
+    return convert_nnsight_config_to_transformerlens(cfg)
 
 
 class Graph:
@@ -62,7 +71,7 @@ class Graph:
         """
         self.input_string = input_string
         self.adjacency_matrix = adjacency_matrix
-        self.cfg = convert_nnsight_config_to_transformerlens(cfg)
+        self.cfg = _coerce_graph_cfg(cfg)
         self.n_pos = len(input_tokens)
         self.active_features = active_features
         self.logit_tokens = logit_tokens
@@ -191,32 +200,6 @@ def find_threshold(scores: torch.Tensor, threshold: float):
     threshold_index = min(threshold_index, len(cumulative_score) - 1)
     return sorted_scores[threshold_index]
 
-def remove_dangling_nodes(
-    node_mask: torch.Tensor,
-    edge_mask: torch.Tensor,
-    n_features: int,
-    n_tokens: int,
-    n_logits: int,
-):
-    old_node_mask = node_mask.clone()
-    # Ensure feature and error nodes have outgoing edges
-    node_mask[: -n_logits - n_tokens] &= edge_mask[:, : -n_logits - n_tokens].any(0)
-    # Ensure feature nodes have incoming edges
-    node_mask[:n_features] &= edge_mask[:n_features].any(1)
-
-    # iteratively prune until all nodes missing incoming / outgoing edges are gone
-    # (each pruning iteration potentially opens up new candidates for pruning)
-    # this should not take more than n_layers + 1 iterations
-    while not torch.all(node_mask == old_node_mask):
-        old_node_mask[:] = node_mask
-        edge_mask[~node_mask] = False
-        edge_mask[:, ~node_mask] = False
-
-        # Ensure feature and error nodes have outgoing edges
-        node_mask[: -n_logits - n_tokens] &= edge_mask[:, : -n_logits - n_tokens].any(0)
-        # Ensure feature nodes have incoming edges
-        node_mask[:n_features] &= edge_mask[:n_features].any(1)
-
 class PruneResult(NamedTuple):
     node_mask: torch.Tensor  # Boolean tensor indicating which nodes to keep
     edge_mask: torch.Tensor  # Boolean tensor indicating which edges to keep
@@ -298,91 +281,58 @@ def prune_graph(
     alpha: float = 0.5,
     keep_all_tokens_and_logits: bool = True,
 ):
-    # --- Setup ---
+    """Prune using the same influence/relevance core as ``summarization.prune.prune_attr_graph``."""
+    from summarization.attr_graph import AttrGraph
+    from summarization.prune import prune_masks_from_attr_graph
+
+    ag = AttrGraph.from_graph(graph)
+    device = graph.adjacency_matrix.device
+    num_nodes = graph.adjacency_matrix.shape[0]
     n_tokens = len(graph.input_tokens)
     n_logits = len(graph.logit_tokens)
-    n_features = len(graph.selected_features)
-    num_nodes = graph.adjacency_matrix.shape[0]
 
-    device = graph.adjacency_matrix.device
-
-    # --- Logit weights ---
-    if logit_weights is None:
-        logit_weights = torch.zeros(num_nodes, device=device)
-        logit_weights[-n_logits:] = graph.logit_probabilities
-
-    # --- Token weights ---
-    embed_start_idx = num_nodes - n_logits - n_tokens
-    embed_end_idx = num_nodes - n_logits
-
-    if token_weights is None:
-        emb_weights = torch.zeros(num_nodes, device=device)
-        emb_weights[embed_start_idx:embed_end_idx] = 1 / n_tokens
+    logits_tensor = None
+    mode: str | None = "probs"
+    if isinstance(logit_weights, str):
+        mode = logit_weights if logit_weights in ("probs", "target") else "probs"
+    elif logit_weights is not None:
+        mode = None
+        logits_tensor = logit_weights.to(device=device).reshape(num_nodes)
     else:
-        emb_weights = torch.zeros(num_nodes, device=device)
-        emb_weights[embed_start_idx:embed_end_idx] = torch.tensor(
-            token_weights, device=device
+        mode = "probs"
+
+    emb_tensor = None
+    token_list = None
+    if token_weights is not None and hasattr(token_weights, "to"):
+        emb_tensor = token_weights.to(device=device).reshape(num_nodes)
+    elif token_weights is not None:
+        token_list = [float(x) for x in token_weights]
+
+    node_mask, edge_mask, node_inf, node_rel, _edge_inf, _edge_rel, _ratio = (
+        prune_masks_from_attr_graph(
+            ag,
+            token_weights=emb_tensor,
+            logit_weights=logits_tensor,
+            logit_weights_mode=mode if logits_tensor is None else "probs",
+            token_weights_list=token_list,
+            node_influence_threshold=node_threshold,
+            node_relevance_threshold=node_threshold,
+            edge_influence_threshold=edge_threshold,
+            edge_relevance_threshold=edge_threshold,
+            keep_all_tokens_and_logits=keep_all_tokens_and_logits,
         )
-
-    # =========================
-    # 1. Compute RAW scores
-    # =========================
-    node_influence = compute_node_influence(graph.adjacency_matrix, logit_weights)
-    node_relevance = compute_node_relevance(graph.adjacency_matrix, emb_weights)
-
-    # =========================
-    # 2. Combine → S
-    # =========================
-    node_scores = combine_scores_geometric(
-        node_influence, node_relevance, alpha=alpha
     )
 
-    # =========================
-    # 3. Node pruning (percentile)
-    # =========================
-    node_mask = node_scores >= find_threshold(node_scores, node_threshold)
-
-    if keep_all_tokens_and_logits:
-        node_mask[-n_logits - n_tokens :] = True
-
-    # =========================
-    # 4. Prune matrix
-    # =========================
-    pruned_matrix = graph.adjacency_matrix.clone()
-    pruned_matrix[~node_mask] = 0
-    pruned_matrix[:, ~node_mask] = 0
-
-    # =========================
-    # 5. Edge scores (combine again)
-    # =========================
-    edge_influence = compute_edge_influence(pruned_matrix, logit_weights)
-    edge_relevance = compute_edge_relevance(pruned_matrix, emb_weights)
-
-    edge_scores = combine_scores_geometric(
-        edge_influence.flatten(),
-        edge_relevance.flatten(),
-        alpha=alpha,
+    node_scores = _combined_node_scores(
+        node_inf,
+        node_rel,
+        combined_scores_method=combined_scores_method,
         normalization=normalization,
-    ).reshape_as(edge_influence)
-
-    edge_mask = edge_scores >= find_threshold(edge_scores.flatten(), edge_threshold)
-
-    # =========================
-    # 6. Cleanup (same as before)
-    # =========================
-    remove_dangling_nodes(
-        node_mask=node_mask,
-        edge_mask=edge_mask,
-        n_features=n_features,
-        n_tokens=n_tokens,
-        n_logits=n_logits,
+        alpha=alpha,
     )
-
-    # =========================
-    # 7. Cumulative scores (based on S)
-    # =========================
     sorted_scores, sorted_indices = torch.sort(node_scores, descending=True)
-    cumulative_scores = torch.cumsum(sorted_scores, dim=0) / torch.sum(sorted_scores)
+    denom = torch.sum(sorted_scores).clamp(min=1e-12)
+    cumulative_scores = torch.cumsum(sorted_scores, dim=0) / denom
 
     final_scores = torch.zeros_like(node_scores)
     final_scores[sorted_indices] = cumulative_scores

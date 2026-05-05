@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -164,7 +164,9 @@ def run_single_graph(
     normalization: str,
     token_model: str,
 ) -> ExperimentResult:
-    adj, node_ids, attr, _metadata = get_data_from_json(str(graph_path))
+    adj, nodes, _metadata = get_data_from_json(str(graph_path))
+    node_ids = [n.node_id for n in nodes]
+    attr = {n.node_id: asdict(n) for n in nodes}
     idx = _build_index_sets(node_ids, attr)
     feature_indices = idx["feature"]
     embedding_indices = idx["embedding"]

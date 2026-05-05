@@ -16,7 +16,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from summarization.cluster import build_supernode_graph, cluster_graph, supernodes_to_mapping
+from summarization.cluster import build_supernode_graph, cluster_graph, clusters_to_supernodes
 from summarization.cluster_viz import supernode_graph_figure
 from summarization.prune import load_prune_graph, prune_graph_pipeline
 
@@ -44,8 +44,6 @@ def _run_prune_cached(
     node_threshold: float,
     edge_threshold: float,
     keep_all_tokens: bool,
-    combined_scores_method: str,
-    alpha: float,
 ) -> bytes:
     """Serialize PruneGraph via torch.save to bytes for caching."""
     import io
@@ -60,8 +58,6 @@ def _run_prune_cached(
         node_threshold=node_threshold,
         edge_threshold=edge_threshold,
         keep_all_tokens_and_logits=keep_all_tokens,
-        combined_scores_method=combined_scores_method,
-        alpha=alpha,
     )
     buf = io.BytesIO()
     torch.save(pg.to_dict(), buf)
@@ -137,11 +133,9 @@ def main() -> None:
             placeholder='e.g. [0, 0, 0.5, 0.5] — leave empty for uniform',
             height=68,
         )
-        node_th = st.slider("Node threshold (cumulative)", 0.0, 1.0, 0.8, 0.01)
-        edge_th = st.slider("Edge threshold (cumulative)", 0.0, 1.0, 0.98, 0.01)
+        node_th = st.slider("Node threshold (influence and relevance)", 0.0, 1.0, 0.8, 0.01)
+        edge_th = st.slider("Edge threshold (influence and relevance)", 0.0, 1.0, 0.98, 0.01)
         keep_all = st.checkbox("Keep all tokens and logits", value=True)
-        combined = st.selectbox("Combined scores", ("geometric", "arithmetic", "harmonic"))
-        alpha = st.slider("Alpha (influence vs relevance blend)", 0.0, 1.0, 0.5, 0.05)
 
     with st.expander("Clustering options", expanded=True):
         auto_k = st.checkbox("Pick k automatically (`find_best_k`)", value=False)
@@ -171,8 +165,6 @@ def main() -> None:
                 float(node_th),
                 float(edge_th),
                 keep_all,
-                combined,
-                float(alpha),
             )
             prune_graph = _prune_from_cache(blob)
         else:
@@ -216,8 +208,9 @@ def main() -> None:
             similarity_mode=str(similarity_mode),
             enforce_dag=enforce_dag,
         )
-        mapped = supernodes_to_mapping(prune_graph, supernodes)
-        sng = build_supernode_graph(prune_graph, mapped, enforce_dag=False)
+        rows_sn = clusters_to_supernodes(prune_graph, supernodes)
+        mapped = {s.name: s.member_node_ids() for s in rows_sn}
+        sng = build_supernode_graph(prune_graph, rows_sn, enforce_dag=False)
     except Exception as e:
         st.exception(e)
         return

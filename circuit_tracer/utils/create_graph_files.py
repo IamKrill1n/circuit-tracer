@@ -179,24 +179,23 @@ def create_graph_files(
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     graph.to(device)
-    node_mask, edge_mask, influence_scores, relevance_scores = (
-        el.cpu() for el in prune_graph(
-            graph,
-            token_weights,
-            logit_weights,
-            node_influence_threshold,
-            edge_influence_threshold,
-            node_relevance_threshold,
-            edge_relevance_threshold,
-            keep_all_tokens_and_logits=keep_all_tokens_and_logits
-        )
+    prune_result = prune_graph(
+        graph,
+        token_weights=token_weights,
+        logit_weights=logit_weights,
+        node_threshold=node_threshold,
+        edge_threshold=edge_threshold,
+        keep_all_tokens_and_logits=keep_all_tokens_and_logits,
     )
+    node_mask = prune_result.node_mask.cpu()
+    edge_mask = prune_result.edge_mask.cpu()
+    influence_scores = prune_result.cumulative_scores.cpu()
     graph.to("cpu")
 
     tokenizer = AutoTokenizer.from_pretrained(graph.cfg.tokenizer_name)
     nodes = create_nodes(graph, node_mask, tokenizer, influence_scores)
     used_nodes, used_edges = create_used_nodes_and_edges(graph, nodes, edge_mask)
-    model = build_model(graph, used_nodes, used_edges, slug, scan, node_influence_threshold, tokenizer)
+    model = build_model(graph, used_nodes, used_edges, slug, scan, node_threshold, tokenizer)
 
     # Write the output locally
     with open(os.path.join(output_path, f"{slug}.json"), "w") as f:

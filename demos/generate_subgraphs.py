@@ -35,7 +35,7 @@ def generate_subgraphs(
         display_name:                display name for saved subgraph
     """
     # 1. Prune
-    kept_ids, pruned_adj, attr, metadata = prune_graph_pipeline(
+    pg = prune_graph_pipeline(
         json_path=graph_path,
         logit_weights=logit_weights,
         token_weights=token_weights,
@@ -43,6 +43,10 @@ def generate_subgraphs(
         edge_threshold=edge_threshold,
         keep_all_tokens_and_logits=keep_all_tokens_and_logits,
     )
+    kept_ids = pg.kept_ids
+    pruned_adj = pg.pruned_adj
+    attr = pg.attr
+    metadata = pg.metadata
 
     print(f"Subgraph has {len(kept_ids)} nodes, {int((pruned_adj != 0).sum())} edges")
 

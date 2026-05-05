@@ -5,15 +5,44 @@ from api import get_feature, generate_autointerp
 import networkx as nx
 from typing import Any, Dict, List, Tuple, Optional, Literal, NamedTuple
 
+from summarization.supernode_graph import Node
+
+
+def _node_from_json_dict(raw: dict) -> Node:
+    nid = str(raw.get("node_id", ""))
+    act_raw = raw.get("activation")
+    activation = float(act_raw) if isinstance(act_raw, (int, float)) else None
+    inf_raw = raw.get("influence")
+    influence = float(inf_raw) if isinstance(inf_raw, (int, float)) else None
+    rel_raw = raw.get("relevance")
+    relevance = float(rel_raw) if isinstance(rel_raw, (int, float)) else None
+    return Node(
+        node_id=nid,
+        feature=int(raw.get("feature", 0)),
+        layer=str(raw.get("layer", "")),
+        ctx_idx=int(raw.get("ctx_idx", 0)),
+        feature_type=str(raw.get("feature_type", "")),
+        token_prob=float(raw.get("token_prob", 0.0)),
+        is_target_logit=bool(raw.get("is_target_logit", False)),
+        run_idx=int(raw.get("run_idx", 0)),
+        reverse_ctx_idx=int(raw.get("reverse_ctx_idx", 0)),
+        jsNodeId=str(raw.get("jsNodeId", "") or nid),
+        clerp=str(raw.get("clerp", "")),
+        influence=influence,
+        activation=activation,
+        relevance=relevance,
+    )
+
+
 def get_data_from_json(json_path: str):
     # Explicit UTF-8 avoids UnicodeDecodeError on Windows (default locale is often cp1252).
     with open(json_path, "r", encoding="utf-8-sig") as f:
         data = json.load(f)
 
     metadata = data.get("metadata", {})
-    nodes = data.get("nodes", [])
+    raw_nodes = data.get("nodes", [])
     links = data.get("links", [])
-    node_ids = [n["node_id"] for n in nodes]
+    node_ids = [n["node_id"] for n in raw_nodes]
     id_to_index = {node_id: idx for idx, node_id in enumerate(node_ids)}
     n = len(node_ids)
     adj_matrix = torch.zeros((n, n), dtype=torch.float32)
@@ -27,10 +56,9 @@ def get_data_from_json(json_path: str):
             tgt_idx = id_to_index[tgt]
             adj_matrix[tgt_idx, src_idx] = weight  # Note: row=tgt, col=src for incoming edges
 
-    
-    attr = {node["node_id"]: node for node in nodes}
+    nodes = [_node_from_json_dict(n) for n in raw_nodes]
 
-    return adj_matrix, node_ids, attr, metadata
+    return adj_matrix, nodes, metadata
 
 def _node_type(attr: Dict[str, Any], node: str) -> str:
     return attr.get(node, {}).get("feature_type", "")
@@ -217,5 +245,5 @@ def get_clerp(metadata: dict, attr: dict, generate_missing: bool = True, retry_d
 
 
 if '__main__' == __name__:
-    adj_matrix, node_ids, attr, metadata = get_data_from_json("demos/temp_graph_files/austin_clt.json")
+    adj_matrix, nodes, metadata = get_data_from_json("demos/temp_graph_files/austin_clt.json")
     print(metadata)

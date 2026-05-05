@@ -150,14 +150,14 @@ if __name__ == "__main__":
     prompts_tokens = ["<start_of_turn>","user","⏎","What"," is"," the"," capital"," of"," the"," state"," containing"," Dallas","?"," Answer"," immediately",".","<end_of_turn>","⏎","<start_of_turn>","model","⏎"]
     # graph_path = "demos/temp_graph_files/dallas-austin-gs2-27b-it_2026-03-05T07-24-51-963Z.json"
     graph_path = 'demos/temp_graph_files/dallas-austin_gemma3.json'
-    adj, node_ids, attr, metadata = get_data_from_json(graph_path)
+    _adj, _nodes, _metadata = get_data_from_json(graph_path)
     name = graph_path.split('/')[-1].split('.')[0]
     token_weights = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1/3, 0, 0, 1/3, 0, 1/3, 0, 0, 0, 0, 0, 0]
     # token_weights = [0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 #     token_weights = [0.00198786, 0.03153391, 0.00083086, 0.01473883, 0.22338926, 0.00649094,
 #   0.00222269, 0.01996207, 0.0052309, 0.67869559, 0.01491708]
 
-    kept_ids, pruned_adj, attr, metadata = prune_graph_pipeline(
+    pg = prune_graph_pipeline(
         json_path=graph_path,
         logit_weights="target",
         token_weights=token_weights,
@@ -165,6 +165,9 @@ if __name__ == "__main__":
         edge_threshold=0.7,
         keep_all_tokens_and_logits=False,
     )
+    kept_ids = pg.kept_ids
+    pruned_adj = pg.pruned_adj
+    attr = pg.attr
 
     print(f"Kept {len(kept_ids)} nodes and {(pruned_adj != 0).sum().item()} edges after pruning.")
     for node in kept_ids:

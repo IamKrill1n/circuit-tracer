@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import numpy as np
 import torch
@@ -470,26 +470,16 @@ def mapping_dict_to_supernodes(prune_graph: PruneGraph, mapping: dict[str, list[
 
 def build_supernode_graph(
     prune_graph: PruneGraph,
-    final_supernodes: dict[str, list[str]] | list[list[str]] | list[Supernode],
+    supernode_rows: list[Supernode],
     enforce_dag: bool = False,
 ) -> SummarizationGraph:
     """
     Build a clustered supernode graph from a pruned node-level graph.
 
+    Pass typed ``Supernode`` rows from ``clusters_to_supernodes`` or ``mapping_dict_to_supernodes``.
     Returns sn-level adjacency and influence metrics that downstream consumers
     can use for scoring, reporting, and visualization.
     """
-    supernode_rows: list[Supernode]
-    if isinstance(final_supernodes, list):
-        if not final_supernodes:
-            supernode_rows = []
-        elif isinstance(final_supernodes[0], Supernode):
-            supernode_rows = [cast(Supernode, row) for row in final_supernodes]
-        else:
-            supernode_rows = clusters_to_supernodes(prune_graph, cast(list[list[str]], final_supernodes))
-    else:
-        supernode_rows = mapping_dict_to_supernodes(prune_graph, final_supernodes)
-
     kept_ids = prune_graph.kept_ids
     attr = prune_graph.attr
     adj = prune_graph.pruned_adj.clone().float().T  # sender-indexed

@@ -174,7 +174,7 @@ def _build_shap_lm_explainer(
 
 @lru_cache(maxsize=64)
 def _cached_prompt_payload_from_graph(graph_path: str) -> tuple[str, tuple[str, ...], int]:
-    _adj, _node_ids, attr, metadata = get_data_from_json(graph_path)
+    _adj, nodes, metadata = get_data_from_json(graph_path)
     prompt = str(metadata.get("prompt", ""))
     if not prompt:
         raise ValueError(f"Graph metadata does not include prompt: {graph_path}")
@@ -185,12 +185,9 @@ def _cached_prompt_payload_from_graph(graph_path: str) -> tuple[str, tuple[str, 
     prompt_tokens = tuple(str(token) for token in prompt_tokens_raw)
 
     target_token_id = None
-    for node_attr in attr.values():
-        if node_attr.get("is_target_logit"):
-            feature = node_attr.get("feature")
-            if feature is None:
-                continue
-            target_token_id = int(feature)
+    for node in nodes:
+        if node.is_target_logit:
+            target_token_id = int(node.feature)
             break
     if target_token_id is None:
         raise ValueError(f"No is_target_logit node with feature id found in graph: {graph_path}")

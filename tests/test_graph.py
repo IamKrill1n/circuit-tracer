@@ -135,7 +135,7 @@ def test_small_graph():
 
     node_influence_on_logits = compute_node_influence(test_graph.adjacency_matrix, logit_weights)
     influence_tensor = torch.tensor(
-        [1 / 12, 1 / 3, 0, 1 / 4, 0, 0, 1 / 3, 0, 1 / 4, 1 / 4, 1 / 6, 0]
+        [1 / 12, 1 / 3, 0, 1 / 4, 0, 0, 1 / 3, 0, 1 / 4, 1 / 4, 1 / 6, 1.0]
     )
     assert torch.allclose(node_influence_on_logits, influence_tensor)
 

@@ -17,6 +17,7 @@ from summarization.cluster import (
     cluster_graph,
     compute_similarity,
     labels_to_supernodes,
+    mapping_dict_to_supernodes,
     supernodes_to_mapping,
 )
 from summarization.flow_analysis import flow_faithfulness_report
@@ -439,7 +440,11 @@ def _evaluate_ours_fixed_k(
         final_supernodes,
         prune_graph,
     )
-    sng = build_supernode_graph(prune_graph, final_supernodes, enforce_dag=enforce_dag)
+    sng = build_supernode_graph(
+        prune_graph,
+        mapping_dict_to_supernodes(prune_graph, final_supernodes),
+        enforce_dag=enforce_dag,
+    )
     flow_report = flow_faithfulness_report(sng, final_supernodes)
 
     sweep_single = {
@@ -528,7 +533,11 @@ def _evaluate_baseline_fixed_k(
         final_supernodes,
         prune_graph,
     )
-    sng = build_supernode_graph(prune_graph, final_supernodes, enforce_dag=enforce_dag)
+    sng = build_supernode_graph(
+        prune_graph,
+        mapping_dict_to_supernodes(prune_graph, final_supernodes),
+        enforce_dag=enforce_dag,
+    )
     flow_report = flow_faithfulness_report(sng, final_supernodes)
 
     sweep_single = {key: value for key, value in base_score.items()}

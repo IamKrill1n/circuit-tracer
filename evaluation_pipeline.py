@@ -21,6 +21,7 @@ from summarization.cluster import (
     cluster_graph,
     compute_similarity,
     labels_to_supernodes,
+    mapping_dict_to_supernodes,
     supernodes_to_mapping,
 )
 from summarization.flow_analysis import flow_faithfulness_report
@@ -51,6 +52,7 @@ SUMMARY_COLUMNS = [
     "total_base",
     "silhouette",
     "silhouette_norm",
+    "dbcv",
     "dag_score",
     "n_middle",
     "within_cluster_weighted_edge_cosine_mean",
@@ -278,10 +280,11 @@ def _flatten_metrics(
         "best_k": best_k,
         "auto_k_candidates": auto_k_candidates,
         "n_supernodes": len(final_supernodes),
-        "total": base_score.get("total"),
-        "total_base": base_score.get("total_base"),
-        "silhouette": base_score.get("silhouette"),
-        "silhouette_norm": base_score.get("silhouette_norm"),
+        "total": base_score.get("total", base_score.get("score_arith")),
+        "total_base": base_score.get("total_base", base_score.get("score_harm")),
+        "silhouette": base_score.get("silhouette", base_score.get("sil_raw")),
+        "silhouette_norm": base_score.get("silhouette_norm", base_score.get("sil_norm")),
+        "dbcv": base_score.get("dbcv"),
         "dag_score": base_score.get("dag_score"),
         "n_middle": base_score.get("n_middle"),
         "within_cluster_weighted_edge_cosine_mean": weighted_edge_cosine_mean,
@@ -395,7 +398,11 @@ def _evaluate_existing_method(
         final_supernodes,
         prune_graph,
     )
-    sng = build_supernode_graph(prune_graph, final_supernodes, enforce_dag=enforce_dag)
+    sng = build_supernode_graph(
+        prune_graph,
+        mapping_dict_to_supernodes(prune_graph, final_supernodes),
+        enforce_dag=enforce_dag,
+    )
     flow_report = flow_faithfulness_report(sng, final_supernodes)
 
     _write_json(supernode_map_path, final_supernodes)
@@ -477,7 +484,11 @@ def _evaluate_baseline(
         final_supernodes,
         prune_graph,
     )
-    sng = build_supernode_graph(prune_graph, final_supernodes, enforce_dag=enforce_dag)
+    sng = build_supernode_graph(
+        prune_graph,
+        mapping_dict_to_supernodes(prune_graph, final_supernodes),
+        enforce_dag=enforce_dag,
+    )
     flow_report = flow_faithfulness_report(sng, final_supernodes)
 
     _write_json(supernode_map_path, final_supernodes)
