@@ -396,7 +396,6 @@ def _evaluate_ours_fixed_k(
     k_selection: str,
     num_nodes: int,
     max_layer_span: int,
-    mediation_penalty: float,
     enforce_dag: bool,
     random_state: int,
     n_init: int,
@@ -406,7 +405,6 @@ def _evaluate_ours_fixed_k(
     similarity = compute_similarity(
         prune_graph,
         mean_method=mean_method,
-        mediation_penalty=mediation_penalty,
         similarity_mode=similarity_mode,
     )
     clusters = cluster_graph(
@@ -414,7 +412,6 @@ def _evaluate_ours_fixed_k(
         target_k=target_k,
         max_layer_span=max_layer_span,
         mean_method=mean_method,
-        mediation_penalty=mediation_penalty,
         similarity_mode=similarity_mode,
         enforce_dag=enforce_dag,
         random_state=random_state,
@@ -586,7 +583,6 @@ def evaluate_prune_graph(
     output_dir: Path,
     map_location: str,
     max_layer_span: int,
-    mediation_penalty: float,
     enforce_dag: bool,
     random_state: int,
     n_init: int,
@@ -612,7 +608,6 @@ def evaluate_prune_graph(
                     k_selection=k_selection,
                     num_nodes=num_nodes,
                     max_layer_span=max_layer_span,
-                    mediation_penalty=mediation_penalty,
                     enforce_dag=enforce_dag,
                     random_state=random_state,
                     n_init=n_init,
@@ -713,7 +708,6 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
                 output_dir=output_dir,
                 map_location=args.map_location,
                 max_layer_span=args.max_layer_span,
-                mediation_penalty=args.mediation_penalty,
                 enforce_dag=args.enforce_dag,
                 random_state=args.random_state,
                 n_init=args.n_init,
@@ -749,7 +743,6 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
             "config": {
                 "node_threshold": args.node_threshold,
                 "max_layer_span": args.max_layer_span,
-                "mediation_penalty": args.mediation_penalty,
                 "enforce_dag": args.enforce_dag,
                 "map_location": args.map_location,
                 "random_state": args.random_state,
@@ -801,7 +794,6 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--max-layer-span", type=int, default=4)
-    parser.add_argument("--mediation-penalty", type=float, default=0.1)
     parser.add_argument("--enforce-dag", action="store_true")
     parser.add_argument("--random-state", type=int, default=42)
     parser.add_argument("--n-init", type=int, default=20)

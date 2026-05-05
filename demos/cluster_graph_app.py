@@ -150,7 +150,6 @@ def main() -> None:
         max_sn = st.number_input("Max supernodes cap (0 = no cap)", min_value=0, max_value=100, value=0)
         mean_method = st.selectbox("Mean method", ("geo", "harm", "arith"), index=2)
         similarity_mode = st.selectbox("Similarity mode", ("edge", "node"), index=0)
-        mediation = st.slider("Mediation penalty", 0.0, 1.0, 0.1, 0.05)
         enforce_dag = st.checkbox("Enforce DAG constraints on clusters", value=True)
 
     run = st.button("Run pipeline & visualize", type="primary")
@@ -202,7 +201,6 @@ def main() -> None:
                 k_max_override=None,
                 max_sn=int(max_sn) if max_sn > 0 else None,
                 mean_method=str(mean_method),
-                mediation_penalty=float(mediation),
                 similarity_mode=str(similarity_mode),
                 enforce_dag=enforce_dag,
             )
@@ -215,7 +213,6 @@ def main() -> None:
             max_layer_span=int(max_layer_span),
             max_sn=int(max_sn) if max_sn > 0 else None,
             mean_method=str(mean_method),
-            mediation_penalty=float(mediation),
             similarity_mode=str(similarity_mode),
             enforce_dag=enforce_dag,
         )

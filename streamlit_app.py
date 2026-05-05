@@ -104,6 +104,8 @@ def _prune_cache_path(repo_root: Path, input_path: Path, prune_cfg: dict[str, An
 
 
 def _to_jsonable(obj: Any) -> Any:
+    if isinstance(obj, SummarizationGraph):
+        return _to_jsonable(obj.to_legacy_dict())
     if isinstance(obj, dict):
         return {key: _to_jsonable(value) for key, value in obj.items()}
     if isinstance(obj, list):
@@ -267,7 +269,7 @@ def _cluster_from_prune(
     *,
     auto_k: bool,
     auto_k_cfg: dict[str, Any],
-) -> tuple[dict[str, list[str]], dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[str, list[str]], SummarizationGraph, dict[str, Any]]:
     """
     Returns `(supernode_map, sng, run_meta)` where `run_meta` includes resolved `target_k`
     and optional auto-k diagnostics.
@@ -287,8 +289,8 @@ def _cluster_from_prune(
             weights=auto_k_cfg["weights"],
             max_sn=max_sn,
             mean_method=mean_method,
-            mediation_penalty=float(cluster_cfg["mediation_penalty"]),
             similarity_mode=cluster_cfg["similarity_mode"],
+            decay_rate=cluster_cfg["decay_rate"],
             enforce_dag=enforce_dag,
             random_state=int(cluster_cfg["random_state"]),
             n_init=int(cluster_cfg["n_init"]),
@@ -316,8 +318,8 @@ def _cluster_from_prune(
         max_layer_span=int(cluster_cfg["max_layer_span"]),
         max_sn=max_sn,
         mean_method=mean_method,
-        mediation_penalty=float(cluster_cfg["mediation_penalty"]),
         similarity_mode=cluster_cfg["similarity_mode"],
+        decay_rate=cluster_cfg["decay_rate"],
         enforce_dag=enforce_dag,
         random_state=int(cluster_cfg["random_state"]),
         n_init=int(cluster_cfg["n_init"]),
@@ -594,18 +596,6 @@ def main() -> None:
                 "**geo** (geometric), **harm** (harmonic), or **arith** (arithmetic)."
             ),
         )
-        mediation_penalty = st.slider(
-            "mediation_penalty",
-            min_value=0.0,
-            max_value=1.0,
-            value=0.1,
-            step=0.05,
-            help=(
-                "Down-weights similarity for pairs that are only “close” via a mediator on a layer strictly "
-                "between them (reduces merges that invite cycles). At 1.0 the penalty matrix is all ones "
-                "(no down-weighting)."
-            ),
-        )
         enforce_dag = st.checkbox(
             "enforce_dag",
             value=True,
@@ -634,6 +624,17 @@ def main() -> None:
             help=(
                 "k-means restarts for the **final** clustering step; the auto-k sweep uses `cluster_graph`’s "
                 "default `n_init` unless you change the library call."
+            ),
+        )
+        decay_rate_raw = st.number_input(
+            "decay_rate (0 means disabled)",
+            min_value=0.0,
+            max_value=10.0,
+            value=1.0,
+            step=0.1,
+            help=(
+                "Layer-distance penalty applied to similarity: exp(-decay_rate * |layer_i-layer_j|). "
+                "Set to 0 to disable distance decay."
             ),
         )
     with col_c:
@@ -695,8 +696,8 @@ def main() -> None:
         "max_layer_span": int(max_layer_span),
         "max_sn": None if int(max_sn_raw) == 0 else int(max_sn_raw),
         "mean_method": str(mean_method),
-        "mediation_penalty": float(mediation_penalty),
         "similarity_mode": str(similarity_mode),
+        "decay_rate": None if float(decay_rate_raw) <= 0.0 else float(decay_rate_raw),
         "random_state": int(random_state),
         "n_init": int(n_init),
     }
@@ -768,7 +769,7 @@ def main() -> None:
     prune_graph: PruneGraph = result_payload["prune_graph"]
     result_input_mode: str = result_payload.get("input_mode", input_mode)
     supernode_map: dict[str, list[str]] = result_payload["supernode_map"]
-    sng: dict[str, Any] = result_payload["sng"]
+    sng: SummarizationGraph | dict[str, Any] = result_payload["sng"]
     flow_report: dict[str, Any] | None = result_payload.get("flow_report")
     if flow_report is None:
         flow_report = flow_faithfulness_report(sng, supernode_map)
@@ -835,16 +836,21 @@ def main() -> None:
     st.plotly_chart(fig, use_container_width=True)
 
     sn_names, sn_adj, sn_inf = _sng_matrix_views(sng)
+    sng_node_lookup = sng.node_by_name() if isinstance(sng, SummarizationGraph) else {}
 
     node_rows: list[dict[str, Any]] = []
     for idx, sn_name in enumerate(sn_names):
         members = supernode_map.get(sn_name, [])
+        row = sng_node_lookup.get(sn_name)
+        relevance_vals = [float(node.relevance) for node in row.features if node.relevance is not None] if row else []
         node_rows.append(
             {
                 "supernode": sn_name,
                 "type": supernode_graph.nodes[sn_name]["type"],
                 "n_members": len(members),
                 "influence": float(sn_inf[idx]),
+                "mean_relevance": float(np.mean(relevance_vals)) if relevance_vals else None,
+                "max_relevance": float(np.max(relevance_vals)) if relevance_vals else None,
                 "members": ", ".join(members),
             }
         )

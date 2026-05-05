@@ -60,7 +60,6 @@ def test_evaluation_pipeline_writes_summary_and_runs_all_methods(tmp_path) -> No
         k_min=2,
         k_max=3,
         max_layer_span=4,
-        mediation_penalty=0.1,
         enforce_dag=False,
         random_state=42,
         n_init=5,

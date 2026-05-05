@@ -105,7 +105,7 @@ def _silhouette_over_middle(
         if row.type != "features":
             continue
         assigned = False
-        for nid in row.features:
+        for nid in row.member_node_ids():
             if nid in id_to_idx:
                 nid_to_label[nid] = label_idx
                 assigned = True
@@ -151,10 +151,7 @@ def _dag_interleave_edge_fraction(
     for row in rows:
         if row.type != "features":
             continue
-        rng = _layer_range_from_members(row.features)
-        if rng is not None:
-            lo, hi = rng
-            layer_centers[row.name] = float(lo + hi) / 2.0
+        layer_centers[row.name] = float(row.layer_min + row.layer_max) / 2.0
 
     name_to_idx = {name: idx for idx, name in enumerate(sn_names)}
     valid_names = [name for name in sn_names if name in layer_centers]
@@ -253,8 +250,8 @@ def find_best_k(
     weights: dict[str, float] | None = None,
     max_sn: int | None = None,
     mean_method: Literal["geo", "harm", "arith"] = "arith",
-    mediation_penalty: float = 0.1,
     similarity_mode: Literal["edge", "node"] = "node",
+    decay_rate: float | None = None,
     enforce_dag: bool = False,
     random_state: int = 42,
     n_init: int = 20,
@@ -269,8 +266,8 @@ def find_best_k(
         sim = compute_similarity(
             prune_graph,
             mean_method=mean_method,
-            mediation_penalty=mediation_penalty,
             similarity_mode=similarity_mode,
+            decay_rate=decay_rate,
         )
     s_np = np.asarray(sim.detach().cpu().numpy() if hasattr(sim, "detach") else sim)
     n_middle = len(_middle_indices(prune_graph))
@@ -294,7 +291,6 @@ def find_best_k(
             max_layer_span=max_layer_span,
             max_sn=max_sn,
             mean_method=mean_method,
-            mediation_penalty=mediation_penalty,
             similarity_mode=similarity_mode,
             enforce_dag=enforce_dag,
             random_state=random_state,
@@ -307,7 +303,7 @@ def find_best_k(
             s_np,
             enforce_dag=enforce_dag,
         )
-        sc["final_supernodes"] = {s.name: list(s.features) for s in rows}
+        sc["final_supernodes"] = {s.name: s.member_node_ids() for s in rows}
         results[k] = sc
 
     if not results:
@@ -343,7 +339,7 @@ def find_best_k_for_clusterer(
             s_np,
             enforce_dag=enforce_dag,
         )
-        result["final_supernodes"] = {s.name: list(s.features) for s in rows}
+        result["final_supernodes"] = {s.name: s.member_node_ids() for s in rows}
         return fallback_k, {fallback_k: result}
 
     eigengap = eigengap_analysis(s_np, prune_graph, max_k=min(20, n_middle - 1))
@@ -362,7 +358,7 @@ def find_best_k_for_clusterer(
             s_np,
             enforce_dag=enforce_dag,
         )
-        result["final_supernodes"] = {s.name: list(s.features) for s in rows}
+        result["final_supernodes"] = {s.name: s.member_node_ids() for s in rows}
         results[target_k] = result
 
     best_k = max(results, key=lambda k: float(results[k]["score_arith"]))

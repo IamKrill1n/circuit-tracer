@@ -766,7 +766,6 @@ def main():
     parser.add_argument('--k-min',          type=int,   default=None)
     parser.add_argument('--k-max',          type=int,   default=None)
     parser.add_argument('--max-sn',         type=int,   default=None)
-    parser.add_argument('--mediation-penalty', type=float, default=0.1)
     args = parser.parse_args()
 
     if args.synthetic:
@@ -784,8 +783,7 @@ def main():
     print(f'  total adj[:,logit] = {data["adj"][:, data["logit_idx"]].sum():.4f}')
 
     print('Computing similarity matrix...')
-    S = compute_similarity(data, alpha=args.alpha, beta=args.beta,
-                           mediation_penalty=args.mediation_penalty)
+    S = compute_similarity(data, alpha=args.alpha, beta=args.beta)
 
     if args.auto_k:
         best_k, results = find_best_k_with_flow(

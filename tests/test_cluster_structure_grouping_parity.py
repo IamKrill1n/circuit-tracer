@@ -50,36 +50,17 @@ def test_compute_similarity_uses_edge_channels() -> None:
         prune_graph,
         mean_method="arith",
         similarity_mode="edge",
-        mediation_penalty=1.0,
     )
     sim_in = compute_similarity(
         prune_graph,
         mean_method="arith",
         similarity_mode="node",
-        mediation_penalty=1.0,
     )
 
     assert sim_out.shape == sim_in.shape == (len(prune_graph.kept_ids), len(prune_graph.kept_ids))
     assert torch.all(sim_out >= 0.0) and torch.all(sim_out <= 1.0)
     assert torch.all(sim_in >= 0.0) and torch.all(sim_in <= 1.0)
     assert not torch.allclose(sim_out, sim_in)
-
-
-def test_mediation_penalty_reduces_similarity() -> None:
-    prune_graph = _build_test_graph()
-    no_penalty = compute_similarity(
-        prune_graph,
-        mean_method="arith",
-        similarity_mode="edge",
-        mediation_penalty=1.0,
-    )
-    with_penalty = compute_similarity(
-        prune_graph,
-        mean_method="arith",
-        similarity_mode="edge",
-        mediation_penalty=0.1,
-    )
-    assert torch.all(with_penalty <= no_penalty + 1e-8)
 
 
 def test_cluster_graph_spectral_output_shape() -> None:
@@ -89,7 +70,6 @@ def test_cluster_graph_spectral_output_shape() -> None:
         target_k=2,
         max_layer_span=4,
         max_sn=None,
-        mediation_penalty=0.1,
         enforce_dag=False,
     )
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import numpy as np
 import torch
@@ -11,6 +11,7 @@ from summarization.supernode_graph import (
     Supernode,
     SummarizationGraph,
     cluster_kind_to_supernode_type,
+    node_from_prune_graph,
 )
 from summarization.utils import _is_embedding, _is_fixed, _is_logit, _parse_layer
 
@@ -26,48 +27,6 @@ def _classify_node(node_id: str, attr: dict[str, dict[str, Any]]) -> str:
 def _cosine_norm(matrix: torch.Tensor) -> torch.Tensor:
     diag = torch.sqrt(torch.diag(matrix).clamp(min=1e-8))
     return matrix / diag.unsqueeze(1) / diag.unsqueeze(0)
-
-
-def _compute_mediation_penalty(
-    adj: torch.Tensor,
-    layers: list[int],
-    mediation_penalty: float,
-) -> torch.Tensor:
-    """
-    Penalize similarity(i, j) when there exists k with layer_i < layer_k < layer_j
-    and i -> k -> j path, which tends to create cycle-prone merges.
-    """
-    n = adj.shape[0]
-    if mediation_penalty >= 1.0:
-        return torch.ones((n, n), dtype=adj.dtype, device=adj.device)
-
-    layer_t = torch.tensor(layers, dtype=torch.float32, device=adj.device)
-    # Treat any non-zero edge (positive or negative) as a mediating connection.
-    a = (adj != 0).float()
-    penalty = torch.ones((n, n), dtype=adj.dtype, device=adj.device)
-
-    unique_layers = sorted(set(layers))
-    for lk in unique_layers:
-        k_mask = (layer_t == float(lk)).float()
-        if k_mask.sum() == 0:
-            continue
-
-        # has_ik[i,k] and has_kj[k,j]
-        has_ik = a * k_mask.unsqueeze(0)
-        has_kj = k_mask.unsqueeze(1) * a
-
-        # exists k with i->k and k->j for each (i,j)
-        mediated = (has_ik @ has_kj) > 0
-
-        li_lt_lk = layer_t.unsqueeze(1) < float(lk)
-        lj_gt_lk = layer_t.unsqueeze(0) > float(lk)
-        between = li_lt_lk & lj_gt_lk
-        mark = mediated & between
-        mark = mark | mark.T
-        penalty[mark] = mediation_penalty
-
-    penalty.fill_diagonal_(1.0)
-    return penalty
 
 
 def _weighted_row_cosine(features: torch.Tensor) -> torch.Tensor:
@@ -120,8 +79,9 @@ def sign_aware_normalize(tensor: torch.Tensor) -> torch.Tensor:
 def compute_similarity(
     prune_graph: PruneGraph,
     mean_method: Literal["geo", "harm", "arith"] = "arith",
-    mediation_penalty: float = 0.1,
     similarity_mode: Literal["edge", "node"] = "node",
+    decay_rate: float | None = None,
+    max_layer_span: int | None = None,
 ) -> torch.Tensor:
     """
     Compute node similarity from weighted shared out/in structure.
@@ -132,9 +92,6 @@ def compute_similarity(
     Output/input cosine similarities are always clamped to ``[0, 1]`` before
     being combined.
     """
-    kept_ids = prune_graph.kept_ids
-    attr = prune_graph.attr
-
     adj = prune_graph.pruned_adj.clone().float().T
     if similarity_mode == "edge":
         rel_sender, inf_sender = _edge_channels_sender_indexed(prune_graph, adj)
@@ -165,11 +122,26 @@ def compute_similarity(
         s = (s_out_cos + s_in_cos) / 2.0
     else:
         raise ValueError(f"Unsupported mean_method={mean_method!r}.")
+
+    if decay_rate is not None and decay_rate > 0.0:
+        kept_ids = prune_graph.kept_ids
+        attr = prune_graph.attr
         
-    layers = [_parse_layer(attr, n) for n in kept_ids]
-    if mediation_penalty < 1.0:
-        p = _compute_mediation_penalty(adj=adj, layers=layers, mediation_penalty=mediation_penalty)
-        s = (s * p).clamp(0.0, 1.0)
+        layer_indices = []
+        for nid in kept_ids:
+            try:
+                layer_indices.append(_parse_layer(attr, nid))
+            except Exception:
+                layer_indices.append(0)
+                
+        layers_t = torch.tensor(layer_indices, dtype=torch.float32, device=s.device)
+        layer_diffs = torch.abs(layers_t.unsqueeze(1) - layers_t.unsqueeze(0))
+        
+        penalty = torch.exp(-decay_rate * layer_diffs)
+        if max_layer_span is not None:
+            penalty[layer_diffs > max_layer_span] = 0.0
+            
+        s = s * penalty
 
     return s
 
@@ -281,6 +253,30 @@ def _name_middle_supernodes(clusters: list[list[str]], attr: dict[str, dict]) ->
     return {f"SN_{i}": members for i, members in enumerate(clusters)}
 
 
+def _supernode_from_member_ids(
+    prune_graph: PruneGraph,
+    name: str,
+    member_ids: list[str],
+    kind: str,
+    id_to_idx: dict[str, int] | None = None,
+) -> Supernode:
+    nodes = [node_from_prune_graph(prune_graph, node_id, id_to_idx=id_to_idx) for node_id in member_ids]
+    layers = [_parse_layer(prune_graph.attr, node_id) for node_id in member_ids]
+    if kind == "emb":
+        sn_type = cluster_kind_to_supernode_type("emb")
+    elif kind == "logit":
+        sn_type = cluster_kind_to_supernode_type("logit")
+    else:
+        sn_type = cluster_kind_to_supernode_type("middle")
+    return Supernode(
+        name=name,
+        features=nodes,
+        type=sn_type,
+        layer_min=min(layers) if layers else 0,
+        layer_max=max(layers) if layers else 0,
+    )
+
+
 def labels_to_supernodes(
     prune_graph: PruneGraph,
     middle_ids: list[str],
@@ -302,8 +298,8 @@ def cluster_graph(
     max_layer_span: int = 4,
     max_sn: int | None = None,
     mean_method: Literal["geo", "harm", "arith"] = "arith",
-    mediation_penalty: float = 0.1,
-    similarity_mode: Literal["edge", "node"] = "edge",
+    similarity_mode: Literal["edge", "node"] = "node",
+    decay_rate: float | None = 1.0,
     enforce_dag: bool = True,
     random_state: int = 42,
     n_init: int = 20,
@@ -317,7 +313,6 @@ def cluster_graph(
         max_layer_span: Maximum allowed layer span within a middle supernode.
         max_sn: Optional hard cap on number of middle supernodes.
         mean_method: Mean used to combine output/input cosine similarities.
-        mediation_penalty: Penalty factor for mediated non-adjacent pairs.
         similarity_mode: `edge` or `node` similarity construction.
         random_state: Random seed for spectral clustering k-means init.
         n_init: Number of k-means runs for `SpectralClustering(assign_labels="kmeans")`.
@@ -335,8 +330,9 @@ def cluster_graph(
     sim = compute_similarity(
         prune_graph,
         mean_method=mean_method,
-        mediation_penalty=mediation_penalty,
         similarity_mode=similarity_mode,
+        decay_rate=decay_rate,
+        max_layer_span=max_layer_span,
     )
 
     middle_idx = [i for i, nid in enumerate(kept_ids) if not _is_fixed(attr, nid)]
@@ -346,7 +342,8 @@ def cluster_graph(
         fixed_only = [[nid] for nid in kept_ids]
         return fixed_only
 
-    mid_sim = sim[middle_idx][:, middle_idx].detach().cpu().numpy().clip(0.0, 1.0)\
+    mid_sim = sim[middle_idx][:, middle_idx].detach().cpu().numpy().clip(0.0, 1.0)
+
     # assert symmetry of mid_sim
     assert np.allclose(mid_sim, mid_sim.T)
     # mid_sim = ((mid_sim + mid_sim.T) / 2.0).clip(0.0, 1.0)
@@ -434,26 +431,17 @@ def clusters_to_supernodes(
 
     middle = sorted(middle, key=lambda m: min(_parse_layer(attr, n) for n in m))
     out: list[Supernode] = []
+    id_to_idx = {nid: i for i, nid in enumerate(prune_graph.kept_ids)}
     for i, sn in enumerate(middle):
         k = _classify_node(sn[0], attr)
-        out.append(
-            Supernode(
-                name=f"{middle_prefix}_{i}",
-                features=list(sn),
-                type=cluster_kind_to_supernode_type(k),
-            )
-        )
+        out.append(_supernode_from_member_ids(prune_graph, f"{middle_prefix}_{i}", list(sn), k, id_to_idx=id_to_idx))
     emb_logit: list[Supernode] = []
     for i, sn in enumerate(emb):
         k = _classify_node(sn[0], attr)
-        emb_logit.append(
-            Supernode(name=f"SN_EMB_{i}", features=list(sn), type=cluster_kind_to_supernode_type(k))
-        )
+        emb_logit.append(_supernode_from_member_ids(prune_graph, f"SN_EMB_{i}", list(sn), k, id_to_idx=id_to_idx))
     for i, sn in enumerate(logit):
         k = _classify_node(sn[0], attr)
-        emb_logit.append(
-            Supernode(name=f"SN_LOGIT_{i}", features=list(sn), type=cluster_kind_to_supernode_type(k))
-        )
+        emb_logit.append(_supernode_from_member_ids(prune_graph, f"SN_LOGIT_{i}", list(sn), k, id_to_idx=id_to_idx))
     return out + emb_logit
 
 
@@ -464,24 +452,19 @@ def supernodes_to_mapping(
 ) -> dict[str, list[str]]:
     """Convert `cluster_graph` output into a named supernode mapping (dict shim)."""
     rows = clusters_to_supernodes(prune_graph, supernodes, middle_prefix=middle_prefix)
-    return {s.name: list(s.features) for s in rows}
+    return {s.name: s.member_node_ids() for s in rows}
 
 
 def mapping_dict_to_supernodes(prune_graph: PruneGraph, mapping: dict[str, list[str]]) -> list[Supernode]:
     """Preserve dict insertion order; one `Supernode` per key (features may be filtered later in graph build)."""
     attr = prune_graph.attr
     out: list[Supernode] = []
+    id_to_idx = {nid: i for i, nid in enumerate(prune_graph.kept_ids)}
     for name, feats in mapping.items():
         if not feats:
             continue
         k = _classify_node(feats[0], attr)
-        out.append(
-            Supernode(
-                name=name,
-                features=list(feats),
-                type=cluster_kind_to_supernode_type(k),
-            )
-        )
+        out.append(_supernode_from_member_ids(prune_graph, name, list(feats), k, id_to_idx=id_to_idx))
     return out
 
 
@@ -496,13 +479,14 @@ def build_supernode_graph(
     Returns sn-level adjacency and influence metrics that downstream consumers
     can use for scoring, reporting, and visualization.
     """
+    supernode_rows: list[Supernode]
     if isinstance(final_supernodes, list):
         if not final_supernodes:
             supernode_rows = []
         elif isinstance(final_supernodes[0], Supernode):
-            supernode_rows = list(final_supernodes)
+            supernode_rows = [cast(Supernode, row) for row in final_supernodes]
         else:
-            supernode_rows = clusters_to_supernodes(prune_graph, final_supernodes)
+            supernode_rows = clusters_to_supernodes(prune_graph, cast(list[list[str]], final_supernodes))
     else:
         supernode_rows = mapping_dict_to_supernodes(prune_graph, final_supernodes)
 
@@ -514,18 +498,12 @@ def build_supernode_graph(
     sn_members_idx: list[list[int]] = []
     nodes_kept: list[Supernode] = []
     for row in supernode_rows:
-        feats = [n for n in row.features if n in node_to_idx]
+        feats = [n for n in row.member_node_ids() if n in node_to_idx]
         if not feats:
             continue
         members = [node_to_idx[n] for n in feats]
         k0 = _classify_node(feats[0], attr)
-        nodes_kept.append(
-            Supernode(
-                name=row.name,
-                features=feats,
-                type=cluster_kind_to_supernode_type(k0),
-            )
-        )
+        nodes_kept.append(_supernode_from_member_ids(prune_graph, row.name, feats, k0, id_to_idx=node_to_idx))
         sn_members_idx.append(members)
 
     sn_names = [n.name for n in nodes_kept]

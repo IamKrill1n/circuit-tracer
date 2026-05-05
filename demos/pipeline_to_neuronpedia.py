@@ -115,7 +115,6 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         target_k=best_k,
         max_layer_span=args.max_layer_span,
         max_sn=args.max_sn,
-        mediation_penalty=args.mediation_penalty,
     )
 
     _save_supernodes(supernodes, args.supernodes_out)
@@ -174,7 +173,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--k-max", type=int, default=None)
     parser.add_argument("--max-layer-span", type=int, default=4)
     parser.add_argument("--max-sn", type=int, default=None)
-    parser.add_argument("--mediation-penalty", type=float, default=0.1)
     parser.add_argument("--supernodes-out", type=str, default="temp_graph_files/supernodes.json")
 
     parser.add_argument("--upload-pruning-threshold", type=float, default=0.7)

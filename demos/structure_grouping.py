@@ -24,11 +24,6 @@ FIX HISTORY:
     flow residual inflation at late-layer supernodes.
   - max_sn budget fix is in enforce_dag: applies to middle SNs only.
   - Forward mask uses <= (not <) so same-layer cross-SN edges are included.
-  - compute_similarity now applies a mediation penalty to S[i,j] when a
-    node k exists at an intermediate layer with adj[i,k]>0 and adj[k,j]>0.
-    This prevents spectral clustering from grouping non-adjacent nodes like
-    A(L1)+C(L3) when B(L2) mediates A→B→C, which would create a cycle in
-    the supernode graph (sn_adj[AC,B]>0 AND sn_adj[B,AC]>0).
 
 Usage:
   python structure_grouping.py --file subgraph/austin_plt.pt --target-k 7
@@ -139,110 +134,19 @@ def _cosine_norm(M: torch.Tensor) -> torch.Tensor:
     return M / diag.unsqueeze(1) / diag.unsqueeze(0)
 
 
-def _compute_mediation_penalty(
-    adj: torch.Tensor,
-    layers: list,
-    mediation_penalty: float = 0.1,
-) -> torch.Tensor:
-    """
-    Compute a penalty matrix P where P[i,j] < 1 if grouping nodes i and j
-    would create a cycle in the supernode graph.
-
-    A cycle arises when:
-      - layers[i] < layers[k] < layers[j]  (k is strictly between i and j)
-      - adj[i,k] > 0  (i sends flow to k)
-      - adj[k,j] > 0  (k sends flow to j)
-
-    In that case, grouping i+j into SN_ij produces:
-      sn_adj[SN_ij, SN_k] > 0  (via i→k, since layer[i] <= layer[k])
-      sn_adj[SN_k, SN_ij] > 0  (via k→j, since layer[k] <= layer[j])
-      → CYCLE
-
-    Implementation (vectorized, O(N²) memory, O(N³) ops but via matmul):
-      For each pair (i,j), we need: exists k such that
-        layer[i] < layer[k] < layer[j] AND adj[i,k]>0 AND adj[k,j]>0
-
-      For a fixed pair (i,j) this is (adj[i,:] > 0) @ (adj[:,j] > 0)
-      restricted to k where layer[i] < layer[k] < layer[j].
-
-      We can't vectorize over all three indices simultaneously without
-      O(N³) memory, so we loop over unique layer values of k (typically
-      ~10-25 distinct layers), which is fast in practice.
-
-    Returns:
-        P : torch.Tensor (N, N), values in {mediation_penalty, 1.0}
-            P[i,j] = mediation_penalty if a mediating path exists, else 1.0
-    """
-    N = adj.shape[0]
-    layer_t = torch.tensor(layers, dtype=torch.float32)
-
-    # Binarize adjacency (we only care about existence, not weight)
-    A = (adj > 0).float()   # (N, N)
-
-    # P starts at 1.0; we'll write mediation_penalty where cycles would form
-    P = torch.ones(N, N)
-
-    unique_layers = sorted(set(layers))
-
-    for lk in unique_layers:
-        # Mediator mask: nodes at layer lk
-        k_mask = (layer_t == lk)          # (N,)
-        if not k_mask.any():
-            continue
-
-        # A_ik : (N, n_k)  — which sources send to mediators at lk
-        A_ik = A[:, k_mask]               # shape (N, n_k)
-        # A_kj : (n_k, N)  — which mediators at lk send to targets
-        A_kj = A[k_mask, :]               # shape (n_k, N)
-
-        # mediated[i,j] > 0  iff ∃ k at layer lk with adj[i,k]>0 AND adj[k,j]>0
-        mediated = (A_ik @ A_kj).clamp(0, 1)   # (N, N), binary
-
-        # Only penalize pairs where lk is STRICTLY between layer[i] and layer[j]
-        # i.e. layer[i] < lk < layer[j]  OR  layer[j] < lk < layer[i]
-        # (handle both orderings so P is symmetric)
-        li = layer_t.unsqueeze(1)   # (N,1)
-        lj = layer_t.unsqueeze(0)   # (1,N)
-
-        strictly_between = (
-            ((li < lk) & (lj > lk)) |
-            ((lj < lk) & (li > lk))
-        ).float()   # (N, N)
-
-        # Mark pairs that have at least one mediating path at this layer level
-        has_mediator = (mediated * strictly_between) > 0
-
-        P[has_mediator] = mediation_penalty
-
-    # Never penalize self-similarity
-    P.fill_diagonal_(1.0)
-
-    return P
-
-
 def compute_similarity(
     data: dict,
     alpha: float = 0.5,
     beta:  float = 0.5,
-    mediation_penalty: float = 0.1,
 ) -> torch.Tensor:
     """
     S[i,j] = 0.5 * cosine(shared out-neighbors) + 0.5 * cosine(shared in-neighbors)
     Weighted by W = diag(alpha*act_norm + beta*inf_norm).
-
-    Then apply mediation penalty: if a node k exists strictly between layers[i]
-    and layers[j] with adj[i,k]>0 and adj[k,j]>0, multiply S[i,j] by
-    mediation_penalty (default 0.1). This prevents spectral clustering from
-    grouping non-adjacent nodes that have a mediator between them, which would
-    otherwise create a cycle A→B→C where A and C are in the same supernode.
-
-    Set mediation_penalty=1.0 to disable (backward compatible).
     """
     kept_ids   = data['kept_ids']
     adj        = data['adj']
     act_values = data['act_values']
     inf_values = data['inf_values']
-    layers     = data['layers']
 
     act_t = torch.tensor([act_values[n] for n in kept_ids], dtype=torch.float32)
     inf_t = torch.tensor([inf_values[n] for n in kept_ids], dtype=torch.float32)
@@ -254,17 +158,7 @@ def compute_similarity(
     S_out_cos = _cosine_norm(adj @ W @ adj.T)
     S_in_cos  = _cosine_norm(adj.T @ W @ adj)
 
-    S = (0.5 * S_out_cos + 0.5 * S_in_cos).clamp(0.0, 1.0)
-
-    if mediation_penalty < 1.0:
-        P = _compute_mediation_penalty(adj, layers, mediation_penalty)
-        S = (S * P).clamp(0.0, 1.0)
-
-        n_penalized = int((P < 1.0).sum().item()) // 2   # symmetric
-        print(f'  Mediation penalty applied to {n_penalized} node pairs '
-              f'(penalty={mediation_penalty})')
-
-    return S
+    return (0.5 * S_out_cos + 0.5 * S_in_cos).clamp(0.0, 1.0)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -648,8 +542,7 @@ def build_supernode_graph(final_supernodes: dict, data: dict) -> dict:
         if sn_adj_mat[i, j] > 0 and sn_adj_mat[j, i] > 0
     ]
     if cycles_in_sn_adj:
-        print(f'  [WARN] {len(cycles_in_sn_adj)} cycle(s) detected in sn_adj '
-              f'despite mediation penalty:')
+        print(f'  [WARN] {len(cycles_in_sn_adj)} cycle(s) detected in sn_adj:')
         for a, b in cycles_in_sn_adj[:5]:
             print(f'    {a} ↔ {b}')
 
@@ -1002,9 +895,6 @@ def main():
     parser.add_argument('--alpha',             type=float, default=0.5)
     parser.add_argument('--beta',              type=float, default=0.5)
     parser.add_argument('--max-sn',            type=int,   default=None)
-    parser.add_argument('--mediation-penalty', type=float, default=0.1,
-                        help='Similarity penalty for node pairs with a mediating '
-                             'path between them (0=full block, 1=disable). Default: 0.1')
     parser.add_argument('--dendrogram',        type=str,   default='dendrogram.png')
     parser.add_argument('--out-json',          type=str,   default='supernode_map.json')
     args = parser.parse_args()
@@ -1022,8 +912,7 @@ def main():
     print(f'  total adj[:,logit] = {data["adj"][:, data["logit_idx"]].sum():.4f}')
 
     print('\nComputing similarity matrix...')
-    S = compute_similarity(data, alpha=args.alpha, beta=args.beta,
-                           mediation_penalty=args.mediation_penalty)
+    S = compute_similarity(data, alpha=args.alpha, beta=args.beta)
     print(f'  S range: [{S.min():.4f}, {S.max():.4f}]')
 
     if args.target_k is not None:

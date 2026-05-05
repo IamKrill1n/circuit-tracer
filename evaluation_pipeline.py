@@ -331,7 +331,6 @@ def _evaluate_existing_method(
     k_max_override: int | None,
     weights: dict[str, float] | None,
     max_layer_span: int,
-    mediation_penalty: float,
     enforce_dag: bool,
     random_state: int,
     n_init: int,
@@ -339,7 +338,6 @@ def _evaluate_existing_method(
     similarity = compute_similarity(
         prune_graph,
         mean_method=method_config["mean_method"],
-        mediation_penalty=mediation_penalty,
         similarity_mode=method_config["similarity_mode"],
     )
     best_k, sweep = find_best_k(
@@ -351,7 +349,6 @@ def _evaluate_existing_method(
         weights=weights,
         max_sn=None,
         mean_method=method_config["mean_method"],
-        mediation_penalty=mediation_penalty,
         similarity_mode=method_config["similarity_mode"],
         enforce_dag=enforce_dag,
         random_state=random_state,
@@ -370,7 +367,6 @@ def _evaluate_existing_method(
             target_k=max(best_k, 1),
             max_layer_span=max_layer_span,
             mean_method=method_config["mean_method"],
-            mediation_penalty=mediation_penalty,
             similarity_mode=method_config["similarity_mode"],
             enforce_dag=enforce_dag,
             random_state=random_state,
@@ -534,7 +530,6 @@ def evaluate_prune_graph(
     k_max_override: int | None,
     weights: dict[str, float] | None,
     max_layer_span: int,
-    mediation_penalty: float,
     enforce_dag: bool,
     random_state: int,
     n_init: int,
@@ -556,7 +551,6 @@ def evaluate_prune_graph(
                 k_max_override=k_max_override,
                 weights=weights,
                 max_layer_span=max_layer_span,
-                mediation_penalty=mediation_penalty,
                 enforce_dag=enforce_dag,
                 random_state=random_state,
                 n_init=n_init,
@@ -662,7 +656,6 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
                     "w_size": args.w_size,
                 },
                 max_layer_span=args.max_layer_span,
-                mediation_penalty=args.mediation_penalty,
                 enforce_dag=args.enforce_dag,
                 random_state=args.random_state,
                 n_init=args.n_init,
@@ -693,7 +686,6 @@ def run_evaluation(args: argparse.Namespace) -> dict[str, Any]:
                 "k_min": args.k_min,
                 "k_max": args.k_max,
                 "max_layer_span": args.max_layer_span,
-                "mediation_penalty": args.mediation_penalty,
                 "enforce_dag": args.enforce_dag,
                 "map_location": args.map_location,
                 "random_state": args.random_state,
@@ -742,7 +734,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--k-min", type=int, default=None)
     parser.add_argument("--k-max", type=int, default=None)
     parser.add_argument("--max-layer-span", type=int, default=4)
-    parser.add_argument("--mediation-penalty", type=float, default=0.1)
     parser.add_argument("--enforce-dag", action="store_true")
     parser.add_argument("--random-state", type=int, default=42)
     parser.add_argument("--n-init", type=int, default=20)
