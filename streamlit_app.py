@@ -93,6 +93,7 @@ def _prune_cache_path(repo_root: Path, input_path: Path, prune_cfg: dict[str, An
         "act_density_ub": float(prune_cfg["act_density_ub"]),
         "token_attribution_model": prune_cfg.get("token_attribution_model"),
         "token_attribution_normalize": prune_cfg.get("token_attribution_normalize"),
+        "token_attribution_entmax_alpha": prune_cfg.get("token_attribution_entmax_alpha"),
         "token_attribution_masker_keep_prefix": prune_cfg.get("token_attribution_masker_keep_prefix"),
     }
     key_raw = json.dumps(key_payload, sort_keys=True, separators=(",", ":"))
@@ -224,6 +225,7 @@ def _compute_shap_token_weights(input_path: Path, prune_cfg: dict[str, Any]) -> 
         normalize_method=prune_cfg["token_attribution_normalize"],
         device=device,
         masker_keep_prefix=prune_cfg.get("token_attribution_masker_keep_prefix"),
+        entmax_alpha=prune_cfg.get("token_attribution_entmax_alpha"),
     )
     return [float(value) for value in weights.detach().cpu().tolist()]
 
@@ -418,6 +420,7 @@ def main() -> None:
         "use_shap_token_weights": True,
         "token_attribution_model": "google/gemma-2-2b",
         "token_attribution_normalize": "sparsemax",
+        "token_attribution_entmax_alpha": 1.3,
         "token_attribution_masker_keep_prefix": None,
         "token_attribution_device": "auto",
     }
@@ -510,7 +513,7 @@ def main() -> None:
             with tok_col_b:
                 prune_cfg["token_attribution_normalize"] = st.selectbox(
                     "token_attribution_normalize",
-                    options=["sparsemax", "softmax", "entmax15", "relu_l1"],
+                    options=["sparsemax", "softmax", "entmax15", "entmax"],
                     index=0,
                     help="Normalization applied to raw SHAP scores before pruning.",
                 )
@@ -529,6 +532,15 @@ def main() -> None:
                     None if int(keep_prefix_raw) < 0 else int(keep_prefix_raw)
                 )
             with tok_col_d:
+                prune_cfg["token_attribution_entmax_alpha"] = st.number_input(
+                    "token_attribution_entmax_alpha",
+                    min_value=1.01,
+                    max_value=2.0,
+                    value=1.3,
+                    step=0.05,
+                    format="%.2f",
+                    help="Alpha used when token_attribution_normalize is 'entmax'.",
+                )
                 prune_cfg["token_attribution_device"] = st.selectbox(
                     "token_attribution_device",
                     options=["auto", "cpu", "cuda"],
