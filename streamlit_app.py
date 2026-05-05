@@ -16,6 +16,7 @@ from summarization.cluster import build_supernode_graph, cluster_graph, supernod
 from summarization.cluster_viz import supernode_graph_figure
 from summarization.flow_analysis import flow_faithfulness_report
 from summarization.prune import PruneGraph, load_prune_graph, prune_graph_pipeline, save_prune_graph
+from summarization.supernode_graph import SummarizationGraph
 from summarization.token_attribution import get_token_attribution_from_graph
 
 FULL_GRAPH_MODE = "Existing full graph JSON"
@@ -139,15 +140,24 @@ def _pretty_response_body(body: str) -> str:
         return body
 
 
+def _sng_matrix_views(
+    sng: SummarizationGraph | dict[str, Any],
+) -> tuple[list[str], np.ndarray, np.ndarray]:
+    if isinstance(sng, SummarizationGraph):
+        return sng.sn_names, np.asarray(sng.sn_adj, dtype=np.float64), np.asarray(sng.sn_inf, dtype=np.float64)
+    sn_names = list(sng["sn_names"])
+    sn_adj = np.asarray(sng["sn_adj"], dtype=np.float64)
+    sn_inf = np.asarray(sng["sn_inf"], dtype=np.float64)
+    return sn_names, sn_adj, sn_inf
+
+
 def _build_supernode_network(
     supernode_map: dict[str, list[str]],
-    sng: dict[str, Any],
+    sng: SummarizationGraph | dict[str, Any],
     edge_threshold: float,
 ) -> nx.DiGraph:
     graph = nx.DiGraph()
-    sn_names: list[str] = list(sng["sn_names"])
-    sn_adj = np.asarray(sng["sn_adj"], dtype=np.float64)
-    sn_inf = np.asarray(sng["sn_inf"], dtype=np.float64)
+    sn_names, sn_adj, sn_inf = _sng_matrix_views(sng)
 
     for idx, name in enumerate(sn_names):
         members = supernode_map.get(name, [])
@@ -824,9 +834,7 @@ def main() -> None:
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    sn_names: list[str] = list(sng["sn_names"])
-    sn_adj = np.asarray(sng["sn_adj"], dtype=np.float64)
-    sn_inf = np.asarray(sng["sn_inf"], dtype=np.float64)
+    sn_names, sn_adj, sn_inf = _sng_matrix_views(sng)
 
     node_rows: list[dict[str, Any]] = []
     for idx, sn_name in enumerate(sn_names):

@@ -16,7 +16,7 @@ Modes (three-way toggle):
              sidebar membership list, reposition-by-cluster button.
   SN FLOW    Surrogate graph: each supernode = one large node.
              Edges = SN→SN flow (F_sn matrix). Node size ∝ reach-to-logit.
-             Shows preservation ratio, dominant paths, bottlenecks.
+             Shows reach totals, dominant paths, bottlenecks.
 
 Usage:
   python visualize_circuit_sp_rep.py \\
@@ -622,12 +622,6 @@ function buildSNFlowStats() {
     return;
   }
   const d   = SN_FLOW_DATA;
-  const p   = d.preservation;
-  const badgeClass = (p >= 0.8 && p <= 1.2) ? 'flow-pass'
-    : (p > 1.2 || (p >= 0.5 && p < 0.8)) ? 'flow-warn' : 'flow-fail';
-  const badgeText  = (p >= 0.8 && p <= 1.2) ? 'PASS'
-    : (p > 1.2) ? `WARN amplified ${(p*100).toFixed(0)}%`
-    : (p >= 0.5) ? `WARN low ${(p*100).toFixed(0)}%` : 'FAIL';
 
   const dominantRows = (d.dominant_paths || []).slice(0,5).map(e =>
     `<div class="dominant-edge-row">
@@ -641,7 +635,6 @@ function buildSNFlowStats() {
   const bottlenecks = (d.bottleneck_sns || []);
 
   document.getElementById('sn-flow-stats').innerHTML = `
-    <div class="flow-badge ${badgeClass}">PRESERVATION: ${(p*100).toFixed(1)}% — ${badgeText}</div>
     <div class="flow-stat-row">
       <span class="flow-stat-label">Orig reach→logit</span>
       <span class="flow-stat-value">${d.orig_reach !== undefined ? d.orig_reach.toFixed(4) : 'n/a'}</span>
@@ -1260,13 +1253,12 @@ def main():
             'F_sn'           : raw_sn.get('F_sn', []),
             'sn_reach'       : raw_sn.get('sn_reach', []),
             'sn_act_norm'    : raw_sn.get('sn_act_norm', None),
-            'preservation'   : raw_sn.get('preservation', 0),
             'orig_reach'     : raw_sn.get('orig_reach_total', None),
             'surr_reach'     : raw_sn.get('surr_reach_total', None),
             'dominant_paths' : raw_sn.get('dominant_paths', []),
             'bottleneck_sns' : raw_sn.get('bottleneck_sns', []),
         }
-        print(f"  SN flow loaded: preservation={sn_flow_data['preservation']:.4f}")
+        print("  SN flow JSON loaded.")
     else:
         print("  No --sn-flow provided. SN Flow Surrogate view will be disabled.")
 

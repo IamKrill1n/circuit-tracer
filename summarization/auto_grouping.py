@@ -9,15 +9,30 @@ from sklearn.metrics import silhouette_score
 from summarization.cluster import (
     build_supernode_graph,
     cluster_graph,
+    clusters_to_supernodes,
     compute_similarity,
-    supernodes_to_mapping,
+    mapping_dict_to_supernodes,
 )
 from summarization.prune import PruneGraph
+from summarization.supernode_graph import Supernode
 from summarization.utils import _is_fixed
 
 
 def _middle_indices(prune_graph: PruneGraph) -> list[int]:
     return [i for i, nid in enumerate(prune_graph.kept_ids) if not _is_fixed(prune_graph.attr, nid)]
+
+
+def _as_supernode_rows(
+    prune_graph: PruneGraph,
+    final_supernodes: dict[str, list[str]] | list[list[str]] | list[Supernode],
+) -> list[Supernode]:
+    if isinstance(final_supernodes, list) and (
+        not final_supernodes or isinstance(final_supernodes[0], Supernode)
+    ):
+        return final_supernodes
+    if isinstance(final_supernodes, list):
+        return clusters_to_supernodes(prune_graph, final_supernodes)
+    return mapping_dict_to_supernodes(prune_graph, final_supernodes)
 
 
 def eigengap_analysis(
@@ -72,7 +87,7 @@ def _layer_range_from_members(members: list[str]) -> tuple[int, int] | None:
 def _silhouette_over_middle(
     similarity: np.ndarray,
     prune_graph: PruneGraph,
-    final_supernodes: dict[str, list[str]],
+    rows: list[Supernode],
 ) -> tuple[float, float]:
     """
     Mean silhouette score over middle nodes, plus its [0, 1]-normalized form.
@@ -86,11 +101,11 @@ def _silhouette_over_middle(
 
     nid_to_label: dict[str, int] = {}
     label_idx = 0
-    for sn, members in final_supernodes.items():
-        if "EMB" in sn or "LOGIT" in sn:
+    for row in rows:
+        if row.type != "features":
             continue
         assigned = False
-        for nid in members:
+        for nid in row.features:
             if nid in id_to_idx:
                 nid_to_label[nid] = label_idx
                 assigned = True
@@ -122,7 +137,7 @@ def _silhouette_over_middle(
 def _dag_interleave_edge_fraction(
     sn_adj: np.ndarray,
     sn_names: list[str],
-    final_supernodes: dict[str, list[str]],
+    rows: list[Supernode],
 ) -> float:
     """
     Edge-weighted DAG-safety score in [0, 1] using backward-edge mass ratio:
@@ -133,13 +148,13 @@ def _dag_interleave_edge_fraction(
     Higher is better; 1.0 means no backward flow by layer ordering.
     """
     layer_centers: dict[str, float] = {}
-    for sn, members in final_supernodes.items():
-        if "EMB" in sn or "LOGIT" in sn:
+    for row in rows:
+        if row.type != "features":
             continue
-        rng = _layer_range_from_members(members)
+        rng = _layer_range_from_members(row.features)
         if rng is not None:
             lo, hi = rng
-            layer_centers[sn] = float(lo + hi) / 2.0
+            layer_centers[row.name] = float(lo + hi) / 2.0
 
     name_to_idx = {name: idx for idx, name in enumerate(sn_names)}
     valid_names = [name for name in sn_names if name in layer_centers]
@@ -170,11 +185,11 @@ def _dag_interleave_edge_fraction(
     return float(max(0.0, 1.0 - backward_w / (total_w + 1e-12)))
 
 
-def score_k(
-    final_supernodes: dict[str, list[str]] | list[list[str]],
+def score_clusters(
+    final_supernodes: dict[str, list[str]] | list[list[str]] | list[Supernode],
     prune_graph: PruneGraph,
     similarity: Any,
-    enforce_dag: bool = False
+    enforce_dag: bool = False,
 ) -> dict[str, Any]:
     """
     Score a clustering using two complementary metrics:
@@ -190,12 +205,9 @@ def score_k(
     are accepted for backward compatibility but ignored.
     """
 
-    if isinstance(final_supernodes, list):
-        final_supernodes = supernodes_to_mapping(prune_graph, final_supernodes)
-
-    sng = build_supernode_graph(prune_graph, final_supernodes, enforce_dag=enforce_dag)
-    middle_keys = [sn for sn in final_supernodes if "EMB" not in sn and "LOGIT" not in sn]
-    n_middle = len(middle_keys)
+    rows = _as_supernode_rows(prune_graph, final_supernodes)
+    sng = build_supernode_graph(prune_graph, rows, enforce_dag=enforce_dag)
+    n_middle = sum(1 for r in rows if r.type == "features")
 
     if n_middle == 0:
         return {
@@ -212,13 +224,11 @@ def score_k(
         similarity.detach().cpu().numpy() if hasattr(similarity, "detach") else similarity,
         dtype=np.float64,
     )
-    sil_raw, sil_norm = _silhouette_over_middle(s, prune_graph, final_supernodes)
+    sil_raw, sil_norm = _silhouette_over_middle(s, prune_graph, rows)
 
-    sn_names = list(sng["sn_names"])
-    sn_adj = np.asarray(sng["sn_adj"], dtype=np.float64)
-    dag_score = _dag_interleave_edge_fraction(sn_adj, sn_names, final_supernodes)
-
-    print(f"sil_norm: {sil_norm}, dag_score: {dag_score}")
+    sn_names = list(sng.sn_names)
+    sn_adj = np.asarray(sng.sn_adj, dtype=np.float64)
+    dag_score = _dag_interleave_edge_fraction(sn_adj, sn_names, rows)
     score_arith = (sil_norm + dag_score) / 2.0
     score_harm = 2 / ((1 / (sil_norm + 1e-12)) + (1 / (dag_score + 1e-12)))
     score_geo = np.sqrt(sil_norm * dag_score)
@@ -290,14 +300,14 @@ def find_best_k(
             random_state=random_state,
             n_init=n_init,
         )
-        final_supernodes = supernodes_to_mapping(prune_graph, supernodes)
-        sc = score_k(
-            final_supernodes,
+        rows = clusters_to_supernodes(prune_graph, supernodes)
+        sc = score_clusters(
+            rows,
             prune_graph,
             s_np,
             enforce_dag=enforce_dag,
         )
-        sc["final_supernodes"] = final_supernodes
+        sc["final_supernodes"] = {s.name: list(s.features) for s in rows}
         results[k] = sc
 
     if not results:
@@ -326,14 +336,14 @@ def find_best_k_for_clusterer(
     if n_middle < 3:
         fallback_k = max(0, n_middle)
         clusters = clusterer(fallback_k)
-        mapping = supernodes_to_mapping(prune_graph, clusters)
-        result = score_k(
-            mapping,
+        rows = clusters_to_supernodes(prune_graph, clusters)
+        result = score_clusters(
+            rows,
             prune_graph,
             s_np,
             enforce_dag=enforce_dag,
         )
-        result["final_supernodes"] = mapping
+        result["final_supernodes"] = {s.name: list(s.features) for s in rows}
         return fallback_k, {fallback_k: result}
 
     eigengap = eigengap_analysis(s_np, prune_graph, max_k=min(20, n_middle - 1))
@@ -345,14 +355,14 @@ def find_best_k_for_clusterer(
     results: dict[int, dict[str, Any]] = {}
     for target_k in range(k_min, k_max + 1):
         clusters = clusterer(target_k)
-        mapping = supernodes_to_mapping(prune_graph, clusters)
-        result = score_k(
-            mapping,
+        rows = clusters_to_supernodes(prune_graph, clusters)
+        result = score_clusters(
+            rows,
             prune_graph,
             s_np,
             enforce_dag=enforce_dag,
         )
-        result["final_supernodes"] = mapping
+        result["final_supernodes"] = {s.name: list(s.features) for s in rows}
         results[target_k] = result
 
     best_k = max(results, key=lambda k: float(results[k]["score_arith"]))

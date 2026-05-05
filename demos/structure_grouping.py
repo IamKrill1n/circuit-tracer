@@ -625,14 +625,11 @@ def build_supernode_graph(final_supernodes: dict, data: dict) -> dict:
             fwd_mask   = (src_layers.unsqueeze(1) <= tgt_layers.unsqueeze(0)).float()
             sn_adj_mat[i, j] = (block * fwd_mask).sum().item()
 
-    # Validation
+    # Validation totals (node-level vs supernode sums; not ratio keys)
     total_inf_orig = float(adj[:, logit_idx].sum())
-    total_inf_sn   = sum(sn_inf.values())
-    inf_conservation = total_inf_sn / (total_inf_orig + 1e-12)
+    total_inf_sn = sum(sn_inf.values())
 
-    node2sn = {nid: sn
-               for sn, members in final_supernodes.items()
-               for nid in members}
+    node2sn = {nid: sn for sn, members in final_supernodes.items() for nid in members}
     total_fwd_orig = sum(
         adj[i, j].item()
         for i in range(len(kept_ids))
@@ -642,8 +639,7 @@ def build_supernode_graph(final_supernodes: dict, data: dict) -> dict:
         and adj[i, j].item() != 0.0
         and node2sn.get(kept_ids[i]) != node2sn.get(kept_ids[j])
     )
-    total_fwd_sn      = float(sn_adj_mat.sum())
-    edge_conservation = total_fwd_sn / (total_fwd_orig + 1e-12)
+    total_fwd_sn = float(sn_adj_mat.sum())
 
     # Cycle check on the resulting sn_adj (belt-and-suspenders)
     cycles_in_sn_adj = [
@@ -692,19 +688,16 @@ def build_supernode_graph(final_supernodes: dict, data: dict) -> dict:
         sn_inf            = sn_inf_arr,
         sn_adj            = sn_adj_mat,
         F_sn              = sn_adj_mat,
-        sn_reach          = sn_inf_arr,
-        inf_conservation  = inf_conservation,
-        edge_conservation = edge_conservation,
-        total_inf_orig    = total_inf_orig,
-        total_inf_sn      = total_inf_sn,
-        total_fwd_orig    = total_fwd_orig,
-        total_fwd_sn      = total_fwd_sn,
-        dominant_paths    = dominant_paths,
-        bottleneck_sns    = bottleneck_sns,
-        preservation      = inf_conservation,
-        orig_reach_total  = total_inf_orig,
-        surr_reach_total  = total_inf_sn,
-        cycles_in_sn_adj  = cycles_in_sn_adj,
+        sn_reach=sn_inf_arr,
+        total_inf_orig=total_inf_orig,
+        total_inf_sn=total_inf_sn,
+        total_fwd_orig=total_fwd_orig,
+        total_fwd_sn=total_fwd_sn,
+        dominant_paths=dominant_paths,
+        bottleneck_sns=bottleneck_sns,
+        orig_reach_total=total_inf_orig,
+        surr_reach_total=total_inf_sn,
+        cycles_in_sn_adj=cycles_in_sn_adj,
     )
 
 
@@ -724,16 +717,14 @@ def print_report(final_supernodes: dict,
     print(f'{"═"*72}')
 
     print(f'\n{SEP}')
-    print('  PARTITION VALIDATION  (should both be ~1.000 — exact by construction)')
+    print('  INFLUENCE / EDGE TOTALS  (supernode vs node-level)')
     print(SEP)
-    ic = sng['inf_conservation']
-    ec = sng['edge_conservation']
-    print(f'  Influence conservation : {ic:.6f}'
-          f'  ({sng["total_inf_sn"]:.4f} / {sng["total_inf_orig"]:.4f})'
-          f'  {"[PASS]" if abs(ic-1)<0.001 else "[WARN]"}')
-    print(f'  Edge conservation      : {ec:.6f}'
-          f'  ({sng["total_fwd_sn"]:.4f} / {sng["total_fwd_orig"]:.4f})'
-          f'  {"[PASS]" if abs(ec-1)<0.001 else "[WARN]"}')
+    print(
+        f'  Influence sum (SN / node): {sng["total_inf_sn"]:.4f} / {sng["total_inf_orig"]:.4f}'
+    )
+    print(
+        f'  Forward mass (SN / node): {sng["total_fwd_sn"]:.4f} / {sng["total_fwd_orig"]:.4f}'
+    )
 
     cycles = sng.get('cycles_in_sn_adj', [])
     print(f'  SN-adj cycles          : {len(cycles)}'
@@ -1060,8 +1051,6 @@ def main():
 
     print('\nBuilding supernode graph...')
     sng = build_supernode_graph(final_supernodes, data)
-    print(f'  inf_conservation  = {sng["inf_conservation"]:.6f}')
-    print(f'  edge_conservation = {sng["edge_conservation"]:.6f}')
     print(f'  sn_adj cycles     = {len(sng.get("cycles_in_sn_adj", []))}')
 
     print_report(final_supernodes, stats, sng, dag_warnings)
@@ -1072,21 +1061,22 @@ def main():
 
     sn_flow_out = args.out_json.replace('.json', '_sn_flow.json')
     with open(sn_flow_out, 'w') as f:
-        json.dump({
-            'sn_names'         : sng['sn_names'],
-            'sn_adj'           : sng['sn_adj'].tolist(),
-            'F_sn'             : sng['F_sn'].tolist(),
-            'sn_reach'         : sng['sn_reach'].tolist(),
-            'sn_act_norm'      : sng['sn_act_norm'].tolist(),
-            'sn_inf'           : sng['sn_inf'].tolist(),
-            'preservation'     : sng['preservation'],
-            'orig_reach_total' : sng['orig_reach_total'],
-            'surr_reach_total' : sng['surr_reach_total'],
-            'inf_conservation' : sng['inf_conservation'],
-            'edge_conservation': sng['edge_conservation'],
-            'dominant_paths'   : sng['dominant_paths'],
-            'bottleneck_sns'   : sng['bottleneck_sns'],
-        }, f, indent=2)
+        json.dump(
+            {
+                'sn_names': sng['sn_names'],
+                'sn_adj': sng['sn_adj'].tolist(),
+                'F_sn': sng['F_sn'].tolist(),
+                'sn_reach': sng['sn_reach'].tolist(),
+                'sn_act_norm': sng['sn_act_norm'].tolist(),
+                'sn_inf': sng['sn_inf'].tolist(),
+                'orig_reach_total': sng['orig_reach_total'],
+                'surr_reach_total': sng['surr_reach_total'],
+                'dominant_paths': sng['dominant_paths'],
+                'bottleneck_sns': sng['bottleneck_sns'],
+            },
+            f,
+            indent=2,
+        )
     print(f'Supernode flow saved → {sn_flow_out}')
 
 

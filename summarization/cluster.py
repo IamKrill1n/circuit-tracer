@@ -7,6 +7,11 @@ import torch
 from sklearn.cluster import SpectralClustering
 
 from summarization.prune import PruneGraph
+from summarization.supernode_graph import (
+    Supernode,
+    SummarizationGraph,
+    cluster_kind_to_supernode_type,
+)
 from summarization.utils import _is_embedding, _is_fixed, _is_logit, _parse_layer
 
 
@@ -341,7 +346,9 @@ def cluster_graph(
         fixed_only = [[nid] for nid in kept_ids]
         return fixed_only
 
-    mid_sim = sim[middle_idx][:, middle_idx].detach().cpu().numpy().clip(0.0, 1.0)
+    mid_sim = sim[middle_idx][:, middle_idx].detach().cpu().numpy().clip(0.0, 1.0)\
+    # assert symmetry of mid_sim
+    assert np.allclose(mid_sim, mid_sim.T)
     # mid_sim = ((mid_sim + mid_sim.T) / 2.0).clip(0.0, 1.0)
     target_k = max(1, min(target_k, len(middle_ids)))
 
@@ -402,12 +409,12 @@ def cluster_graph_with_labels(
     return out
 
 
-def supernodes_to_mapping(
+def clusters_to_supernodes(
     prune_graph: PruneGraph,
     supernodes: list[list[str]],
     middle_prefix: str = "SN",
-) -> dict[str, list[str]]:
-    """Convert `cluster_graph` output into a named supernode mapping."""
+) -> list[Supernode]:
+    """Convert `cluster_graph` member lists into named `Supernode` rows (middle + emb + logit)."""
     attr = prune_graph.attr
     middle: list[list[str]] = []
     emb: list[list[str]] = []
@@ -426,17 +433,63 @@ def supernodes_to_mapping(
             middle.append(sn)
 
     middle = sorted(middle, key=lambda m: min(_parse_layer(attr, n) for n in m))
-    named: dict[str, list[str]] = {f"{middle_prefix}_{i}": sn for i, sn in enumerate(middle)}
-    named.update({f"SN_EMB_{i}": sn for i, sn in enumerate(emb)})
-    named.update({f"SN_LOGIT_{i}": sn for i, sn in enumerate(logit)})
-    return named
+    out: list[Supernode] = []
+    for i, sn in enumerate(middle):
+        k = _classify_node(sn[0], attr)
+        out.append(
+            Supernode(
+                name=f"{middle_prefix}_{i}",
+                features=list(sn),
+                type=cluster_kind_to_supernode_type(k),
+            )
+        )
+    emb_logit: list[Supernode] = []
+    for i, sn in enumerate(emb):
+        k = _classify_node(sn[0], attr)
+        emb_logit.append(
+            Supernode(name=f"SN_EMB_{i}", features=list(sn), type=cluster_kind_to_supernode_type(k))
+        )
+    for i, sn in enumerate(logit):
+        k = _classify_node(sn[0], attr)
+        emb_logit.append(
+            Supernode(name=f"SN_LOGIT_{i}", features=list(sn), type=cluster_kind_to_supernode_type(k))
+        )
+    return out + emb_logit
+
+
+def supernodes_to_mapping(
+    prune_graph: PruneGraph,
+    supernodes: list[list[str]],
+    middle_prefix: str = "SN",
+) -> dict[str, list[str]]:
+    """Convert `cluster_graph` output into a named supernode mapping (dict shim)."""
+    rows = clusters_to_supernodes(prune_graph, supernodes, middle_prefix=middle_prefix)
+    return {s.name: list(s.features) for s in rows}
+
+
+def mapping_dict_to_supernodes(prune_graph: PruneGraph, mapping: dict[str, list[str]]) -> list[Supernode]:
+    """Preserve dict insertion order; one `Supernode` per key (features may be filtered later in graph build)."""
+    attr = prune_graph.attr
+    out: list[Supernode] = []
+    for name, feats in mapping.items():
+        if not feats:
+            continue
+        k = _classify_node(feats[0], attr)
+        out.append(
+            Supernode(
+                name=name,
+                features=list(feats),
+                type=cluster_kind_to_supernode_type(k),
+            )
+        )
+    return out
 
 
 def build_supernode_graph(
     prune_graph: PruneGraph,
-    final_supernodes: dict[str, list[str]] | list[list[str]],
+    final_supernodes: dict[str, list[str]] | list[list[str]] | list[Supernode],
     enforce_dag: bool = False,
-) -> dict[str, Any]:
+) -> SummarizationGraph:
     """
     Build a clustered supernode graph from a pruned node-level graph.
 
@@ -444,22 +497,38 @@ def build_supernode_graph(
     can use for scoring, reporting, and visualization.
     """
     if isinstance(final_supernodes, list):
-        final_supernodes = supernodes_to_mapping(prune_graph, final_supernodes)
+        if not final_supernodes:
+            supernode_rows = []
+        elif isinstance(final_supernodes[0], Supernode):
+            supernode_rows = list(final_supernodes)
+        else:
+            supernode_rows = clusters_to_supernodes(prune_graph, final_supernodes)
+    else:
+        supernode_rows = mapping_dict_to_supernodes(prune_graph, final_supernodes)
 
     kept_ids = prune_graph.kept_ids
     attr = prune_graph.attr
     adj = prune_graph.pruned_adj.clone().float().T  # sender-indexed
 
     node_to_idx = {nid: i for i, nid in enumerate(kept_ids)}
-    sn_names = list(final_supernodes.keys())
     sn_members_idx: list[list[int]] = []
-    for sn in sn_names:
-        members = [node_to_idx[n] for n in final_supernodes[sn] if n in node_to_idx]
-        if not members:
+    nodes_kept: list[Supernode] = []
+    for row in supernode_rows:
+        feats = [n for n in row.features if n in node_to_idx]
+        if not feats:
             continue
+        members = [node_to_idx[n] for n in feats]
+        k0 = _classify_node(feats[0], attr)
+        nodes_kept.append(
+            Supernode(
+                name=row.name,
+                features=feats,
+                type=cluster_kind_to_supernode_type(k0),
+            )
+        )
         sn_members_idx.append(members)
 
-    sn_names = [sn for sn, members in zip(sn_names, sn_members_idx) if members]
+    sn_names = [n.name for n in nodes_kept]
     k = len(sn_names)
     sn_adj = np.zeros((k, k), dtype=np.float64)
 
@@ -498,16 +567,8 @@ def build_supernode_graph(
     sn_reach = np.maximum(f_sn.sum(axis=1), 0.0)
     sn_act_norm = sn_reach / (sn_reach.max() + 1e-12) if k else sn_reach
 
-    total_node_inf = float(adj[:, logit_idx].sum().item()) if logit_idx else 0.0
-    total_sn_inf = float(sn_inf.sum())
-    inf_conservation = (
-        total_sn_inf / (total_node_inf + 1e-12) if abs(total_node_inf) > 1e-12 else 1.0
-    )
-
     node_nonzero = float((adj != 0).sum().item())
     sn_nonzero = float(np.count_nonzero(sn_adj))
-    edge_conservation = sn_nonzero / (node_nonzero + 1e-12) if node_nonzero > 0 else 1.0
-
     dominant_paths = [
         {"src": sn_names[i], "tgt": sn_names[j], "weight": float(sn_adj[i, j])}
         for i in range(k)
@@ -523,18 +584,15 @@ def build_supernode_graph(
     ]
     bottleneck_sns.sort(key=lambda x: -abs(x["in_minus_out"]))
 
-    return {
-        "sn_names": sn_names,
-        "sn_adj": sn_adj,
-        "F_sn": f_sn,
-        "sn_reach": sn_reach,
-        "sn_act_norm": sn_act_norm,
-        "sn_inf": sn_inf,
-        "preservation": {"inf_conservation": inf_conservation, "edge_conservation": edge_conservation},
-        "orig_reach_total": float(node_nonzero),
-        "surr_reach_total": float(sn_nonzero),
-        "inf_conservation": inf_conservation,
-        "edge_conservation": edge_conservation,
-        "dominant_paths": dominant_paths,
-        "bottleneck_sns": bottleneck_sns,
-    }
+    return SummarizationGraph(
+        nodes=nodes_kept,
+        sn_adj=sn_adj,
+        sn_inf=sn_inf,
+        F_sn=f_sn,
+        sn_reach=sn_reach,
+        sn_act_norm=sn_act_norm,
+        orig_reach_total=float(node_nonzero),
+        surr_reach_total=float(sn_nonzero),
+        dominant_paths=dominant_paths,
+        bottleneck_sns=bottleneck_sns,
+    )

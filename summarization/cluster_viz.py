@@ -9,11 +9,12 @@ import numpy as np
 import plotly.graph_objects as go
 
 from summarization.utils import _parse_layer
-from summarization.flow_analysis import _classify_sn
+from summarization.flow_analysis import _flow_role
+from summarization.supernode_graph import SummarizationGraph, Supernode
 
 
-def _sn_kind(sn_name: str) -> str:
-    return _classify_sn(sn_name)
+def _sn_kind(sn_name: str, node_by_name: dict[str, Supernode]) -> str:
+    return _flow_role(sn_name, node_by_name)
 
 
 def _sn_title(sn: str, members: list[str], attr: dict[str, dict[str, Any]] | None) -> str:
@@ -96,8 +97,8 @@ def _edge_style(weight: float, max_abs_w: float) -> tuple[float, str]:
 
 
 def supernode_graph_figure(
-    sng: dict[str, Any],
-    final_supernodes: dict[str, list[str]],
+    sng: SummarizationGraph | dict[str, Any],
+    final_supernodes: dict[str, list[str]] | None = None,
     attr: dict[str, dict[str, Any]] | None = None,
     title: str = "Cluster graph (supernodes)",
     seed: int = 42,
@@ -105,11 +106,23 @@ def supernode_graph_figure(
     """
     Build an interactive Plotly figure: supernodes as markers, directed edges as arrows.
 
-    `sng` is the dict returned by `build_supernode_graph`.
+    `sng` may be a `SummarizationGraph` from `build_supernode_graph` or the legacy dict.
     """
-    sn_names: list[str] = list(sng["sn_names"])
-    sn_adj = np.asarray(sng["sn_adj"], dtype=np.float64)
-    sn_inf = np.asarray(sng["sn_inf"], dtype=np.float64) if sng.get("sn_inf") is not None else None
+    if isinstance(sng, SummarizationGraph):
+        sn_names = sng.sn_names
+        sn_adj = np.asarray(sng.sn_adj, dtype=np.float64)
+        sn_inf = np.asarray(sng.sn_inf, dtype=np.float64)
+        mapping = final_supernodes if final_supernodes is not None else sng.to_mapping()
+        node_by_name = sng.node_by_name()
+    else:
+        if final_supernodes is None:
+            raise ValueError("final_supernodes is required when sng is a plain dict.")
+        sn_names = list(sng["sn_names"])
+        sn_adj = np.asarray(sng["sn_adj"], dtype=np.float64)
+        raw_inf = sng.get("sn_inf")
+        sn_inf = np.asarray(raw_inf, dtype=np.float64) if raw_inf is not None else None
+        mapping = final_supernodes
+        node_by_name = {}
 
     g = nx.DiGraph()
     k = len(sn_names)
@@ -123,7 +136,7 @@ def supernode_graph_figure(
             if w != 0.0:
                 g.add_edge(sn_names[i], sn_names[j], weight=w)
 
-    pos = _layered_layout(sn_names, final_supernodes, attr)
+    pos = _layered_layout(sn_names, mapping, attr)
 
     node_x = [pos[sn][0] for sn in sn_names if sn in pos]
     node_y = [pos[sn][1] for sn in sn_names if sn in pos]
@@ -131,7 +144,7 @@ def supernode_graph_figure(
 
     colors: list[str] = []
     for sn in names_in_pos:
-        kind = _sn_kind(sn)
+        kind = _sn_kind(sn, node_by_name)
         if kind == "emb":
             colors.append("#4CAF50")
         elif kind == "logit":
@@ -141,11 +154,11 @@ def supernode_graph_figure(
 
     sizes: list[float] = []
     for sn in names_in_pos:
-        m = len(final_supernodes.get(sn, []))
+        m = len(mapping.get(sn, []))
         sizes.append(18 + min(32, 4 * max(m, 1)))
 
-    labels = [_sn_label(sn, final_supernodes.get(sn, []), attr) for sn in names_in_pos]
-    hover = [_sn_title(sn, final_supernodes.get(sn, []), attr) for sn in names_in_pos]
+    labels = [_sn_label(sn, mapping.get(sn, []), attr) for sn in names_in_pos]
+    hover = [_sn_title(sn, mapping.get(sn, []), attr) for sn in names_in_pos]
 
     for i in range(k):
         for j in range(k):

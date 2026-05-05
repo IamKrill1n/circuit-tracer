@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import requests
 
 from api import generate_graph, save_subgraph
@@ -73,6 +74,12 @@ def _to_jsonable(obj: Any) -> Any:
         return [_to_jsonable(value) for value in obj]
     if isinstance(obj, tuple):
         return [_to_jsonable(value) for value in obj]
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, (np.floating, np.float32, np.float64)):
+        return float(obj)
+    if isinstance(obj, (np.integer, np.int32, np.int64)):
+        return int(obj)
     if hasattr(obj, "detach"):
         return obj.detach().cpu().tolist()
     return obj
@@ -173,7 +180,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
 
     _save_json(args.supernodes_out, labelled_supernodes)
     _save_json(args.supernode_map_out, supernode_map)
-    _save_json(args.supernode_flow_out, sng)
+    _save_json(args.supernode_flow_out, sng.to_legacy_dict())
     _save_json(
         args.auto_k_sweep_out,
         {

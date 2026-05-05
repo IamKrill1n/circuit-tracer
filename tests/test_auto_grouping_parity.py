@@ -8,7 +8,7 @@ from summarization.auto_grouping import (
     find_best_k,
     score_k,
 )
-from summarization.cluster import build_supernode_graph, compute_similarity, supernodes_to_mapping
+from summarization.cluster import compute_similarity, supernodes_to_mapping
 from summarization.prune import PruneGraph
 
 
@@ -78,15 +78,14 @@ def test_score_k_returns_base_metrics_only() -> None:
         mapping,
         prune_graph,
         similarity,
-        target_n_middle=4,
         enforce_dag=False,
     )
     assert "F_phi" not in score
     assert "sigma_phi" not in score
-    assert "silhouette" in score
-    assert "silhouette_norm" in score
+    assert "sil_raw" in score
+    assert "sil_norm" in score
     assert "dag_score" in score
-    assert score["total"] >= 0.0
+    assert score["score_arith"] >= 0.0
 
 
 def test_find_best_k_returns_scored_results() -> None:
@@ -108,5 +107,5 @@ def test_find_best_k_returns_scored_results() -> None:
         enforce_dag=False,
     )
     assert best_k in results
-    assert all("total" in v for v in results.values())
+    assert all("score_arith" in v for v in results.values())
     assert all("final_supernodes" in v for v in results.values())

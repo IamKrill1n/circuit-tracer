@@ -140,10 +140,16 @@ def score_k(final_supernodes: dict,
     n_middle = len(middle_sn)
 
     if n_middle == 0:
-        return dict(total=0.0, intra_sim=0.0, dag_safety=0.0,
-                    attr_balance=0.0, size_score=0.0, n_middle=0,
-                    n_warnings=0, inf_conservation=0.0,
-                    edge_conservation=0.0, details={})
+        return dict(
+            total=0.0,
+            intra_sim=0.0,
+            dag_safety=0.0,
+            attr_balance=0.0,
+            size_score=0.0,
+            n_middle=0,
+            n_warnings=0,
+            details={},
+        )
 
     # ── 1. Intra-cluster similarity ───────────────────────────────────────────
     sizes   = [st['n'] for st in middle_sn.values()]
@@ -207,8 +213,6 @@ def score_k(final_supernodes: dict,
         size_score        = size_score,
         n_middle          = n_middle,
         n_warnings        = len(dag_warnings),
-        inf_conservation  = float(sng['inf_conservation']),
-        edge_conservation = float(sng['edge_conservation']),
         details           = {
             sn: dict(intra_sim=st['intra_sim_mean'],
                      n=st['n'],
@@ -268,8 +272,7 @@ def find_best_k(data: dict,
     # ── Step 2: Sweep ─────────────────────────────────────────────────────────
     print(f'\n── Step 2: Scoring k = {k_min}..{k_max} ──')
     print(f'  {"k":>3}  {"n_mid":>5}  {"intra":>6}  {"dag":>5}  '
-          f'{"attr_bal":>8}  {"size":>5}  {"TOTAL":>6}  {"warns":>5}  '
-          f'{"inf_con":>7}  {"edg_con":>7}')
+          f'{"attr_bal":>8}  {"size":>5}  {"TOTAL":>6}  {"warns":>5}')
     print(f'  {"─"*68}')
 
     results = {}
@@ -298,8 +301,7 @@ def find_best_k(data: dict,
         print(f'  {k:>3}  {n_middle:>2}+{n_total-n_middle:<2}  {sc["intra_sim"]:>6.4f}  '
               f'{sc["dag_safety"]:>5.4f}  {sc["attr_balance"]:>8.4f}  '
               f'{sc["size_score"]:>5.4f}  {sc["total"]:>6.4f}  '
-              f'{sc["n_warnings"]:>5}  '
-              f'{sc["inf_conservation"]:>7.4f}  {sc["edge_conservation"]:>7.4f}')
+              f'{sc["n_warnings"]:>5}')
 
     if not results:
         print('  All k values failed. Falling back to eigengap suggestion.')
@@ -320,8 +322,6 @@ def find_best_k(data: dict,
     print(f'    attr_balance = {best["attr_balance"]:.4f}')
     print(f'    size_score   = {best["size_score"]:.4f}')
     print(f'    n_warnings   = {best["n_warnings"]}')
-    print(f'    inf_conservation  = {best["inf_conservation"]:.6f}')
-    print(f'    edge_conservation = {best["edge_conservation"]:.6f}')
 
     return best_k, results
 
@@ -478,21 +478,22 @@ def main():
 
         sn_flow_out = 'supernode_map_sn_flow.json'
         with open(sn_flow_out, 'w') as f:
-            json.dump({
-                'sn_names'         : sng['sn_names'],
-                'sn_adj'           : sng['sn_adj'].tolist(),
-                'F_sn'             : sng['F_sn'].tolist(),
-                'sn_reach'         : sng['sn_reach'].tolist(),
-                'sn_act_norm'      : sng['sn_act_norm'].tolist(),
-                'sn_inf'           : sng['sn_inf'].tolist(),
-                'preservation'     : sng['preservation'],
-                'orig_reach_total' : sng['orig_reach_total'],
-                'surr_reach_total' : sng['surr_reach_total'],
-                'inf_conservation' : sng['inf_conservation'],
-                'edge_conservation': sng['edge_conservation'],
-                'dominant_paths'   : sng['dominant_paths'],
-                'bottleneck_sns'   : sng['bottleneck_sns'],
-            }, f, indent=2)
+            json.dump(
+                {
+                    'sn_names': sng['sn_names'],
+                    'sn_adj': sng['sn_adj'].tolist(),
+                    'F_sn': sng['F_sn'].tolist(),
+                    'sn_reach': sng['sn_reach'].tolist(),
+                    'sn_act_norm': sng['sn_act_norm'].tolist(),
+                    'sn_inf': sng['sn_inf'].tolist(),
+                    'orig_reach_total': sng['orig_reach_total'],
+                    'surr_reach_total': sng['surr_reach_total'],
+                    'dominant_paths': sng['dominant_paths'],
+                    'bottleneck_sns': sng['bottleneck_sns'],
+                },
+                f,
+                indent=2,
+            )
         print(f'Supernode flow saved → {sn_flow_out}')
 
     print(f'\n  ➜  Use:  python structure_grouping.py --file {args.file} '

@@ -623,11 +623,9 @@ def enhanced_score_k(
         path_score        = report['combined']['path_score'],
         residual_score    = report['combined']['residual_score'],
         shortcut_score    = report['combined']['shortcut_score'],
-        n_middle          = base['n_middle'],
-        n_warnings        = base['n_warnings'],
-        inf_conservation  = base.get('inf_conservation', 0.0),
-        edge_conservation = base.get('edge_conservation', 0.0),
-        n_paths           = report['path_decomposition']['n_paths'],
+        n_middle=base["n_middle"],
+        n_warnings=base["n_warnings"],
+        n_paths=report["path_decomposition"]["n_paths"],
         top_k_frac        = report['path_decomposition']['top_k_frac'],
         n_suppressive     = report['combined']['n_suppressive'],
         flow_report       = report,
@@ -722,8 +720,6 @@ def find_best_k_with_flow(
           f'  ({best["n_middle"] - best["n_suppressive"]} non-suppressive SNs)')
     print(f'    R_phi_suppressive = {best["R_phi_suppressive"]:.4f}'
           f'  ({best["n_suppressive"]} suppressive SNs)')
-    print(f'    inf_conservation  = {best["inf_conservation"]:.6f}')
-    print(f'    edge_conservation = {best["edge_conservation"]:.6f}')
 
     return best_k, results
 
@@ -806,21 +802,22 @@ def main():
             sn_flow_path = args.out_json.replace('.json', '_sn_flow.json')
             with open(sn_flow_path, 'w') as f:
                 import json as _json
-                _json.dump({
-                    'sn_names': sng['sn_names'],
-                    'sn_adj': sng['sn_adj'].tolist(),
-                    'F_sn': sng['F_sn'].tolist(),
-                    'sn_reach': sng['sn_reach'].tolist(),
-                    'sn_act_norm': sng['sn_act_norm'].tolist(),
-                    'sn_inf': sng['sn_inf'].tolist(),
-                    'preservation': sng['preservation'],
-                    'orig_reach_total': sng['orig_reach_total'],
-                    'surr_reach_total': sng['surr_reach_total'],
-                    'inf_conservation': sng['inf_conservation'],
-                    'edge_conservation': sng['edge_conservation'],
-                    'dominant_paths': sng['dominant_paths'],
-                    'bottleneck_sns': sng['bottleneck_sns'],
-                }, f, indent=2)
+                _json.dump(
+                    {
+                        'sn_names': sng['sn_names'],
+                        'sn_adj': sng['sn_adj'].tolist(),
+                        'F_sn': sng['F_sn'].tolist(),
+                        'sn_reach': sng['sn_reach'].tolist(),
+                        'sn_act_norm': sng['sn_act_norm'].tolist(),
+                        'sn_inf': sng['sn_inf'].tolist(),
+                        'orig_reach_total': sng['orig_reach_total'],
+                        'surr_reach_total': sng['surr_reach_total'],
+                        'dominant_paths': sng['dominant_paths'],
+                        'bottleneck_sns': sng['bottleneck_sns'],
+                    },
+                    f,
+                    indent=2,
+                )
             print(f'SN flow JSON saved → {sn_flow_path}')
             sn_map_path = args.out_json.replace('.json', '_supernode_map.json')
             with open(sn_map_path, 'w') as f:
@@ -842,8 +839,6 @@ def main():
 
     print('\nBuilding supernode graph...')
     sng = build_supernode_graph(final_sn, data)
-    print(f'  inf_conservation  = {sng["inf_conservation"]:.6f}')
-    print(f'  edge_conservation = {sng["edge_conservation"]:.6f}')
 
     print('\nRunning flow faithfulness analysis...')
     report = flow_faithfulness_report(sng, final_sn, top_k=args.top_k_paths)

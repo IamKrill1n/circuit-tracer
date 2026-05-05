@@ -4,15 +4,51 @@ from typing import Any
 
 import numpy as np
 
+from summarization.supernode_graph import SummarizationGraph, Supernode
 from summarization.utils import _parse_layer
 
 
 def _classify_sn(sn_name: str) -> str:
+    """Backward-compatible role from supernode name (embedding / logit / middle)."""
     if "EMB" in sn_name:
         return "emb"
     if "LOGIT" in sn_name:
         return "logit"
     return "middle"
+
+
+def _flow_role(sn: str, node_by_name: dict[str, Supernode]) -> str:
+    """Graph role used by flow algorithms: emb, middle, logit."""
+    row = node_by_name.get(sn)
+    if row is not None:
+        if row.type == "features":
+            return "middle"
+        return row.type
+    return _classify_sn(sn)
+
+
+def _unwrap_sng(
+    sng: SummarizationGraph | dict[str, Any],
+) -> tuple[list[str], np.ndarray, np.ndarray, dict[str, Supernode]]:
+    if isinstance(sng, SummarizationGraph):
+        return sng.sn_names, sng.sn_adj, sng.sn_inf, sng.node_by_name()
+    sn_inf = sng["sn_inf"]
+    if sn_inf is None:
+        sn_inf = np.zeros(len(sng["sn_names"]), dtype=np.float64)
+    return list(sng["sn_names"]), np.asarray(sng["sn_adj"], dtype=np.float64), np.asarray(sn_inf), {}
+
+
+def _resolve_mapping(
+    sng: SummarizationGraph | dict[str, Any],
+    final_supernodes: dict[str, list[str]] | list[list[str]] | None,
+) -> dict[str, list[str]]:
+    if isinstance(final_supernodes, list):
+        raise ValueError("Flow analysis requires a named supernode mapping dict.")
+    if final_supernodes is not None:
+        return final_supernodes
+    if isinstance(sng, SummarizationGraph):
+        return sng.to_mapping()
+    raise ValueError("final_supernodes is required when sng is a plain dict.")
 
 
 def _build_sn_dag_order(sn_names: list[str], final_supernodes: dict[str, list[str]]) -> list[str]:
@@ -24,23 +60,19 @@ def _build_sn_dag_order(sn_names: list[str], final_supernodes: dict[str, list[st
 
 
 def path_attribution_decomposition(
-    sng: dict[str, Any],
-    final_supernodes: dict[str, list[str]] | list[list[str]],
+    sng: SummarizationGraph | dict[str, Any],
+    final_supernodes: dict[str, list[str]] | list[list[str]] | None = None,
     top_k: int = 10,
     min_flow_frac: float = 1e-4,
 ) -> dict[str, Any]:
-    if isinstance(final_supernodes, list):
-        raise ValueError("path_attribution_decomposition requires named supernodes mapping.")
-
-    sn_names = sng["sn_names"]
-    sn_adj = sng["sn_adj"]
-    sn_inf = sng["sn_inf"]
+    mapping = _resolve_mapping(sng, final_supernodes)
+    sn_names, sn_adj, sn_inf, node_by_name = _unwrap_sng(sng)
     k = len(sn_names)
     name2idx = {sn: i for i, sn in enumerate(sn_names)}
 
-    emb_sns = [sn for sn in sn_names if _classify_sn(sn) == "emb"]
-    logit_sns = [sn for sn in sn_names if _classify_sn(sn) == "logit"]
-    topo_order = _build_sn_dag_order(sn_names, final_supernodes)
+    emb_sns = [sn for sn in sn_names if _flow_role(sn, node_by_name) == "emb"]
+    logit_sns = [sn for sn in sn_names if _flow_role(sn, node_by_name) == "logit"]
+    topo_order = _build_sn_dag_order(sn_names, mapping)
 
     path_flows: dict[tuple[str, ...], float] = {}
     for sn_e in emb_sns:
@@ -63,7 +95,7 @@ def path_attribution_decomposition(
 
     for sn in topo_order:
         i = name2idx[sn]
-        kind = _classify_sn(sn)
+        kind = _flow_role(sn, node_by_name)
         if kind == "logit":
             for path, flow in list(path_flows.items()):
                 if path[-1] == sn:
@@ -73,7 +105,9 @@ def path_attribution_decomposition(
         if kind == "emb":
             prefixes = [(p, f) for p, f in path_flows.items() if p == (sn,)]
         else:
-            prefixes = [(p, f) for p, f in path_flows.items() if p[-1] == sn and _classify_sn(p[-1]) != "logit"]
+            prefixes = [
+                (p, f) for p, f in path_flows.items() if p[-1] == sn and _flow_role(p[-1], node_by_name) != "logit"
+            ]
         if not prefixes:
             continue
 
@@ -108,7 +142,7 @@ def path_attribution_decomposition(
                         completed_paths[exit_path] = completed_paths.get(exit_path, 0.0) + inf_flow
 
     for path, flow in path_flows.items():
-        if _classify_sn(path[-1]) == "logit":
+        if _flow_role(path[-1], node_by_name) == "logit":
             completed_paths[path] = completed_paths.get(path, 0.0) + flow
 
     sorted_paths = sorted(completed_paths.items(), key=lambda x: -x[1])
@@ -146,20 +180,18 @@ def path_attribution_decomposition(
 
 
 def local_flow_residuals(
-    sng: dict[str, Any],
-    final_supernodes: dict[str, list[str]] | list[list[str]],
+    sng: SummarizationGraph | dict[str, Any],
+    final_supernodes: dict[str, list[str]] | list[list[str]] | None = None,
 ) -> dict[str, Any]:
     del final_supernodes
-    sn_names = sng["sn_names"]
-    sn_adj = sng["sn_adj"]
-    sn_inf = sng["sn_inf"]
+    sn_names, sn_adj, sn_inf, node_by_name = _unwrap_sng(sng)
     k = len(sn_names)
 
     per_sn: dict[str, Any] = {}
     balance_residuals: list[float] = []
     suppressive_ratios: list[float] = []
     for i, sn in enumerate(sn_names):
-        if "EMB" in sn or "LOGIT" in sn:
+        if _flow_role(sn, node_by_name) != "middle":
             continue
 
         in_flow_pos = sum(max(0.0, float(sn_adj[j, i])) for j in range(k) if j != i)
@@ -213,13 +245,12 @@ def local_flow_residuals(
 
 
 def shortcut_analysis(
-    sng: dict[str, Any],
-    final_supernodes: dict[str, list[str]] | list[list[str]],
+    sng: SummarizationGraph | dict[str, Any],
+    final_supernodes: dict[str, list[str]] | list[list[str]] | None = None,
     min_edge_weight: float = 1e-6,
 ) -> dict[str, Any]:
     del final_supernodes
-    sn_names = sng["sn_names"]
-    sn_adj = sng["sn_adj"]
+    sn_names, sn_adj, _, _ = _unwrap_sng(sng)
     k = len(sn_names)
     edges = []
     tot = 0.0
@@ -304,13 +335,14 @@ def flow_faithfulness_score(
 
 
 def flow_faithfulness_report(
-    sng: dict[str, Any],
-    final_supernodes: dict[str, list[str]] | list[list[str]],
+    sng: SummarizationGraph | dict[str, Any],
+    final_supernodes: dict[str, list[str]] | list[list[str]] | None = None,
     top_k: int = 10,
 ) -> dict[str, Any]:
-    path_result = path_attribution_decomposition(sng, final_supernodes, top_k=top_k)
-    residual_result = local_flow_residuals(sng, final_supernodes)
-    shortcut_result = shortcut_analysis(sng, final_supernodes)
+    mapping = _resolve_mapping(sng, final_supernodes)
+    path_result = path_attribution_decomposition(sng, mapping, top_k=top_k)
+    residual_result = local_flow_residuals(sng, mapping)
+    shortcut_result = shortcut_analysis(sng, mapping)
     combined = flow_faithfulness_score(path_result, residual_result, shortcut_result)
     return {
         "path_decomposition": path_result,
