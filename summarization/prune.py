@@ -50,7 +50,6 @@ class PruneGraph:
     node_relevance: torch.Tensor | None = None
     edge_influence: torch.Tensor | None = None
     edge_relevance: torch.Tensor | None = None
-    graph_scores: float | None = None
 
     @property
     def num_nodes(self) -> int:
@@ -73,7 +72,6 @@ class PruneGraph:
             "edge_influence": self.edge_influence,
             "edge_relevance": self.edge_relevance,
             "metadata": self.metadata,
-            "graph_scores": self.graph_scores,
         }
 
     @classmethod
@@ -95,7 +93,6 @@ class PruneGraph:
             edge_influence=payload.get("edge_influence"),
             edge_relevance=payload.get("edge_relevance"),
             metadata=payload["metadata"],
-            graph_scores=payload.get("graph_scores", 0.0),
         )
 
 
@@ -121,8 +118,8 @@ def compute_combined_prune_graph_scores(
     normalization: Literal["min_max", "rank"] = "min_max",
     alpha: float = 0.5,
     eps: float = 1e-10,
-) -> tuple[float, float]:
-    """Compute retention/completeness style scores directly from a saved PruneGraph."""
+) -> float:
+    """Compute completeness style score directly from a saved PruneGraph."""
     node_influence = prune_graph.node_influence
     node_relevance = prune_graph.node_relevance
     if node_influence is None or node_relevance is None:
@@ -137,9 +134,6 @@ def compute_combined_prune_graph_scores(
     else:
         combined = combined_scores_harmonic(ni, nr, normalization=normalization, alpha=alpha, eps=eps)
 
-    # For saved pruned graphs, the full-graph denominator is tracked as graph_scores.
-    combined_retention = float(prune_graph.graph_scores) if prune_graph.graph_scores is not None else float("nan")
-
     idx = _build_index_sets(prune_graph.nodes)
     error_idx = idx["error"]
     pruned_norm = normalize_matrix(prune_graph.pruned_adj.clone())
@@ -150,7 +144,7 @@ def compute_combined_prune_graph_scores(
 
     denom = combined.sum().clamp(min=eps)
     combined_completeness_score = float(((non_error_fractions * combined).sum() / denom).item())
-    return combined_retention, combined_completeness_score
+    return combined_completeness_score
 
 
 def _validate_threshold(name: str, value: float) -> None:
@@ -220,7 +214,7 @@ def prune_combined(
     edge_influence_threshold: float = 0.98,
     edge_relevance_threshold: float = 0.98,
     keep_all_tokens_and_logits: bool = True,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, float]:
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     n = adj.shape[0]
     idx = _build_index_sets(nodes)
 
@@ -258,8 +252,6 @@ def prune_combined(
     node_inf = compute_node_influence(adj, logits_seed_t)
     node_rel = compute_node_relevance(adj, emb_weights_t)
 
-    full_graph_scores = torch.sum(node_inf[idx["feature"]] * node_rel[idx["feature"]]).item()
-
     node_inf_mask = node_inf >= find_threshold(node_inf, node_influence_threshold)
     node_rel_mask = node_rel >= find_threshold(node_rel, node_relevance_threshold)
     node_mask = (node_inf_mask & node_rel_mask).bool()
@@ -286,18 +278,8 @@ def prune_combined(
     non_boundary = torch.tensor(idx["feature"] + idx["error"], dtype=torch.long, device=adj.device)
     node_mask = remove_dangling_nodes(node_mask, edge_mask, feature_idx, non_boundary)
 
-    feature_node_mask = node_mask[idx["feature"]]
-    if feature_node_mask.numel() == 0:
-        pruned_graph_scores = 0.0
-    else:
-        inf_f = node_inf[idx["feature"]]
-        rel_f = node_rel[idx["feature"]]
-        pruned_graph_scores = torch.sum(inf_f[feature_node_mask] * rel_f[feature_node_mask]).item()
 
-    denom = full_graph_scores if abs(full_graph_scores) > 1e-12 else 1.0
-    ratio = pruned_graph_scores / denom
-
-    return node_mask, edge_mask, node_inf, node_rel, edge_inf, edge_rel, ratio
+    return node_mask, edge_mask, node_inf, node_rel, edge_inf, edge_rel
 
 
 def prune_attr_graph(
@@ -340,7 +322,7 @@ def prune_attr_graph(
 
     _validate_inputs(adj, nodes, logit_weights, token_weights, logits_seed, emb_weights_seed)
 
-    node_mask, edge_mask, node_inf, node_rel, edge_inf, edge_rel, graph_scores = prune_combined(
+    node_mask, edge_mask, node_inf, node_rel, edge_inf, edge_rel = prune_combined(
         adj,
         nodes,
         logit_weights=logit_weights,
@@ -437,7 +419,6 @@ def prune_attr_graph(
         kept_node_rel,
         kept_edge_inf,
         kept_edge_rel,
-        graph_scores,
     )
 
 
@@ -486,7 +467,7 @@ def prune_masks_from_attr_graph(
     edge_influence_threshold: float = 0.98,
     edge_relevance_threshold: float = 0.98,
     keep_all_tokens_and_logits: bool = True,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, float]:
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Shared pruning step returning masks and score tensors (used by ``circuit_tracer.graph.prune_graph``)."""
     adj = attr_graph.adj
     nodes = attr_graph.nodes
@@ -527,7 +508,6 @@ if __name__ == "__main__":
 
     print(prune_graph.num_nodes)
     print(prune_graph.num_edges)
-    print(prune_graph.graph_scores)
     print(prune_graph.node_influence)
     print(prune_graph.node_relevance)
     print(prune_graph.edge_influence)
