@@ -8,20 +8,39 @@ from sklearn.cluster import SpectralClustering
 
 from summarization.prune import PruneGraph
 from summarization.supernode_graph import (
+    Node,
     Supernode,
     SummarizationGraph,
     cluster_kind_to_supernode_type,
     node_from_prune_graph,
 )
-from summarization.utils import _is_embedding, _is_fixed, _is_logit, _parse_layer
+from summarization.utils import (
+    layer_index_from_node,
+    layer_index_from_node_id,
+    node_is_embedding,
+    node_is_fixed,
+    node_is_logit,
+)
 
 
-def _classify_node(node_id: str, attr: dict[str, dict[str, Any]]) -> str:
-    if _is_embedding(attr, node_id):
+def _nodes_by_id(prune_graph: PruneGraph) -> dict[str, Node]:
+    return {n.node_id: n for n in prune_graph.nodes}
+
+
+def _classify_node(node_id: str, nodes_by_id: dict[str, Node]) -> str:
+    n = nodes_by_id.get(node_id)
+    if n is None:
+        return "middle"
+    if node_is_embedding(n):
         return "emb"
-    if _is_logit(attr, node_id):
+    if node_is_logit(n):
         return "logit"
     return "middle"
+
+
+def _layer_numeric(node_id: str, nodes_by_id: dict[str, Node]) -> int:
+    n = nodes_by_id.get(node_id)
+    return layer_index_from_node(n) if n is not None else layer_index_from_node_id(node_id)
 
 
 def _cosine_norm(matrix: torch.Tensor) -> torch.Tensor:
@@ -124,16 +143,13 @@ def compute_similarity(
         raise ValueError(f"Unsupported mean_method={mean_method!r}.")
 
     if decay_rate is not None and decay_rate > 0.0:
-        kept_ids = prune_graph.kept_ids
-        attr = prune_graph.attr
-        
         layer_indices = []
-        for nid in kept_ids:
+        for n in prune_graph.nodes:
             try:
-                layer_indices.append(_parse_layer(attr, nid))
+                layer_indices.append(layer_index_from_node(n))
             except Exception:
                 layer_indices.append(0)
-                
+
         layers_t = torch.tensor(layer_indices, dtype=torch.float32, device=s.device)
         layer_diffs = torch.abs(layers_t.unsqueeze(1) - layers_t.unsqueeze(0))
         
@@ -146,26 +162,28 @@ def compute_similarity(
     return s
 
 
-def _layer_span_nodes(cluster: list[str], attr: dict[str, dict]) -> int:
-    lv = [_parse_layer(attr, n) for n in cluster]
+def _layer_span_nodes(cluster: list[str], nodes_by_id: dict[str, Node]) -> int:
+    lv = [_layer_numeric(n, nodes_by_id) for n in cluster]
     return max(lv) - min(lv)
 
 
-def _split_cluster_by_span(cluster: list[str], attr: dict[str, dict], max_layer_span: int) -> list[list[str]]:
+def _split_cluster_by_span(
+    cluster: list[str], nodes_by_id: dict[str, Node], max_layer_span: int
+) -> list[list[str]]:
     work = [cluster]
     out: list[list[str]] = []
     while work:
         current = work.pop()
-        span = _layer_span_nodes(current, attr)
+        span = _layer_span_nodes(current, nodes_by_id)
         if span <= max_layer_span or len(current) <= 1:
             out.append(current)
             continue
-        current_sorted = sorted(current, key=lambda n: _parse_layer(attr, n))
-        lo = _parse_layer(attr, current_sorted[0])
-        hi = _parse_layer(attr, current_sorted[-1])
+        current_sorted = sorted(current, key=lambda n: _layer_numeric(n, nodes_by_id))
+        lo = _layer_numeric(current_sorted[0], nodes_by_id)
+        hi = _layer_numeric(current_sorted[-1], nodes_by_id)
         cut = (lo + hi) // 2
-        left = [n for n in current_sorted if _parse_layer(attr, n) <= cut]
-        right = [n for n in current_sorted if _parse_layer(attr, n) > cut]
+        left = [n for n in current_sorted if _layer_numeric(n, nodes_by_id) <= cut]
+        right = [n for n in current_sorted if _layer_numeric(n, nodes_by_id) > cut]
         if not left or not right:
             half = max(1, len(current_sorted) // 2)
             left, right = current_sorted[:half], current_sorted[half:]
@@ -173,9 +191,11 @@ def _split_cluster_by_span(cluster: list[str], attr: dict[str, dict], max_layer_
     return out
 
 
-def _split_cluster_by_boundary(cluster: list[str], boundary_layer: int, attr: dict[str, dict]) -> list[list[str]]:
-    left = [n for n in cluster if _parse_layer(attr, n) < boundary_layer]
-    right = [n for n in cluster if _parse_layer(attr, n) >= boundary_layer]
+def _split_cluster_by_boundary(
+    cluster: list[str], boundary_layer: int, nodes_by_id: dict[str, Node]
+) -> list[list[str]]:
+    left = [n for n in cluster if _layer_numeric(n, nodes_by_id) < boundary_layer]
+    right = [n for n in cluster if _layer_numeric(n, nodes_by_id) >= boundary_layer]
     out: list[list[str]] = []
     if left:
         out.append(left)
@@ -184,7 +204,9 @@ def _split_cluster_by_boundary(cluster: list[str], boundary_layer: int, attr: di
     return out
 
 
-def _resolve_layer_interleaving(clusters: list[list[str]], attr: dict[str, dict]) -> list[list[str]]:
+def _resolve_layer_interleaving(
+    clusters: list[list[str]], nodes_by_id: dict[str, Node]
+) -> list[list[str]]:
     """
     Split interleaving/containment ranges until no layer-range conflicts remain.
     """
@@ -195,12 +217,12 @@ def _resolve_layer_interleaving(clusters: list[list[str]], attr: dict[str, dict]
             if changed:
                 break
             a = clusters[i]
-            a_layers = [_parse_layer(attr, n) for n in a]
+            a_layers = [_layer_numeric(n, nodes_by_id) for n in a]
             a_lo, a_hi = min(a_layers), max(a_layers)
 
             for j in range(i + 1, len(clusters)):
                 b = clusters[j]
-                b_layers = [_parse_layer(attr, n) for n in b]
+                b_layers = [_layer_numeric(n, nodes_by_id) for n in b]
                 b_lo, b_hi = min(b_layers), max(b_layers)
 
                 # interleaving: a_lo < b_lo < a_hi < b_hi (or symmetric)
@@ -211,29 +233,31 @@ def _resolve_layer_interleaving(clusters: list[list[str]], attr: dict[str, dict]
                 b_contains_a = b_lo < a_lo and a_hi < b_hi
 
                 if a_wraps_b_boundary or a_contains_b:
-                    replacement = _split_cluster_by_boundary(a, b_lo, attr)
+                    replacement = _split_cluster_by_boundary(a, b_lo, nodes_by_id)
                     clusters = clusters[:i] + replacement + clusters[i + 1 :]
                     changed = True
                     break
 
                 if b_wraps_a_boundary or b_contains_a:
-                    replacement = _split_cluster_by_boundary(b, a_lo, attr)
+                    replacement = _split_cluster_by_boundary(b, a_lo, nodes_by_id)
                     clusters = clusters[:j] + replacement + clusters[j + 1 :]
                     changed = True
                     break
 
-    clusters.sort(key=lambda c: min(_parse_layer(attr, n) for n in c))
+    clusters.sort(key=lambda c: min(_layer_numeric(n, nodes_by_id) for n in c))
     return clusters
 
 
-def _merge_to_budget(clusters: list[list[str]], attr: dict[str, dict], max_sn: int) -> list[list[str]]:
+def _merge_to_budget(
+    clusters: list[list[str]], nodes_by_id: dict[str, Node], max_sn: int
+) -> list[list[str]]:
     """Greedily merge layer-adjacent clusters until budget is met."""
     while len(clusters) > max_sn:
         best_i = -1
         best_gap = float("inf")
         for i in range(len(clusters) - 1):
-            hi_i = max(_parse_layer(attr, n) for n in clusters[i])
-            lo_j = min(_parse_layer(attr, n) for n in clusters[i + 1])
+            hi_i = max(_layer_numeric(n, nodes_by_id) for n in clusters[i])
+            lo_j = min(_layer_numeric(n, nodes_by_id) for n in clusters[i + 1])
             gap = abs(lo_j - hi_i)
             if gap < best_gap:
                 best_gap = gap
@@ -248,8 +272,10 @@ def _merge_to_budget(clusters: list[list[str]], attr: dict[str, dict], max_sn: i
     return clusters
 
 
-def _name_middle_supernodes(clusters: list[list[str]], attr: dict[str, dict]) -> dict[str, list[str]]:
-    clusters = sorted(clusters, key=lambda c: min(_parse_layer(attr, n) for n in c))
+def _name_middle_supernodes(
+    clusters: list[list[str]], nodes_by_id: dict[str, Node]
+) -> dict[str, list[str]]:
+    clusters = sorted(clusters, key=lambda c: min(_layer_numeric(n, nodes_by_id) for n in c))
     return {f"SN_{i}": members for i, members in enumerate(clusters)}
 
 
@@ -261,7 +287,8 @@ def _supernode_from_member_ids(
     id_to_idx: dict[str, int] | None = None,
 ) -> Supernode:
     nodes = [node_from_prune_graph(prune_graph, node_id, id_to_idx=id_to_idx) for node_id in member_ids]
-    layers = [_parse_layer(prune_graph.attr, node_id) for node_id in member_ids]
+    nodes_map = _nodes_by_id(prune_graph)
+    layers = [_layer_numeric(node_id, nodes_map) for node_id in member_ids]
     if kind == "emb":
         sn_type = cluster_kind_to_supernode_type("emb")
     elif kind == "logit":
@@ -287,8 +314,8 @@ def labels_to_supernodes(
         grouped.setdefault(int(label), []).append(node_id)
 
     middle_clusters = [grouped[label] for label in sorted(grouped)]
-    emb_singletons = [[nid] for nid in prune_graph.kept_ids if _is_embedding(prune_graph.attr, nid)]
-    logit_singletons = [[nid] for nid in prune_graph.kept_ids if _is_logit(prune_graph.attr, nid)]
+    emb_singletons = [[n.node_id] for n in prune_graph.nodes if node_is_embedding(n)]
+    logit_singletons = [[n.node_id] for n in prune_graph.nodes if node_is_logit(n)]
     return middle_clusters + emb_singletons + logit_singletons
 
 
@@ -321,8 +348,8 @@ def cluster_graph(
         List of supernodes where each supernode is a list of node ids.
         Embedding/logit nodes are returned as singleton supernodes.
     """
-    kept_ids = prune_graph.kept_ids
-    attr = prune_graph.attr
+    kept_ids = prune_graph.node_ids
+    nodes_by_id = _nodes_by_id(prune_graph)
 
     if not kept_ids:
         return []
@@ -335,7 +362,7 @@ def cluster_graph(
         max_layer_span=max_layer_span,
     )
 
-    middle_idx = [i for i, nid in enumerate(kept_ids) if not _is_fixed(attr, nid)]
+    middle_idx = [i for i, nid in enumerate(kept_ids) if not node_is_fixed(nodes_by_id[nid])]
     middle_ids = [kept_ids[i] for i in middle_idx]
 
     if not middle_ids:
@@ -370,20 +397,20 @@ def cluster_graph(
     if enforce_dag:
         span_safe: list[list[str]] = []
         for cluster in middle_clusters:
-            span_safe.extend(_split_cluster_by_span(cluster, attr, max_layer_span=max_layer_span))
+            span_safe.extend(_split_cluster_by_span(cluster, nodes_by_id, max_layer_span=max_layer_span))
         middle_clusters = span_safe
 
     if enforce_dag:
-        middle_clusters = _resolve_layer_interleaving(middle_clusters, attr)
+        middle_clusters = _resolve_layer_interleaving(middle_clusters, nodes_by_id)
 
     if max_sn is not None and enforce_dag:
-        middle_clusters = _merge_to_budget(middle_clusters, attr, max_sn=max_sn)
+        middle_clusters = _merge_to_budget(middle_clusters, nodes_by_id, max_sn=max_sn)
 
     # Keep deterministic naming order for middle SNs, but return member lists only.
-    named_middle = _name_middle_supernodes(middle_clusters, attr)
+    named_middle = _name_middle_supernodes(middle_clusters, nodes_by_id)
 
-    emb_singletons = [[nid] for nid in kept_ids if _is_embedding(attr, nid)]
-    logit_singletons = [[nid] for nid in kept_ids if _is_logit(attr, nid)]
+    emb_singletons = [[nid] for nid in kept_ids if node_is_embedding(nodes_by_id[nid])]
+    logit_singletons = [[nid] for nid in kept_ids if node_is_logit(nodes_by_id[nid])]
 
     supernodes = list(named_middle.values()) + emb_singletons + logit_singletons
     return supernodes
@@ -412,7 +439,7 @@ def clusters_to_supernodes(
     middle_prefix: str = "SN",
 ) -> list[Supernode]:
     """Convert `cluster_graph` member lists into named `Supernode` rows (middle + emb + logit)."""
-    attr = prune_graph.attr
+    nodes_by_id = _nodes_by_id(prune_graph)
     middle: list[list[str]] = []
     emb: list[list[str]] = []
     logit: list[list[str]] = []
@@ -421,7 +448,7 @@ def clusters_to_supernodes(
         if not sn:
             continue
         first = sn[0]
-        kind = _classify_node(first, attr)
+        kind = _classify_node(first, nodes_by_id)
         if kind == "emb":
             emb.append(sn)
         elif kind == "logit":
@@ -429,18 +456,18 @@ def clusters_to_supernodes(
         else:
             middle.append(sn)
 
-    middle = sorted(middle, key=lambda m: min(_parse_layer(attr, n) for n in m))
+    middle = sorted(middle, key=lambda m: min(_layer_numeric(n, nodes_by_id) for n in m))
     out: list[Supernode] = []
-    id_to_idx = {nid: i for i, nid in enumerate(prune_graph.kept_ids)}
+    id_to_idx = {n.node_id: i for i, n in enumerate(prune_graph.nodes)}
     for i, sn in enumerate(middle):
-        k = _classify_node(sn[0], attr)
+        k = _classify_node(sn[0], nodes_by_id)
         out.append(_supernode_from_member_ids(prune_graph, f"{middle_prefix}_{i}", list(sn), k, id_to_idx=id_to_idx))
     emb_logit: list[Supernode] = []
     for i, sn in enumerate(emb):
-        k = _classify_node(sn[0], attr)
+        k = _classify_node(sn[0], nodes_by_id)
         emb_logit.append(_supernode_from_member_ids(prune_graph, f"SN_EMB_{i}", list(sn), k, id_to_idx=id_to_idx))
     for i, sn in enumerate(logit):
-        k = _classify_node(sn[0], attr)
+        k = _classify_node(sn[0], nodes_by_id)
         emb_logit.append(_supernode_from_member_ids(prune_graph, f"SN_LOGIT_{i}", list(sn), k, id_to_idx=id_to_idx))
     return out + emb_logit
 
@@ -457,13 +484,13 @@ def supernodes_to_mapping(
 
 def mapping_dict_to_supernodes(prune_graph: PruneGraph, mapping: dict[str, list[str]]) -> list[Supernode]:
     """Preserve dict insertion order; one `Supernode` per key (features may be filtered later in graph build)."""
-    attr = prune_graph.attr
+    nodes_by_id = _nodes_by_id(prune_graph)
     out: list[Supernode] = []
-    id_to_idx = {nid: i for i, nid in enumerate(prune_graph.kept_ids)}
+    id_to_idx = {n.node_id: i for i, n in enumerate(prune_graph.nodes)}
     for name, feats in mapping.items():
         if not feats:
             continue
-        k = _classify_node(feats[0], attr)
+        k = _classify_node(feats[0], nodes_by_id)
         out.append(_supernode_from_member_ids(prune_graph, name, list(feats), k, id_to_idx=id_to_idx))
     return out
 
@@ -480,8 +507,8 @@ def build_supernode_graph(
     Returns sn-level adjacency and influence metrics that downstream consumers
     can use for scoring, reporting, and visualization.
     """
-    kept_ids = prune_graph.kept_ids
-    attr = prune_graph.attr
+    kept_ids = prune_graph.node_ids
+    nodes_by_id = _nodes_by_id(prune_graph)
     adj = prune_graph.pruned_adj.clone().float().T  # sender-indexed
 
     node_to_idx = {nid: i for i, nid in enumerate(kept_ids)}
@@ -492,7 +519,7 @@ def build_supernode_graph(
         if not feats:
             continue
         members = [node_to_idx[n] for n in feats]
-        k0 = _classify_node(feats[0], attr)
+        k0 = _classify_node(feats[0], nodes_by_id)
         nodes_kept.append(_supernode_from_member_ids(prune_graph, row.name, feats, k0, id_to_idx=node_to_idx))
         sn_members_idx.append(members)
 
@@ -524,7 +551,7 @@ def build_supernode_graph(
                 else:
                     sn_adj[i, j] = 0.0
 
-    logit_idx = [i for i, nid in enumerate(kept_ids) if _is_logit(attr, nid)]
+    logit_idx = [i for i, n in enumerate(prune_graph.nodes) if node_is_logit(n)]
     sn_inf = np.zeros(k, dtype=np.float64)
     if logit_idx:
         for i, src in enumerate(sn_members_idx):

@@ -1,7 +1,7 @@
 # Unified pruning: AttrGraph -> PruneGraph; shared core with circuit_tracer.graph.prune_graph
 import json
 import logging
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import torch
@@ -19,18 +19,32 @@ from circuit_tracer.graph import (
     normalize_matrix,
 )
 from summarization.attr_graph import AttrGraph
-from summarization.utils import _build_index_sets
+from summarization.supernode_graph import Node
+from summarization.utils import _build_index_sets, _node_from_json_dict
 
 logger = logging.getLogger(__name__)
 
 LogitWeightMode = Literal["probs", "target"]
 
 
+def _nodes_from_payload(raw_nodes: Any) -> list[Node]:
+    if not isinstance(raw_nodes, list):
+        raise TypeError(f"nodes must be a list, got {type(raw_nodes)}")
+    out: list[Node] = []
+    for item in raw_nodes:
+        if isinstance(item, Node):
+            out.append(item)
+        elif isinstance(item, dict):
+            out.append(_node_from_json_dict(item))
+        else:
+            raise TypeError(f"invalid node entry: {type(item)}")
+    return out
+
+
 @dataclass
 class PruneGraph:
-    kept_ids: List[str]
+    nodes: list[Node]
     pruned_adj: torch.Tensor
-    attr: Dict[str, Any]
     metadata: Dict[str, Any]
     node_influence: torch.Tensor | None = None
     node_relevance: torch.Tensor | None = None
@@ -40,21 +54,24 @@ class PruneGraph:
 
     @property
     def num_nodes(self) -> int:
-        return len(self.kept_ids)
+        return len(self.nodes)
 
     @property
     def num_edges(self) -> int:
         return int((self.pruned_adj != 0).sum().item())
 
+    @property
+    def node_ids(self) -> list[str]:
+        return [n.node_id for n in self.nodes]
+
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "kept_ids": self.kept_ids,
+            "nodes": [asdict(n) for n in self.nodes],
             "pruned_adj": self.pruned_adj,
             "node_influence": self.node_influence,
             "node_relevance": self.node_relevance,
             "edge_influence": self.edge_influence,
             "edge_relevance": self.edge_relevance,
-            "attr": self.attr,
             "metadata": self.metadata,
             "graph_scores": self.graph_scores,
         }
@@ -62,43 +79,23 @@ class PruneGraph:
     @classmethod
     def from_dict(cls, payload: Dict[str, Any]) -> "PruneGraph":
         required = {
-            "kept_ids",
+            "nodes",
             "pruned_adj",
-            "node_influence",
-            "node_relevance",
-            "edge_influence",
-            "edge_relevance",
-            "attr",
             "metadata",
-            "graph_scores",
         }
         missing = required - set(payload.keys())
-        if missing and "graph_scores" not in payload:
-            payload = dict(payload)
-            payload["graph_scores"] = 0.0
-            return cls(
-                kept_ids=payload["kept_ids"],
-                pruned_adj=payload["pruned_adj"],
-                node_influence=payload.get("node_influence"),
-                node_relevance=payload.get("node_relevance"),
-                edge_influence=payload.get("edge_influence"),
-                edge_relevance=payload.get("edge_relevance"),
-                attr=payload["attr"],
-                metadata=payload["metadata"],
-                graph_scores=payload.get("graph_scores"),
-            )
         if missing:
             raise ValueError(f"Invalid PruneGraph payload. Missing keys: {sorted(missing)}")
+        nodes = _nodes_from_payload(payload["nodes"])
         return cls(
-            kept_ids=payload["kept_ids"],
+            nodes=nodes,
             pruned_adj=payload["pruned_adj"],
             node_influence=payload.get("node_influence"),
             node_relevance=payload.get("node_relevance"),
             edge_influence=payload.get("edge_influence"),
             edge_relevance=payload.get("edge_relevance"),
-            attr=payload["attr"],
             metadata=payload["metadata"],
-            graph_scores=payload.get("graph_scores"),
+            graph_scores=payload.get("graph_scores", 0.0),
         )
 
 
@@ -143,7 +140,7 @@ def compute_combined_prune_graph_scores(
     # For saved pruned graphs, the full-graph denominator is tracked as graph_scores.
     combined_retention = float(prune_graph.graph_scores) if prune_graph.graph_scores is not None else float("nan")
 
-    idx = _build_index_sets(prune_graph.kept_ids, prune_graph.attr)
+    idx = _build_index_sets(prune_graph.nodes)
     error_idx = idx["error"]
     pruned_norm = normalize_matrix(prune_graph.pruned_adj.clone())
     if error_idx:
@@ -163,8 +160,7 @@ def _validate_threshold(name: str, value: float) -> None:
 
 def _validate_inputs(
     adj: torch.Tensor,
-    node_ids: List[str],
-    attr: Dict[str, Any],
+    nodes: list[Node],
     logit_weights: LogitWeightMode | None,
     token_weights: Optional[List[float]],
     logits_seed: torch.Tensor | None,
@@ -172,11 +168,8 @@ def _validate_inputs(
 ) -> None:
     if adj.ndim != 2 or adj.shape[0] != adj.shape[1]:
         raise ValueError(f"adj must be square 2D tensor, got shape={tuple(adj.shape)}")
-    if adj.shape[0] != len(node_ids):
-        raise ValueError(f"adj size and node_ids length mismatch: {adj.shape[0]} vs {len(node_ids)}")
-    missing = [nid for nid in node_ids if nid not in attr]
-    if missing:
-        raise ValueError(f"attr missing entries for {len(missing)} node_ids")
+    if adj.shape[0] != len(nodes):
+        raise ValueError(f"adj size and nodes length mismatch: {adj.shape[0]} vs {len(nodes)}")
     if logits_seed is None:
         if logit_weights not in ("probs", "target"):
             raise ValueError(f"logit_weights must be 'probs' or 'target', got {logit_weights}")
@@ -217,8 +210,7 @@ def remove_dangling_nodes(
 
 def prune_combined(
     adj: torch.Tensor,
-    node_ids: List[str],
-    attr: Dict[str, Any],
+    nodes: list[Node],
     logit_weights: LogitWeightMode | None = "target",
     token_weights: Optional[List[float]] = None,
     logits_seed: torch.Tensor | None = None,
@@ -230,7 +222,7 @@ def prune_combined(
     keep_all_tokens_and_logits: bool = True,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, float]:
     n = adj.shape[0]
-    idx = _build_index_sets(node_ids, attr)
+    idx = _build_index_sets(nodes)
 
     if logits_seed is not None:
         logits_seed_t = logits_seed.to(device=adj.device, dtype=torch.float32).reshape(n)
@@ -238,8 +230,7 @@ def prune_combined(
         logits_seed_t = torch.zeros(n, device=adj.device, dtype=torch.float32)
         if logit_weights == "probs":
             for i in idx["logit"]:
-                nid = node_ids[i]
-                logits_seed_t[i] = float(attr.get(nid, {}).get("token_prob", 0.0))
+                logits_seed_t[i] = float(nodes[i].token_prob)
         else:
             if not idx["target_logit"]:
                 raise ValueError("No target logit node found in graph attributes.")
@@ -341,18 +332,17 @@ def prune_attr_graph(
     _validate_threshold("edge_influence_threshold", edge_influence_threshold)
     _validate_threshold("edge_relevance_threshold", edge_relevance_threshold)
 
-    nodes = attr_graph.nodes
+    nodes = [replace(n) for n in attr_graph.nodes]
     node_ids = [n.node_id for n in nodes]
-    attr = {n.node_id: asdict(n) for n in nodes}
+    id_index = {nid: i for i, nid in enumerate(node_ids)}
     adj = attr_graph.adj
     metadata = attr_graph.metadata
 
-    _validate_inputs(adj, node_ids, attr, logit_weights, token_weights, logits_seed, emb_weights_seed)
+    _validate_inputs(adj, nodes, logit_weights, token_weights, logits_seed, emb_weights_seed)
 
     node_mask, edge_mask, node_inf, node_rel, edge_inf, edge_rel, graph_scores = prune_combined(
         adj,
-        node_ids,
-        attr,
+        nodes,
         logit_weights=logit_weights,
         token_weights=token_weights,
         logits_seed=logits_seed,
@@ -365,7 +355,6 @@ def prune_attr_graph(
     )
 
     kept_indices = node_mask.nonzero(as_tuple=True)[0]
-    kept_ids = [node_ids[i] for i in kept_indices.tolist()]
 
     if filter_act_density:
         model_id = metadata.get("scan", "")
@@ -373,28 +362,30 @@ def prune_attr_graph(
         source_set = info.get("neuronpedia_source_set") or (
             info.get("source_urls", [""])[0].split("/")[-1] if info.get("source_urls") else ""
         )
-        for node_id in list(kept_ids):
-            if attr[node_id].get("feature_type") == "embedding":
+        for i in kept_indices.tolist():
+            node = nodes[i]
+            nid = node.node_id
+            if node.feature_type == "embedding":
                 ptoks = metadata.get("prompt_tokens", [])
-                cidx = attr[node_id].get("ctx_idx", 0)
+                cidx = node.ctx_idx
                 try:
                     cidx = int(cidx)
                 except (TypeError, ValueError):
                     cidx = 0
                 if cidx < len(ptoks):
-                    attr[node_id]["clerp"] = f"Emb: {ptoks[cidx]}"
+                    nodes[i] = replace(node, clerp=f"Emb: {ptoks[cidx]}")
                 continue
-            if attr[node_id].get("feature_type") != "cross layer transcoder":
+            if node.feature_type != "cross layer transcoder":
                 continue
 
-            layer, index = node_id.split("_")[:2]
+            layer, index = nid.split("_")[:2]
             index = int(index)
             layer = layer + "-" + source_set
             status, data = get_feature(modelId=model_id, layer=layer, index=index)
             if status != 200:
                 logger.warning(
                     "Failed node=%s modelId=%s layer=%s status=%s",
-                    node_id,
+                    nid,
                     model_id,
                     layer,
                     status,
@@ -409,21 +400,21 @@ def prune_attr_graph(
                 if isinstance(first_explanation, dict):
                     clerp = first_explanation.get("description", "")
             act_density = json_data.get("frac_nonzero", 0)
-            if attr[node_id].get("clerp", "") == "":
-                attr[node_id]["clerp"] = clerp
+            cur = nodes[i]
+            if cur.clerp == "":
+                nodes[i] = replace(cur, clerp=clerp)
             if act_density > act_density_ub or act_density < act_density_lb:
-                idx_local = node_ids.index(node_id)
+                idx_local = id_index[nid]
                 node_mask[idx_local] = False
                 edge_mask[idx_local, :] = False
                 edge_mask[:, idx_local] = False
 
-        idx2 = _build_index_sets(node_ids, attr)
+        idx2 = _build_index_sets(nodes)
         feature_idx = torch.tensor(idx2["feature"], dtype=torch.long, device=adj.device)
         non_boundary = torch.tensor(idx2["feature"] + idx2["error"], dtype=torch.long, device=adj.device)
         node_mask = remove_dangling_nodes(node_mask, edge_mask, feature_idx, non_boundary)
 
         kept_indices = node_mask.nonzero(as_tuple=True)[0]
-        kept_ids = [node_ids[i] for i in kept_indices.tolist()]
 
     pruned_adj = adj[kept_indices][:, kept_indices].clone()
     kept_edge_mask = edge_mask[kept_indices][:, kept_indices]
@@ -435,13 +426,12 @@ def prune_attr_graph(
     kept_edge_inf[~kept_edge_mask] = 0.0
     kept_edge_rel[~kept_edge_mask] = 0.0
 
-    out_attr = {nid: attr[nid] for nid in kept_ids}
-    logger.info("Pruned graph: %d nodes, %d edges", len(kept_ids), int((pruned_adj != 0).sum().item()))
+    kept_nodes = [nodes[int(j)] for j in kept_indices]
+    logger.info("Pruned graph: %d nodes, %d edges", len(kept_nodes), int((pruned_adj != 0).sum().item()))
 
     return PruneGraph(
-        kept_ids,
+        kept_nodes,
         pruned_adj,
-        out_attr,
         metadata,
         kept_node_inf,
         kept_node_rel,
@@ -500,20 +490,17 @@ def prune_masks_from_attr_graph(
     """Shared pruning step returning masks and score tensors (used by ``circuit_tracer.graph.prune_graph``)."""
     adj = attr_graph.adj
     nodes = attr_graph.nodes
-    node_ids = [n.node_id for n in nodes]
-    attr = {n.node_id: asdict(n) for n in nodes}
 
     logits_seed = logit_weights
     emb_seed = token_weights
     lw_mode = None if logits_seed is not None else logit_weights_mode
     tw_list = None if emb_seed is not None else token_weights_list
 
-    _validate_inputs(adj, node_ids, attr, lw_mode, tw_list, logits_seed, emb_seed)
+    _validate_inputs(adj, nodes, lw_mode, tw_list, logits_seed, emb_seed)
 
     return prune_combined(
         adj,
-        node_ids,
-        attr,
+        nodes,
         logit_weights=lw_mode,
         token_weights=tw_list,
         logits_seed=logits_seed,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import asdict
 from pathlib import Path
 import re
 from typing import Any, Literal, cast
@@ -843,7 +844,7 @@ def main() -> None:
     fig = supernode_graph_figure(
         sng=sng,
         final_supernodes=supernode_map,
-        attr=prune_graph.attr,
+        attr={n.node_id: asdict(n) for n in prune_graph.nodes},
         title="Final Cluster Graph",
     )
     st.plotly_chart(fig, use_container_width=True)
@@ -940,7 +941,7 @@ def main() -> None:
                 modelId=upload_model_id.strip(),
                 slug=upload_slug.strip(),
                 displayName=upload_display_name.strip(),
-                pinnedIds=prune_graph.kept_ids,
+                pinnedIds=prune_graph.node_ids,
                 supernodes=upload_supernodes,
                 pruningThreshold=float(upload_pruning_threshold),
                 densityThreshold=float(upload_density_threshold),
@@ -953,7 +954,7 @@ def main() -> None:
             "slug": upload_slug.strip(),
             "display_name": upload_display_name.strip(),
             "supernode_count": len(upload_supernodes),
-            "pinned_count": len(prune_graph.kept_ids),
+            "pinned_count": len(prune_graph.node_ids),
         }
 
     last_upload = st.session_state.last_upload_result

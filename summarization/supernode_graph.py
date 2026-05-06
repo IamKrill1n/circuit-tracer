@@ -47,41 +47,45 @@ def node_from_prune_graph(
     node_id: str,
     id_to_idx: dict[str, int] | None = None,
 ) -> Node:
-    """Build a typed summarization node from `PruneGraph.attr` plus score tensors."""
-    attr = prune_graph.attr.get(node_id, {})
-    if id_to_idx is None:
-        id_to_idx = {nid: i for i, nid in enumerate(prune_graph.kept_ids)}
-    idx = id_to_idx.get(node_id)
-    influence = _tensor_value_at(prune_graph.node_influence, idx) if idx is not None else None
-    relevance = _tensor_value_at(prune_graph.node_relevance, idx) if idx is not None else None
+    """Build a typed summarization node from ``PruneGraph.nodes`` plus score tensors."""
+    nodes: list[Node] = list(getattr(prune_graph, "nodes"))
+    lookup = {n.node_id: n for n in nodes}
+    base = lookup.get(node_id)
+    if base is None:
+        raise KeyError(f"unknown node_id for PruneGraph: {node_id!r}")
 
-    layer = attr.get("layer", "")
-    feature = attr.get("feature", 0)
-    ctx_idx = attr.get("ctx_idx", 0)
-    run_idx = attr.get("run_idx", 0)
-    reverse_ctx_idx = attr.get("reverse_ctx_idx", 0)
-    token_prob = attr.get("token_prob", 0.0)
-    is_target_logit = bool(attr.get("is_target_logit", False))
-    feature_type = str(attr.get("feature_type", ""))
-    js_node_id = str(attr.get("jsNodeId") or node_id)
-    clerp = str(attr.get("clerp", ""))
-    activation_raw = attr.get("activation")
-    activation = float(activation_raw) if activation_raw is not None else None
+    if id_to_idx is None:
+        id_to_idx = {n.node_id: i for i, n in enumerate(nodes)}
+    idx = id_to_idx.get(node_id)
+
+    ti = (
+        _tensor_value_at(prune_graph.node_influence, idx)
+        if idx is not None
+        else None
+    )
+    tr = (
+        _tensor_value_at(prune_graph.node_relevance, idx)
+        if idx is not None
+        else None
+    )
+
+    influence = ti if ti is not None else base.influence
+    relevance = tr if tr is not None else base.relevance
 
     return Node(
-        node_id=node_id,
-        feature=int(feature),
-        layer=str(layer),
-        ctx_idx=int(ctx_idx),
-        feature_type=feature_type,
-        token_prob=float(token_prob),
-        is_target_logit=is_target_logit,
-        run_idx=int(run_idx),
-        reverse_ctx_idx=int(reverse_ctx_idx),
-        jsNodeId=js_node_id,
-        clerp=clerp,
+        node_id=base.node_id,
+        feature=base.feature,
+        layer=str(base.layer),
+        ctx_idx=int(base.ctx_idx),
+        feature_type=base.feature_type,
+        token_prob=float(base.token_prob),
+        is_target_logit=base.is_target_logit,
+        run_idx=int(base.run_idx),
+        reverse_ctx_idx=int(base.reverse_ctx_idx),
+        jsNodeId=str(base.jsNodeId or base.node_id),
+        clerp=str(base.clerp),
         influence=influence,
-        activation=activation,
+        activation=base.activation,
         relevance=relevance,
     )
 

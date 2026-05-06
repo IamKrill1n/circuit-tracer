@@ -8,7 +8,7 @@ import networkx as nx
 import numpy as np
 import plotly.graph_objects as go
 
-from summarization.utils import _parse_layer
+from summarization.utils import layer_index_from_node_id
 from summarization.flow_analysis import _flow_role
 from summarization.supernode_graph import SummarizationGraph, Supernode
 
@@ -49,7 +49,12 @@ def _layer_and_ctx_for_supernode(
     attr: dict[str, dict[str, Any]] | None,
 ) -> tuple[int, float]:
     items = members if members else [sn]
-    layers = [_parse_layer(attr or {}, nid) for nid in items]
+    layers = [
+        layer_index_from_node_id(
+            nid, layer=(attr or {}).get(nid, {}).get("layer") if attr else None
+        )
+        for nid in items
+    ]
     ctx_idx = [_parse_ctx_idx(attr, nid) for nid in items]
     return (min(layers) if layers else 0, float(np.mean(ctx_idx) if ctx_idx else 0.0))
 

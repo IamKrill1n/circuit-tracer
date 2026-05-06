@@ -5,7 +5,7 @@ from typing import Any
 import numpy as np
 
 from summarization.supernode_graph import SummarizationGraph, Supernode
-from summarization.utils import _parse_layer
+from summarization.utils import layer_index_from_node_id
 
 
 def _classify_sn(sn_name: str) -> str:
@@ -54,7 +54,7 @@ def _resolve_mapping(
 def _build_sn_dag_order(sn_names: list[str], final_supernodes: dict[str, list[str]]) -> list[str]:
     def min_layer(sn: str) -> int:
         members = final_supernodes.get(sn, [])
-        return min(_parse_layer({}, n) for n in members) if members else 0
+        return min(layer_index_from_node_id(n) for n in members) if members else 0
 
     return sorted(sn_names, key=min_layer)
 

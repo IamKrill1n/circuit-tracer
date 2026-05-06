@@ -202,5 +202,5 @@ def test_prune_combined_runs_on_attr_graph_json_fixture(tmp_path) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
     ag = AttrGraph.from_graph_file(str(path))
     pg = prune_attr_graph(ag, logit_weights="target", node_threshold=1.0, edge_threshold=1.0)
-    assert len(pg.kept_ids) >= 1
+    assert len(pg.nodes) >= 1
     assert pg.pruned_adj.ndim == 2

@@ -4,18 +4,19 @@ import torch
 
 from summarization.cluster import cluster_graph, compute_similarity
 from summarization.prune import PruneGraph
+from summarization.utils import _node_from_json_dict
 
 
 def _build_test_graph() -> PruneGraph:
-    kept_ids = ["E_0_0", "1_0_0", "1_1_0", "2_0_0", "2_1_0", "27_0_0"]
-    attr = {
-        "E_0_0": {"feature_type": "embedding", "is_target_logit": False},
-        "1_0_0": {"feature_type": "sae_feature", "is_target_logit": False},
-        "1_1_0": {"feature_type": "sae_feature", "is_target_logit": False},
-        "2_0_0": {"feature_type": "sae_feature", "is_target_logit": False},
-        "2_1_0": {"feature_type": "sae_feature", "is_target_logit": False},
-        "27_0_0": {"feature_type": "logit", "is_target_logit": True},
-    }
+    node_specs: list[tuple[str, dict]] = [
+        ("E_0_0", {"feature_type": "embedding", "is_target_logit": False, "layer": "E"}),
+        ("1_0_0", {"feature_type": "sae_feature", "is_target_logit": False, "layer": "1"}),
+        ("1_1_0", {"feature_type": "sae_feature", "is_target_logit": False, "layer": "1"}),
+        ("2_0_0", {"feature_type": "sae_feature", "is_target_logit": False, "layer": "2"}),
+        ("2_1_0", {"feature_type": "sae_feature", "is_target_logit": False, "layer": "2"}),
+        ("27_0_0", {"feature_type": "logit", "is_target_logit": True, "layer": "27"}),
+    ]
+    nodes = [_node_from_json_dict({"node_id": nid, **spec}) for nid, spec in node_specs]
     # receiver-indexed adjacency
     pruned_adj = torch.tensor(
         [
@@ -33,9 +34,8 @@ def _build_test_graph() -> PruneGraph:
     node_relevance = torch.tensor([0.0, 0.4, 0.45, 0.7, 0.75, 0.0], dtype=torch.float32)
     node_influence = torch.tensor([0.0, 0.3, 0.35, 0.8, 0.85, 0.0], dtype=torch.float32)
     return PruneGraph(
-        kept_ids=kept_ids,
+        nodes=nodes,
         pruned_adj=pruned_adj,
-        attr=attr,
         metadata={},
         node_influence=node_influence,
         node_relevance=node_relevance,
@@ -57,7 +57,7 @@ def test_compute_similarity_uses_edge_channels() -> None:
         similarity_mode="node",
     )
 
-    assert sim_out.shape == sim_in.shape == (len(prune_graph.kept_ids), len(prune_graph.kept_ids))
+    assert sim_out.shape == sim_in.shape == (len(prune_graph.node_ids), len(prune_graph.node_ids))
     assert torch.all(sim_out >= 0.0) and torch.all(sim_out <= 1.0)
     assert torch.all(sim_in >= 0.0) and torch.all(sim_in <= 1.0)
     assert not torch.allclose(sim_out, sim_in)

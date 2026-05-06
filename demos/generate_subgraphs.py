@@ -1,5 +1,6 @@
 import os
 import json
+from dataclasses import asdict
 
 from summarization.prune import prune_graph_pipeline
 from api import save_subgraph
@@ -43,9 +44,9 @@ def generate_subgraphs(
         edge_threshold=edge_threshold,
         keep_all_tokens_and_logits=keep_all_tokens_and_logits,
     )
-    kept_ids = pg.kept_ids
+    kept_ids = pg.node_ids
     pruned_adj = pg.pruned_adj
-    attr = pg.attr
+    attr = {n.node_id: asdict(n) for n in pg.nodes}
     metadata = pg.metadata
 
     print(f"Subgraph has {len(kept_ids)} nodes, {int((pruned_adj != 0).sum())} edges")

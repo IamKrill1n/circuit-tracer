@@ -22,7 +22,7 @@ from summarization.cluster import (
 )
 from summarization.flow_analysis import flow_faithfulness_report
 from summarization.prune import PruneGraph, load_prune_graph
-from summarization.utils import _is_fixed
+from summarization.utils import node_is_fixed
 
 METHOD_GRID: list[dict[str, str]] = [
     {
@@ -215,7 +215,7 @@ def _graph_identity(graph_path: Path, input_paths: Sequence[str]) -> tuple[str, 
 
 
 def _middle_indices(prune_graph: PruneGraph) -> list[int]:
-    return [i for i, nid in enumerate(prune_graph.kept_ids) if not _is_fixed(prune_graph.attr, nid)]
+    return [i for i, n in enumerate(prune_graph.nodes) if not node_is_fixed(n)]
 
 
 def _fixed_k_from_num_nodes(n_middle: int, divisor: int) -> int:
@@ -291,7 +291,7 @@ def _within_cluster_mean_cosine(
     prune_graph: PruneGraph,
 ) -> float | None:
     similarity = _cosine_similarity(features, nonnegative=False)
-    node_to_idx = {node_id: i for i, node_id in enumerate(prune_graph.kept_ids)}
+    node_to_idx = {n.node_id: i for i, n in enumerate(prune_graph.nodes)}
     pair_values: list[float] = []
     for sn_name, members in final_supernodes.items():
         if "EMB" in sn_name or "LOGIT" in sn_name:
@@ -624,7 +624,7 @@ def evaluate_prune_graph(
             )
 
     mid_idx = _middle_indices(prune_graph)
-    middle_ids = [prune_graph.kept_ids[i] for i in mid_idx]
+    middle_ids = [prune_graph.nodes[i].node_id for i in mid_idx]
     node_features = _node_profile_features(prune_graph)
     node_features_mid = node_features[mid_idx]
     node_profile_similarity = _cosine_similarity(node_features, nonnegative=True)

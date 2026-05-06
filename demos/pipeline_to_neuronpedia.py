@@ -123,7 +123,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         modelId=args.model_id,
         slug=args.slug,
         displayName=args.display_name,
-        pinnedIds=prune_graph.kept_ids,
+        pinnedIds=prune_graph.node_ids,
         supernodes=supernodes,
         pruningThreshold=args.upload_pruning_threshold,
         densityThreshold=args.upload_density_threshold,

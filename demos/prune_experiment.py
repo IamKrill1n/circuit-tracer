@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -166,8 +166,7 @@ def run_single_graph(
 ) -> ExperimentResult:
     adj, nodes, _metadata = get_data_from_json(str(graph_path))
     node_ids = [n.node_id for n in nodes]
-    attr = {n.node_id: asdict(n) for n in nodes}
-    idx = _build_index_sets(node_ids, attr)
+    idx = _build_index_sets(nodes)
     feature_indices = idx["feature"]
     embedding_indices = idx["embedding"]
     if not feature_indices:
@@ -188,8 +187,7 @@ def run_single_graph(
         _edge_relevance,
     ) = prune_combined(
         adj=adj,
-        node_ids=node_ids,
-        attr=attr,
+        nodes=nodes,
         logit_weights=logit_weights,  # type: ignore[arg-type]
         token_weights=token_weights,
         node_influence_threshold=node_threshold,

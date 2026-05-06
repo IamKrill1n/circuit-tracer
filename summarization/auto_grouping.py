@@ -15,11 +15,11 @@ from summarization.cluster import (
 )
 from summarization.prune import PruneGraph
 from summarization.supernode_graph import Supernode
-from summarization.utils import _is_fixed
+from summarization.utils import node_is_fixed
 
 
 def _middle_indices(prune_graph: PruneGraph) -> list[int]:
-    return [i for i, nid in enumerate(prune_graph.kept_ids) if not _is_fixed(prune_graph.attr, nid)]
+    return [i for i, n in enumerate(prune_graph.nodes) if not node_is_fixed(n)]
 
 
 def eigengap_analysis(
@@ -83,7 +83,7 @@ def _silhouette_over_middle(
     Returns (0.0, 0.5) when silhouette is undefined (single cluster, all singletons,
     or no middle nodes assigned).
     """
-    ids = prune_graph.kept_ids
+    ids = prune_graph.node_ids
     id_to_idx = {nid: i for i, nid in enumerate(ids)}
 
     nid_to_label: dict[str, int] = {}
@@ -132,7 +132,7 @@ def _dbcv_over_middle(
     Returns NaN when DBCV is undefined (single cluster, all singleton labels, too few nodes)
     or when no compatible DBCV implementation is installed.
     """
-    ids = prune_graph.kept_ids
+    ids = prune_graph.node_ids
     id_to_idx = {nid: i for i, nid in enumerate(ids)}
     nid_to_label: dict[str, int] = {}
     label_idx = 0

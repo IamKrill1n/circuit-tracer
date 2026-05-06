@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -195,7 +196,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         fig = supernode_graph_figure(
             sng=sng,
             final_supernodes=supernode_map,
-            attr=prune_graph.attr,
+            attr={n.node_id: asdict(n) for n in prune_graph.nodes},
             title="Summarization supernode graph",
         )
         out = Path(args.figure_html_out)
@@ -216,7 +217,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             modelId=args.model_id,
             slug=args.slug,
             displayName=args.display_name,
-            pinnedIds=prune_graph.kept_ids,
+            pinnedIds=prune_graph.node_ids,
             supernodes=labelled_supernodes,
             pruningThreshold=args.upload_pruning_threshold,
             densityThreshold=args.upload_density_threshold,

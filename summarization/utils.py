@@ -60,60 +60,54 @@ def get_data_from_json(json_path: str):
 
     return adj_matrix, nodes, metadata
 
-def _node_type(attr: Dict[str, Any], node: str) -> str:
-    return attr.get(node, {}).get("feature_type", "")
 
-
-def _is_target_logit(attr: Dict[str, Any], node: str) -> bool:
-    return attr.get(node, {}).get("is_target_logit", False)
-
-
-def _is_feature(attr: Dict[str, Any], node: str) -> bool:
-    t = _node_type(attr, node)
-    return t not in ("embedding", "logit", "mlp reconstruction error", "")
-
-
-def _is_error(attr: Dict[str, Any], node: str) -> bool:
-    return _node_type(attr, node) == "mlp reconstruction error"
-
-
-def _is_embedding(attr: Dict[str, Any], node: str) -> bool:
-    # Embedding nodes may appear as explicit type or id prefix like E_*
-    if node.startswith("E"):
+def node_is_embedding(node: Node) -> bool:
+    if node.node_id.startswith("E"):
         return True
-    return "embedding" in str(_node_type(attr, node)).lower()
+    return "embedding" in str(node.feature_type).lower()
 
 
-def _is_logit(attr: Dict[str, Any], node: str) -> bool:
-    node_attr = attr.get(node, {})
-    if node_attr.get("is_target_logit") or node_attr.get("is_logit"):
+def node_is_logit(node: Node) -> bool:
+    if node.is_target_logit:
         return True
-    return "logit" in str(_node_type(attr, node)).lower()
+    return "logit" in str(node.feature_type).lower()
 
 
-def _is_fixed(attr: Dict[str, Any], node: str) -> bool:
-    return _is_embedding(attr, node) or _is_logit(attr, node)
+def node_is_fixed(node: Node) -> bool:
+    return node_is_embedding(node) or node_is_logit(node)
 
 
-def _parse_layer(attr: Dict[str, Any], node: str) -> int:
-    """Parse layer index from node id/attributes with robust fallbacks."""
-    node_attr = attr.get(node, {})
-    layer_val = node_attr.get("layer")
+def layer_index_from_node(node: Node) -> int:
+    """Layer index from a typed ``Node`` (same fallbacks as historical JSON attr parsing)."""
+    layer_val = node.layer
     if isinstance(layer_val, int):
         return layer_val
     if isinstance(layer_val, str) and layer_val.isdigit():
         return int(layer_val)
-    if node.startswith("E"):
+    nid = node.node_id
+    if nid.startswith("E"):
         return -1
     try:
-        return int(node.split("_")[0])
+        return int(nid.split("_")[0])
     except (ValueError, IndexError):
         return 10_000
 
-def _build_index_sets(
-    node_ids: List[str],
-    attr: Dict[str, Any],
-) -> Dict[str, List[int]]:
+
+def layer_index_from_node_id(node_id: str, *, layer: str | int | None = None) -> int:
+    """Layer index when only an id string is known (optional ``layer`` from metadata)."""
+    if isinstance(layer, int):
+        return layer
+    if isinstance(layer, str) and layer.isdigit():
+        return int(layer)
+    if node_id.startswith("E"):
+        return -1
+    try:
+        return int(node_id.split("_")[0])
+    except (ValueError, IndexError):
+        return 10_000
+
+
+def _build_index_sets(nodes: List[Node]) -> Dict[str, List[int]]:
     sets: Dict[str, List[int]] = {
         "feature": [],
         "error": [],
@@ -121,18 +115,20 @@ def _build_index_sets(
         "logit": [],
         "target_logit": [],
     }
-    for i, nid in enumerate(node_ids):
-        if _is_target_logit(attr, nid):
+    for i, node in enumerate(nodes):
+        ft = node.feature_type
+        if node.is_target_logit:
             sets["target_logit"].append(i)
-        if _is_logit(attr, nid):
+        if node_is_logit(node):
             sets["logit"].append(i)
-        elif _is_embedding(attr, nid):
+        elif node_is_embedding(node):
             sets["embedding"].append(i)
-        elif _is_error(attr, nid):
+        elif ft == "mlp reconstruction error":
             sets["error"].append(i)
-        elif _is_feature(attr, nid):
+        elif ft not in ("embedding", "logit", "mlp reconstruction error", ""):
             sets["feature"].append(i)
     return sets
+
 
 def get_clerp(metadata: dict, attr: dict, generate_missing: bool = True, retry_delay: float = 1.0):
     '''
