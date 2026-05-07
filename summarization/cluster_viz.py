@@ -111,12 +111,11 @@ def supernode_graph_figure(
     """
     Build an interactive Plotly figure: supernodes as markers, directed edges as arrows.
 
-    `sng` may be a `SummarizationGraph` from `build_supernode_graph` or the legacy dict.
+    `sng` may be a `SummarizationGraph` instance or the legacy dict.
     """
     if isinstance(sng, SummarizationGraph):
         sn_names = sng.sn_names
         sn_adj = np.asarray(sng.sn_adj, dtype=np.float64)
-        sn_inf = np.asarray(sng.sn_inf, dtype=np.float64)
         mapping = final_supernodes if final_supernodes is not None else sng.to_mapping()
         node_by_name = sng.node_by_name()
     else:
@@ -124,8 +123,6 @@ def supernode_graph_figure(
             raise ValueError("final_supernodes is required when sng is a plain dict.")
         sn_names = list(sng["sn_names"])
         sn_adj = np.asarray(sng["sn_adj"], dtype=np.float64)
-        raw_inf = sng.get("sn_inf")
-        sn_inf = np.asarray(raw_inf, dtype=np.float64) if raw_inf is not None else None
         mapping = final_supernodes
         node_by_name = {}
 
@@ -203,16 +200,6 @@ def supernode_graph_figure(
         color=colors,
         line=dict(width=1, color="#333"),
     )
-    if sn_inf is not None and len(sn_inf) == len(sn_names):
-        vals = [float(sn_inf[sn_names.index(sn)]) for sn in names_in_pos]
-        marker_kwargs = dict(
-            size=sizes,
-            color=vals,
-            colorscale="Viridis",
-            colorbar=dict(title="To-logit sum"),
-            line=dict(width=1, color="#333"),
-        )
-
     fig.add_trace(
         go.Scatter(
             x=node_x,

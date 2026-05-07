@@ -78,6 +78,7 @@ class AttrGraph:
             nodes.append(
                 Node(
                     node_id=nid,
+                    node_idx=len(nodes),
                     feature=cantor_pairing(layer_i, feat_i),
                     layer=str(layer_i),
                     ctx_idx=pos_i,
@@ -102,6 +103,7 @@ class AttrGraph:
             nodes.append(
                 Node(
                     node_id=nid,
+                    node_idx=len(nodes),
                     feature=-1,
                     layer=str(int(layer)),
                     ctx_idx=int(pos),
@@ -127,6 +129,7 @@ class AttrGraph:
             nodes.append(
                 Node(
                     node_id=nid,
+                    node_idx=len(nodes),
                     feature=pos,
                     layer="E",
                     ctx_idx=pos,
@@ -156,6 +159,7 @@ class AttrGraph:
             nodes.append(
                 Node(
                     node_id=nid,
+                    node_idx=len(nodes),
                     feature=vid,
                     layer=layer_logit,
                     ctx_idx=pos,

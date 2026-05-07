@@ -9,13 +9,13 @@ from summarization.auto_grouping import (
     score_k,
 )
 from summarization.cluster import (
-    build_supernode_graph,
     compute_similarity,
     mapping_dict_to_supernodes,
     supernodes_to_mapping,
 )
 from summarization.cluster_scoring import score_clusters, score_summarization_graph
 from summarization.prune import PruneGraph
+from summarization.supernode_graph import SummarizationGraph
 from summarization.utils import _node_from_json_dict
 
 
@@ -102,7 +102,7 @@ def test_score_summarization_graph_matches_score_clusters() -> None:
     supernodes = [["1_0_0", "1_1_0"], ["2_0_0", "2_1_0"], ["E_0_0"], ["27_0_0"]]
     mapping = supernodes_to_mapping(prune_graph, supernodes)
     rows = mapping_dict_to_supernodes(prune_graph, mapping)
-    sng = build_supernode_graph(prune_graph, rows, enforce_dag=False)
+    sng = SummarizationGraph(supernodes=rows, pruned_adj=prune_graph.pruned_adj)
     a = score_clusters(rows, prune_graph, similarity, enforce_dag=False)
     b = score_summarization_graph(sng, prune_graph, similarity)
     assert a.keys() == b.keys()

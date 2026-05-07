@@ -7,13 +7,7 @@ import torch
 from sklearn.cluster import SpectralClustering
 
 from summarization.prune import PruneGraph
-from summarization.supernode_graph import (
-    Node,
-    Supernode,
-    SummarizationGraph,
-    cluster_kind_to_supernode_type,
-    node_from_prune_graph,
-)
+from summarization.supernode_graph import Node, Supernode, cluster_kind_to_supernode_type, node_from_prune_graph
 from summarization.utils import (
     layer_index_from_node,
     layer_index_from_node_id,
@@ -494,73 +488,3 @@ def mapping_dict_to_supernodes(prune_graph: PruneGraph, mapping: dict[str, list[
         out.append(_supernode_from_member_ids(prune_graph, name, list(feats), k, id_to_idx=id_to_idx))
     return out
 
-
-def build_supernode_graph(
-    prune_graph: PruneGraph,
-    supernode_rows: list[Supernode],
-    enforce_dag: bool = False,
-) -> SummarizationGraph:
-    """
-    Build a clustered supernode graph from a pruned node-level graph.
-
-    Pass typed ``Supernode`` rows from ``clusters_to_supernodes`` or ``mapping_dict_to_supernodes``.
-    Returns sn-level adjacency and influence metrics that downstream consumers
-    can use for scoring, reporting, and visualization.
-    """
-    kept_ids = prune_graph.node_ids
-    nodes_by_id = _nodes_by_id(prune_graph)
-    adj = prune_graph.pruned_adj.clone().float().T  # sender-indexed
-
-    node_to_idx = {nid: i for i, nid in enumerate(kept_ids)}
-    sn_members_idx: list[list[int]] = []
-    nodes_kept: list[Supernode] = []
-    for row in supernode_rows:
-        feats = [n for n in row.member_node_ids() if n in node_to_idx]
-        if not feats:
-            continue
-        members = [node_to_idx[n] for n in feats]
-        k0 = _classify_node(feats[0], nodes_by_id)
-        nodes_kept.append(_supernode_from_member_ids(prune_graph, row.name, feats, k0, id_to_idx=node_to_idx))
-        sn_members_idx.append(members)
-
-    sn_names = [n.name for n in nodes_kept]
-    k = len(sn_names)
-    sn_adj = np.zeros((k, k), dtype=np.float64)
-
-    for i, src in enumerate(sn_members_idx):
-        for j, dst in enumerate(sn_members_idx):
-            if i == j:
-                continue
-            block = adj[np.ix_(src, dst)].detach().cpu().numpy()
-            nz = block[block != 0.0]
-            if nz.size == 0:
-                continue
-            w = float(nz.mean())
-            if w != 0.0:
-                sn_adj[i, j] = w
-
-    if enforce_dag:
-        for i in range(k):
-            for j in range(i + 1, k):
-                w_ij = float(sn_adj[i, j])
-                w_ji = float(sn_adj[j, i])
-                if w_ij == 0.0 or w_ji == 0.0:
-                    continue
-                if abs(w_ij) >= abs(w_ji):
-                    sn_adj[j, i] = 0.0
-                else:
-                    sn_adj[i, j] = 0.0
-
-    logit_idx = [i for i, n in enumerate(prune_graph.nodes) if node_is_logit(n)]
-    sn_inf = np.zeros(k, dtype=np.float64)
-    if logit_idx:
-        for i, src in enumerate(sn_members_idx):
-            block = adj[np.ix_(src, logit_idx)].detach().cpu().numpy()
-            sn_inf[i] = float(block.sum())
-
-    return SummarizationGraph(
-        supernodes=nodes_kept,
-        pruned_adj=prune_graph.pruned_adj,
-        sn_adj=sn_adj,
-        sn_inf=sn_inf,
-    )

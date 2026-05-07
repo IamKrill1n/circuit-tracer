@@ -92,7 +92,6 @@ def test_prune_combined_shapes_and_scores_subset(tiny_graph):
         node_rel,
         _edge_inf,
         _edge_rel,
-        ratio,
     ) = prune_combined(
         adj=adj,
         nodes=nodes,
@@ -111,7 +110,6 @@ def test_prune_combined_shapes_and_scores_subset(tiny_graph):
     assert node_inf.ndim == 1
     assert node_rel.ndim == 1
     assert node_inf.shape[0] == len(nodes)
-    assert isinstance(ratio, float)
 
 
 def test_prune_combined_keep_all_logits(tiny_graph):

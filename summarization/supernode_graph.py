@@ -28,6 +28,7 @@ class Node:
     """Summarization-node view aligned with frontend node fields + relevance."""
 
     node_id: str
+    node_idx: int
     feature: int
     layer: str
     ctx_idx: int
@@ -42,6 +43,11 @@ class Node:
     activation: float | None = None
     relevance: float | None = None
 
+    def set_clerp(self, clerp: str) -> None:
+        self.clerp = clerp
+
+    def set_node_idx(self, node_idx: int) -> None:
+        self.node_idx = node_idx
 
 def _tensor_value_at(values: Any, idx: int) -> float | None:
     if values is None:
@@ -70,6 +76,8 @@ def node_from_prune_graph(
     if id_to_idx is None:
         id_to_idx = {n.node_id: i for i, n in enumerate(nodes)}
     idx = id_to_idx.get(node_id)
+    if idx is None and getattr(base, "node_idx", -1) >= 0:
+        idx = int(base.node_idx)
 
     ti = (
         _tensor_value_at(prune_graph.node_influence, idx)
@@ -87,6 +95,7 @@ def node_from_prune_graph(
 
     return Node(
         node_id=base.node_id,
+        node_idx=int(idx) if idx is not None else int(getattr(base, "node_idx", -1)),
         feature=base.feature,
         layer=str(base.layer),
         ctx_idx=int(base.ctx_idx),
@@ -125,8 +134,6 @@ class SummarizationGraph:
 
     supernodes: list[Supernode]
     pruned_adj: torch.Tensor
-    sn_adj: np.ndarray
-    sn_inf: np.ndarray
 
 
     @property
@@ -135,6 +142,25 @@ class SummarizationGraph:
 
     def to_mapping(self) -> dict[str, list[str]]:
         return {n.name: n.member_node_ids() for n in self.supernodes}
+
+
+    @property
+    def sn_adj(self) -> np.ndarray:
+        # recalculate sn_adj as the sum of the pruned_adj between the supernode features
+        sn_adj = np.zeros((len(self.supernodes), len(self.supernodes)), dtype=np.float64)
+        for i, u in enumerate(self.supernodes):
+            u_idx = [n.node_idx for n in u.features if n.node_idx >= 0]
+            if not u_idx:
+                continue
+            for j, v in enumerate(self.supernodes):
+                if i == j:
+                    continue
+                v_idx = [n.node_idx for n in v.features if n.node_idx >= 0]
+                if not v_idx:
+                    continue
+                block = self.pruned_adj[np.ix_(u_idx, v_idx)].detach().cpu().numpy()
+                sn_adj[i, j] = float(block.sum())
+        return sn_adj
 
     def node_by_name(self) -> dict[str, Supernode]:
         return {n.name: n for n in self.supernodes}

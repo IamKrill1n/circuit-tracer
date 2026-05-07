@@ -38,6 +38,9 @@ def _nodes_from_payload(raw_nodes: Any) -> list[Node]:
             out.append(_node_from_json_dict(item))
         else:
             raise TypeError(f"invalid node entry: {type(item)}")
+    for idx, node in enumerate(out):
+        if getattr(node, "node_idx", -1) < 0:
+            node.set_node_idx(idx)
     return out
 
 
@@ -408,7 +411,7 @@ def prune_attr_graph(
     kept_edge_inf[~kept_edge_mask] = 0.0
     kept_edge_rel[~kept_edge_mask] = 0.0
 
-    kept_nodes = [nodes[int(j)] for j in kept_indices]
+    kept_nodes = [replace(nodes[int(j)], node_idx=i) for i, j in enumerate(kept_indices.tolist())]
     logger.info("Pruned graph: %d nodes, %d edges", len(kept_nodes), int((pruned_adj != 0).sum().item()))
 
     return PruneGraph(

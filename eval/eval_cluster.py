@@ -13,7 +13,6 @@ from sklearn.cluster import KMeans, SpectralClustering
 
 from summarization.cluster_scoring import score_k
 from summarization.cluster import (
-    build_supernode_graph,
     cluster_graph,
     compute_similarity,
     labels_to_supernodes,
@@ -22,6 +21,7 @@ from summarization.cluster import (
 )
 from summarization.flow_analysis import flow_faithfulness_report
 from summarization.prune import PruneGraph, load_prune_graph
+from summarization.supernode_graph import SummarizationGraph
 from summarization.utils import node_is_fixed
 
 METHOD_GRID: list[dict[str, str]] = [
@@ -440,10 +440,9 @@ def _evaluate_ours_fixed_k(
         final_supernodes,
         prune_graph,
     )
-    sng = build_supernode_graph(
-        prune_graph,
-        mapping_dict_to_supernodes(prune_graph, final_supernodes),
-        enforce_dag=enforce_dag,
+    sng = SummarizationGraph(
+        supernodes=mapping_dict_to_supernodes(prune_graph, final_supernodes),
+        pruned_adj=prune_graph.pruned_adj,
     )
     flow_report = flow_faithfulness_report(sng, final_supernodes)
 
@@ -533,10 +532,9 @@ def _evaluate_baseline_fixed_k(
         final_supernodes,
         prune_graph,
     )
-    sng = build_supernode_graph(
-        prune_graph,
-        mapping_dict_to_supernodes(prune_graph, final_supernodes),
-        enforce_dag=enforce_dag,
+    sng = SummarizationGraph(
+        supernodes=mapping_dict_to_supernodes(prune_graph, final_supernodes),
+        pruned_adj=prune_graph.pruned_adj,
     )
     flow_report = flow_faithfulness_report(sng, final_supernodes)
 

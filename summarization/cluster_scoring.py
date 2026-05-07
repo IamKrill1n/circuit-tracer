@@ -8,7 +8,7 @@ import numpy as np
 import torch
 from sklearn.metrics import silhouette_score
 
-from summarization.cluster import build_supernode_graph, mapping_dict_to_supernodes
+from summarization.cluster import mapping_dict_to_supernodes
 from summarization.prune import PruneGraph
 from summarization.supernode_graph import Supernode, SummarizationGraph
 from summarization.utils import node_is_fixed
@@ -306,7 +306,8 @@ def score_clusters(
     are accepted for backward compatibility but ignored.
     """
 
-    sng = build_supernode_graph(prune_graph, supernode_rows, enforce_dag=enforce_dag)
+    del enforce_dag
+    sng = SummarizationGraph(supernodes=supernode_rows, pruned_adj=prune_graph.pruned_adj)
     return _cluster_metrics_from_parts(
         supernode_rows,
         prune_graph,

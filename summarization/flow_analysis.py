@@ -29,13 +29,10 @@ def _flow_role(sn: str, node_by_name: dict[str, Supernode]) -> str:
 
 def _unwrap_sng(
     sng: SummarizationGraph | dict[str, Any],
-) -> tuple[list[str], np.ndarray, np.ndarray, dict[str, Supernode]]:
+) -> tuple[list[str], np.ndarray, dict[str, Supernode]]:
     if isinstance(sng, SummarizationGraph):
-        return sng.sn_names, sng.sn_adj, sng.sn_inf, sng.node_by_name()
-    sn_inf = sng["sn_inf"]
-    if sn_inf is None:
-        sn_inf = np.zeros(len(sng["sn_names"]), dtype=np.float64)
-    return list(sng["sn_names"]), np.asarray(sng["sn_adj"], dtype=np.float64), np.asarray(sn_inf), {}
+        return sng.sn_names, sng.sn_adj, sng.node_by_name()
+    return list(sng["sn_names"]), np.asarray(sng["sn_adj"], dtype=np.float64), {}
 
 
 def _resolve_mapping(
@@ -66,7 +63,7 @@ def path_attribution_decomposition(
     min_flow_frac: float = 1e-4,
 ) -> dict[str, Any]:
     mapping = _resolve_mapping(sng, final_supernodes)
-    sn_names, sn_adj, sn_inf, node_by_name = _unwrap_sng(sng)
+    sn_names, sn_adj, node_by_name = _unwrap_sng(sng)
     k = len(sn_names)
     name2idx = {sn: i for i, sn in enumerate(sn_names)}
 
@@ -83,7 +80,7 @@ def path_attribution_decomposition(
 
     for sn_e in emb_sns:
         i = name2idx[sn_e]
-        direct_inf = float(sn_inf[i])
+        direct_inf = 0.0
         if direct_inf > 0:
             for sn_l in logit_sns:
                 key = (sn_e, sn_l)
@@ -120,7 +117,7 @@ def path_attribution_decomposition(
             if w > 0:
                 out_weights[sn_names[j]] = w
                 out_total += w
-        direct_inf = float(sn_inf[i]) if kind == "middle" else 0.0
+        direct_inf = 0.0 if kind == "middle" else 0.0
         exit_total = out_total + max(0.0, direct_inf)
         if exit_total <= 0:
             continue
@@ -184,7 +181,7 @@ def local_flow_residuals(
     final_supernodes: dict[str, list[str]] | list[list[str]] | None = None,
 ) -> dict[str, Any]:
     del final_supernodes
-    sn_names, sn_adj, sn_inf, node_by_name = _unwrap_sng(sng)
+    sn_names, sn_adj, node_by_name = _unwrap_sng(sng)
     k = len(sn_names)
 
     per_sn: dict[str, Any] = {}
@@ -198,7 +195,7 @@ def local_flow_residuals(
         in_flow_neg = sum(min(0.0, float(sn_adj[j, i])) for j in range(k) if j != i)
         out_flow_pos = sum(max(0.0, float(sn_adj[i, j])) for j in range(k) if j != i)
         out_flow_neg = sum(min(0.0, float(sn_adj[i, j])) for j in range(k) if j != i)
-        inf_exit = float(sn_inf[i])
+        inf_exit = 0.0
         in_flow_net = in_flow_pos + in_flow_neg
         total_out = out_flow_pos + out_flow_neg + inf_exit
         residual_abs = abs(in_flow_net - total_out)
@@ -250,7 +247,7 @@ def shortcut_analysis(
     min_edge_weight: float = 1e-6,
 ) -> dict[str, Any]:
     del final_supernodes
-    sn_names, sn_adj, _, _ = _unwrap_sng(sng)
+    sn_names, sn_adj, _ = _unwrap_sng(sng)
     k = len(sn_names)
     edges = []
     tot = 0.0

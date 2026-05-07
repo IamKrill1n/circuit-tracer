@@ -10,6 +10,7 @@ from summarization.supernode_graph import Node
 
 def _node_from_json_dict(raw: dict) -> Node:
     nid = str(raw.get("node_id", ""))
+    node_idx = int(raw.get("node_idx", -1))
     act_raw = raw.get("activation")
     activation = float(act_raw) if isinstance(act_raw, (int, float)) else None
     inf_raw = raw.get("influence")
@@ -18,6 +19,7 @@ def _node_from_json_dict(raw: dict) -> Node:
     relevance = float(rel_raw) if isinstance(rel_raw, (int, float)) else None
     return Node(
         node_id=nid,
+        node_idx=node_idx,
         feature=int(raw.get("feature", 0)),
         layer=str(raw.get("layer", "")),
         ctx_idx=int(raw.get("ctx_idx", 0)),
@@ -57,6 +59,9 @@ def get_data_from_json(json_path: str):
             adj_matrix[tgt_idx, src_idx] = weight  # Note: row=tgt, col=src for incoming edges
 
     nodes = [_node_from_json_dict(n) for n in raw_nodes]
+    for idx, node in enumerate(nodes):
+        if node.node_idx < 0:
+            node.set_node_idx(idx)
 
     return adj_matrix, nodes, metadata
 

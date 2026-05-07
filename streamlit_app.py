@@ -13,7 +13,7 @@ import streamlit as st
 
 from api import save_subgraph
 from summarization.auto_grouping import find_best_k, score_clusters
-from summarization.cluster import build_supernode_graph, cluster_graph, clusters_to_supernodes, compute_similarity
+from summarization.cluster import cluster_graph, clusters_to_supernodes, compute_similarity
 from summarization.cluster_viz import supernode_graph_figure
 from summarization.flow_analysis import flow_faithfulness_report
 from summarization.prune import PruneGraph, load_prune_graph, prune_graph_pipeline, save_prune_graph
@@ -107,7 +107,13 @@ def _prune_cache_path(repo_root: Path, input_path: Path, prune_cfg: dict[str, An
 
 def _to_jsonable(obj: Any) -> Any:
     if isinstance(obj, SummarizationGraph):
-        return _to_jsonable(obj.to_legacy_dict())
+        return _to_jsonable(
+            {
+                "sn_names": obj.sn_names,
+                "sn_adj": obj.sn_adj,
+                "supernodes": obj.to_mapping(),
+            }
+        )
     if isinstance(obj, dict):
         return {key: _to_jsonable(value) for key, value in obj.items()}
     if isinstance(obj, list):
@@ -148,10 +154,12 @@ def _sng_matrix_views(
     sng: SummarizationGraph | dict[str, Any],
 ) -> tuple[list[str], np.ndarray, np.ndarray]:
     if isinstance(sng, SummarizationGraph):
-        return sng.sn_names, np.asarray(sng.sn_adj, dtype=np.float64), np.asarray(sng.sn_inf, dtype=np.float64)
+        zeros = np.zeros(len(sng.sn_names), dtype=np.float64)
+        return sng.sn_names, np.asarray(sng.sn_adj, dtype=np.float64), zeros
     sn_names = list(sng["sn_names"])
     sn_adj = np.asarray(sng["sn_adj"], dtype=np.float64)
-    sn_inf = np.asarray(sng["sn_inf"], dtype=np.float64)
+    raw = sng.get("sn_inf")
+    sn_inf = np.asarray(raw, dtype=np.float64) if raw is not None else np.zeros(len(sn_names), dtype=np.float64)
     return sn_names, sn_adj, sn_inf
 
 
@@ -340,7 +348,7 @@ def _cluster_from_prune(
         enforce_dag=enforce_dag,
     )
     supernode_map = {s.name: s.member_node_ids() for s in rows}
-    sng = build_supernode_graph(prune_graph, rows, enforce_dag=enforce_dag)
+    sng = SummarizationGraph(supernodes=rows, pruned_adj=prune_graph.pruned_adj)
     return supernode_map, sng, run_meta
 
 
