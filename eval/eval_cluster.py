@@ -11,7 +11,7 @@ import numpy as np
 import torch
 from sklearn.cluster import KMeans, SpectralClustering
 
-from summarization.auto_grouping import score_k
+from summarization.cluster_scoring import score_k
 from summarization.cluster import (
     build_supernode_graph,
     cluster_graph,

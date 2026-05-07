@@ -14,8 +14,8 @@ from summarization.auto_grouping import (
     eigengap_analysis,
     find_best_k,
     find_best_k_for_clusterer,
-    score_k,
 )
+from summarization.cluster_scoring import score_k
 from summarization.cluster import (
     build_supernode_graph,
     cluster_graph,

@@ -12,8 +12,8 @@ import numpy as np
 import streamlit as st
 
 from api import save_subgraph
-from summarization.auto_grouping import find_best_k
-from summarization.cluster import build_supernode_graph, cluster_graph, clusters_to_supernodes
+from summarization.auto_grouping import find_best_k, score_clusters
+from summarization.cluster import build_supernode_graph, cluster_graph, clusters_to_supernodes, compute_similarity
 from summarization.cluster_viz import supernode_graph_figure
 from summarization.flow_analysis import flow_faithfulness_report
 from summarization.prune import PruneGraph, load_prune_graph, prune_graph_pipeline, save_prune_graph
@@ -289,7 +289,6 @@ def _cluster_from_prune(
             max_layer_span=int(cluster_cfg["max_layer_span"]),
             k_min_override=auto_k_cfg["k_min_override"],
             k_max_override=auto_k_cfg["k_max_override"],
-            weights=auto_k_cfg["weights"],
             max_sn=max_sn,
             mean_method=mean_method,
             similarity_mode=cluster_cfg["similarity_mode"],
@@ -328,6 +327,18 @@ def _cluster_from_prune(
         n_init=int(cluster_cfg["n_init"]),
     )
     rows = clusters_to_supernodes(prune_graph, clusters)
+    similarity = compute_similarity(
+        prune_graph,
+        mean_method=mean_method,
+        similarity_mode=cluster_cfg["similarity_mode"],
+        decay_rate=cluster_cfg["decay_rate"],
+    )
+    run_meta["cluster_score"] = score_clusters(
+        rows,
+        prune_graph,
+        similarity,
+        enforce_dag=enforce_dag,
+    )
     supernode_map = {s.name: s.member_node_ids() for s in rows}
     sng = build_supernode_graph(prune_graph, rows, enforce_dag=enforce_dag)
     return supernode_map, sng, run_meta
@@ -669,41 +680,6 @@ def main() -> None:
             step=1,
             help="If non-zero, fixes the maximum k in the sweep instead of the eigengap-derived upper bound.",
         )
-        w_intra = st.slider(
-            "score weight w_intra",
-            min_value=0.0,
-            max_value=1.0,
-            value=0.30,
-            step=0.05,
-            help="Weight on mean within-supernode similarity (normalized against global middle-node similarity).",
-        )
-        w_dag = st.slider(
-            "score weight w_dag",
-            min_value=0.0,
-            max_value=1.0,
-            value=0.25,
-            step=0.05,
-            help="Weight on DAG-style safety (fewer interleaving layer-range warnings between supernodes is better).",
-        )
-        w_attr = st.slider(
-            "score weight w_attr (attr balance)",
-            min_value=0.0,
-            max_value=1.0,
-            value=0.25,
-            step=0.05,
-            help=(
-                "Weight on how evenly supernode-level influence is spread (entropy of normalized supernode "
-                "influences — the `attr_balance` term in `score_k`)."
-            ),
-        )
-        w_size = st.slider(
-            "score weight w_size",
-            min_value=0.0,
-            max_value=1.0,
-            value=0.20,
-            step=0.05,
-            help="Weight on closeness of the number of middle supernodes to an ideal ~√(n_middle) target.",
-        )
 
     cluster_cfg = {
         "target_k": int(target_k),
@@ -718,12 +694,6 @@ def main() -> None:
     auto_k_cfg = {
         "k_min_override": None if int(k_min_override_raw) == 0 else int(k_min_override_raw),
         "k_max_override": None if int(k_max_override_raw) == 0 else int(k_max_override_raw),
-        "weights": {
-            "w_intra": float(w_intra),
-            "w_dag": float(w_dag),
-            "w_attr": float(w_attr),
-            "w_size": float(w_size),
-        },
     }
 
     if "pipeline_result" not in st.session_state:
@@ -795,6 +765,7 @@ def main() -> None:
     flow_report = cast(dict[str, Any], flow_report)
     run_meta: dict[str, Any] = result_payload.get("run_meta", {})
     prune_meta: dict[str, Any] = result_payload.get("prune_meta", {})
+    cluster_score: dict[str, Any] = cast(dict[str, Any], run_meta.get("cluster_score", {}))
 
     if result_input_mode == FULL_GRAPH_MODE:
         if prune_meta.get("cache_hit") is True:
@@ -820,6 +791,19 @@ def main() -> None:
                 f"sweep covered **{run_meta.get('sweep_size', 0)}** candidate values)."
             )
     st.caption(f"Clustering used **target_k = {run_meta.get('target_k_used', '?')}**.")
+
+    if cluster_score:
+        st.subheader("Cluster score summary")
+        score_col_1, score_col_2, score_col_3, score_col_4 = st.columns(4)
+        score_col_1.metric("score_arith", f"{float(cluster_score.get('score_arith', 0.0)):.4f}")
+        score_col_2.metric("score_harm", f"{float(cluster_score.get('score_harm', 0.0)):.4f}")
+        score_col_3.metric("score_geo", f"{float(cluster_score.get('score_geo', 0.0)):.4f}")
+        score_col_4.metric(
+            "internal_independence",
+            f"{float(cluster_score.get('internal_independence', 0.0)):.4f}",
+        )
+        with st.expander("Cluster score details", expanded=False):
+            st.json(_to_jsonable(cluster_score))
 
     flow_combined = cast(dict[str, Any], flow_report.get("combined", {}))
     st.subheader("Flow analysis summary")

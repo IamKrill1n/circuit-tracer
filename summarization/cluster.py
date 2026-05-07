@@ -558,36 +558,9 @@ def build_supernode_graph(
             block = adj[np.ix_(src, logit_idx)].detach().cpu().numpy()
             sn_inf[i] = float(block.sum())
 
-    f_sn = np.maximum(sn_adj, 0.0)
-    sn_reach = np.maximum(f_sn.sum(axis=1), 0.0)
-    sn_act_norm = sn_reach / (sn_reach.max() + 1e-12) if k else sn_reach
-
-    node_nonzero = float((adj != 0).sum().item())
-    sn_nonzero = float(np.count_nonzero(sn_adj))
-    dominant_paths = [
-        {"src": sn_names[i], "tgt": sn_names[j], "weight": float(sn_adj[i, j])}
-        for i in range(k)
-        for j in range(k)
-        if i != j and sn_adj[i, j] > 0
-    ]
-    dominant_paths.sort(key=lambda x: -x["weight"])
-    dominant_paths = dominant_paths[:20]
-
-    bottleneck_sns = [
-        {"sn": sn_names[i], "in_minus_out": float(sn_adj[:, i].sum() - sn_adj[i, :].sum())}
-        for i in range(k)
-    ]
-    bottleneck_sns.sort(key=lambda x: -abs(x["in_minus_out"]))
-
     return SummarizationGraph(
-        nodes=nodes_kept,
+        supernodes=nodes_kept,
+        pruned_adj=prune_graph.pruned_adj,
         sn_adj=sn_adj,
         sn_inf=sn_inf,
-        F_sn=f_sn,
-        sn_reach=sn_reach,
-        sn_act_norm=sn_act_norm,
-        orig_reach_total=float(node_nonzero),
-        surr_reach_total=float(sn_nonzero),
-        dominant_paths=dominant_paths,
-        bottleneck_sns=bottleneck_sns,
     )
