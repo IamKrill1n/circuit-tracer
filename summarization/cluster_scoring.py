@@ -81,69 +81,6 @@ def _silhouette_over_middle(
     return sil, float((sil + 1.0) / 2.0)
 
 
-def _dbcv_over_middle(
-    similarity: np.ndarray,
-    prune_graph: PruneGraph,
-    rows: list[Supernode],
-) -> float:
-    """
-    DBCV score over middle nodes with a precomputed distance matrix.
-
-    Returns NaN when DBCV is undefined (single cluster, all singleton labels, too few nodes)
-    or when no compatible DBCV implementation is installed.
-    """
-    ids = prune_graph.node_ids
-    id_to_idx = {nid: i for i, nid in enumerate(ids)}
-    nid_to_label: dict[str, int] = {}
-    label_idx = 0
-    for row in rows:
-        if row.type != "features":
-            continue
-        assigned = False
-        for nid in row.member_node_ids():
-            if nid in id_to_idx:
-                nid_to_label[nid] = label_idx
-                assigned = True
-        if assigned:
-            label_idx += 1
-
-    if not nid_to_label:
-        return float("nan")
-    node_indices = [id_to_idx[nid] for nid in nid_to_label]
-    labels_arr = np.fromiter(
-        (nid_to_label[ids[i]] for i in node_indices),
-        dtype=np.int64,
-        count=len(node_indices),
-    )
-    n_distinct = int(len(set(labels_arr.tolist())))
-    if n_distinct < 2 or n_distinct >= len(labels_arr):
-        return float("nan")
-
-    s_block = similarity[np.ix_(node_indices, node_indices)]
-    s_block = (s_block + s_block.T) / 2.0
-    s_block = np.clip(s_block, 0.0, 1.0)
-    distance = 1.0 - s_block
-    np.fill_diagonal(distance, 0.0)
-
-    try:
-        try:
-            from dbcv import DBCV as _DBCV  # type: ignore[import-not-found]
-
-            try:
-                return float(_DBCV(distance, labels_arr, metric="precomputed"))
-            except TypeError:
-                return float(_DBCV(distance, labels_arr))
-        except ImportError:
-            from dbcv import dbcv as _dbcv  # type: ignore[import-not-found]
-
-            try:
-                return float(_dbcv(distance, labels_arr, metric="precomputed"))
-            except TypeError:
-                return float(_dbcv(distance, labels_arr))
-    except Exception:
-        return float("nan")
-
-
 def _internal_independence_score(
     supernodes: list[Supernode],
     prune_adj: torch.Tensor,

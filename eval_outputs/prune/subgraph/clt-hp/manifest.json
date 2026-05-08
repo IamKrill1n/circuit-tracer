@@ -1,0 +1,38 @@
+{
+  "graphs_root": "demos\\temp_graph_files",
+  "output_root": "eval_outputs\\prune\\subgraph",
+  "shap_values_json": "demos\\shap_values.json",
+  "source_sets": [
+    "clt-hp"
+  ],
+  "masker_keep_prefix": null,
+  "eval_normalizations": [
+    "softmax"
+  ],
+  "sweep_node_start": 0.0,
+  "sweep_node_end": 0.0,
+  "sweep_node_step": 0.1,
+  "sweep_node_influence_start": null,
+  "sweep_node_influence_end": null,
+  "sweep_node_influence_step": null,
+  "sweep_node_relevance_start": null,
+  "sweep_node_relevance_end": null,
+  "sweep_node_relevance_step": null,
+  "node_influence_thresholds": [
+    0.0
+  ],
+  "node_relevance_thresholds": [
+    0.0
+  ],
+  "edge_threshold": 0.95,
+  "logit_weights": "target",
+  "limit": 1,
+  "total_grid_cells_attempted": 0,
+  "successful_runs": 0,
+  "n_result_rows": 0,
+  "results_json": "eval_outputs\\prune\\subgraph\\clt-hp\\results.json",
+  "summary_csv": "eval_outputs\\prune\\subgraph\\clt-hp\\summary.csv",
+  "failures": [
+    "clt-hp/clt-hp-p02-fact-the-currency-of-the-country-where-the-eiffel-tower-is-l.json: raw_shap too short: need more than index 13 for 15 prompt tokens (14 non-special positions)."
+  ]
+}

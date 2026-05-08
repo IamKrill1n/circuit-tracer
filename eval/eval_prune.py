@@ -11,6 +11,7 @@ import torch
 
 from summarization.prune import (
     LogitWeightMode,
+    compute_combined_prune_graph_scores,
     prune_graph_pipeline,
     save_prune_graph,
 )
@@ -18,25 +19,16 @@ from summarization.token_attribution import (
     NormalizeMethod,
     _normalize_scores,
     _special_token_mask,
-    get_token_attribution_from_graph,
 )
 from summarization.utils import _build_index_sets, get_data_from_json
 
-DEFAULT_SOURCE_SETS = ("clt-hp", "gemmascope-transcoder-16k")
+DEFAULT_SOURCE_SETS = ("clt-hp",)
 DEFAULT_SHAP_EVAL_NORMALIZATIONS: tuple[NormalizeMethod, ...] = (
     "softmax",
     "entmax",
     "entmax15",
 )
 DEFAULT_SHAP_VALUES_JSON = Path("demos") / "shap_values.json"
-
-
-def _resolve_device(device_flag: str) -> str:
-    if device_flag == "auto":
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    if device_flag == "cuda" and not torch.cuda.is_available():
-        raise ValueError("Requested --device cuda, but CUDA is not available.")
-    return device_flag
 
 
 def _discover_graph_files(graphs_root: Path, source_sets: tuple[str, ...]) -> dict[str, list[Path]]:
@@ -203,6 +195,51 @@ def _write_json(path: Path, obj: Any) -> None:
         json.dump(obj, f, ensure_ascii=False, indent=2)
 
 
+def _compute_prune_metrics(prune_graph: Any) -> dict[str, float | None]:
+    metrics: dict[str, float | None] = {
+        "score_geometric_min_max": None,
+        "score_arithmetic_min_max": None,
+        "score_harmonic_min_max": None,
+        "mean_node_influence": None,
+        "mean_node_relevance": None,
+        "mean_edge_influence": None,
+        "mean_edge_relevance": None,
+    }
+    try:
+        metrics["score_geometric_min_max"] = compute_combined_prune_graph_scores(
+            prune_graph,
+            method="geometric",
+            normalization="min_max",
+        )
+        metrics["score_arithmetic_min_max"] = compute_combined_prune_graph_scores(
+            prune_graph,
+            method="arithmetic",
+            normalization="min_max",
+        )
+        metrics["score_harmonic_min_max"] = compute_combined_prune_graph_scores(
+            prune_graph,
+            method="harmonic",
+            normalization="min_max",
+        )
+    except ValueError:
+        pass
+
+    node_influence = getattr(prune_graph, "node_influence", None)
+    node_relevance = getattr(prune_graph, "node_relevance", None)
+    edge_influence = getattr(prune_graph, "edge_influence", None)
+    edge_relevance = getattr(prune_graph, "edge_relevance", None)
+
+    if node_influence is not None:
+        metrics["mean_node_influence"] = float(node_influence.to(dtype=torch.float32).mean().item())
+    if node_relevance is not None:
+        metrics["mean_node_relevance"] = float(node_relevance.to(dtype=torch.float32).mean().item())
+    if edge_influence is not None:
+        metrics["mean_edge_influence"] = float(edge_influence.to(dtype=torch.float32).mean().item())
+    if edge_relevance is not None:
+        metrics["mean_edge_relevance"] = float(edge_relevance.to(dtype=torch.float32).mean().item())
+    return metrics
+
+
 def run_shap_json_sweep(args: argparse.Namespace) -> None:
     graphs_root = Path(args.graphs_root)
     output_root = Path(args.output_root)
@@ -298,7 +335,7 @@ def run_shap_json_sweep(args: argparse.Namespace) -> None:
                                     act_density_lb=args.act_density_lb,
                                     act_density_ub=args.act_density_ub,
                                 )
-                                graph_scores = prune_graph.graph_scores
+                                prune_metrics = _compute_prune_metrics(prune_graph)
                                 thr_dir = norm_dir / f"node_inf_{node_inf_thr:.1f}_rel_{node_rel_thr:.1f}"
                                 thr_dir.mkdir(parents=True, exist_ok=True)
                                 prune_graph_path = thr_dir / f"{stem}_prune_graph.pt"
@@ -317,7 +354,7 @@ def run_shap_json_sweep(args: argparse.Namespace) -> None:
                                     "edge_threshold": edge_threshold,
                                     "num_nodes": prune_graph.num_nodes,
                                     "num_edges": prune_graph.num_edges,
-                                    "graph_scores": graph_scores,
+                                    **prune_metrics,
                                     "prune_graph_path": str(prune_graph_path),
                                 }
                                 rows_out.append(rec)
@@ -400,98 +437,8 @@ def run_shap_json_sweep(args: argparse.Namespace) -> None:
         raise RuntimeError("No successful prune+score runs in SHAP JSON sweep mode.")
 
 
-def run_legacy(args: argparse.Namespace) -> None:
-    graphs_root = Path(args.graphs_root)
-    output_root = Path(args.output_root)
-    source_sets = tuple(args.source_sets)
-    device = _resolve_device(args.device)
-    discovered = _discover_graph_files(graphs_root, source_sets)
-
-    totals = {}
-    for source_set, paths in discovered.items():
-        total_paths = len(paths) if args.limit is None else min(len(paths), args.limit)
-        totals[source_set] = {"total": total_paths, "ok": 0, "failed": 0}
-    failures: list[str] = []
-
-    for source_set, graph_paths in discovered.items():
-        total_for_source = totals[source_set]["total"]
-        print(f"\n=== Source set: {source_set} ({total_for_source} files) ===")
-        if args.limit is not None:
-            graph_paths = graph_paths[: args.limit]
-
-        for graph_path in graph_paths:
-            stem = graph_path.stem
-            try:
-                token_weights_tensor = get_token_attribution_from_graph(
-                    graph_path=graph_path,
-                    model_name=args.model_name,
-                    normalize_method=args.normalize_method,
-                    device=device,
-                    entmax_alpha=args.entmax_alpha,
-                ).detach().cpu().to(torch.float32)
-                token_weights = token_weights_tensor.tolist()
-
-                prune_graph = prune_graph_pipeline(
-                    json_path=str(graph_path),
-                    logit_weights=args.logit_weights,
-                    token_weights=token_weights,
-                    node_threshold=args.node_threshold,
-                    edge_threshold=args.edge_threshold,
-                    keep_all_tokens_and_logits=args.keep_all_tokens_and_logits,
-                    filter_act_density=args.filter_act_density,
-                    act_density_lb=args.act_density_lb,
-                    act_density_ub=args.act_density_ub,
-                )
-
-                out_dir = output_root / source_set
-                out_dir.mkdir(parents=True, exist_ok=True)
-                token_weights_path = out_dir / f"{stem}_token_weights.pt"
-                prune_graph_path = out_dir / f"{stem}_prune_graph.pt"
-
-                torch.save(token_weights_tensor, token_weights_path)
-                save_prune_graph(prune_graph, str(prune_graph_path))
-
-                totals[source_set]["ok"] += 1
-                print(
-                    f"[ok] {graph_path.name} -> nodes={prune_graph.num_nodes}, "
-                    f"edges={prune_graph.num_edges}, graph_scores={prune_graph.graph_scores}"
-                )
-            except Exception as exc:
-                totals[source_set]["failed"] += 1
-                failure = f"{source_set}/{graph_path.name}: {exc}"
-                failures.append(failure)
-                print(f"[failed] {failure}")
-
-    total_files = sum(v["total"] for v in totals.values())
-    total_ok = sum(v["ok"] for v in totals.values())
-    total_failed = sum(v["failed"] for v in totals.values())
-
-    print("\n=== Batch Summary ===")
-    print(f"model_name: {args.model_name}")
-    print(f"device: {device}")
-    print(f"normalize_method: {args.normalize_method}")
-    print(f"graphs_root: {graphs_root}")
-    print(f"output_root: {output_root}")
-    for source_set in source_sets:
-        stats = totals[source_set]
-        print(
-            f"{source_set}: total={stats['total']} ok={stats['ok']} failed={stats['failed']}"
-        )
-    print(f"overall: total={total_files} ok={total_ok} failed={total_failed}")
-    if failures:
-        print("\nFailures:")
-        for item in failures:
-            print(f"- {item}")
-
-    if total_ok == 0:
-        raise RuntimeError("No graphs were successfully processed.")
-
-
 def run(args: argparse.Namespace) -> None:
-    if args.shap_values_json:
-        run_shap_json_sweep(args)
-    else:
-        run_legacy(args)
+    run_shap_json_sweep(args)
 
 
 def _parse_logit_weights(value: str) -> LogitWeightMode:
@@ -505,9 +452,9 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Batch-run prune_graph_pipeline with SHAP token weights for graph JSON files "
             "in demos/temp_graph_files/<source_set>. "
-            "With --shap-values-json, sweeps node_influence_threshold × node_relevance_threshold "
-            "(optional normalization grid) using precomputed raw_shap from JSON (no HF model). "
-            "Rows include graph_scores from summarization.prune (influence×relevance mass retained vs full graph)."
+            "Sweeps node_influence_threshold × node_relevance_threshold using precomputed "
+            "raw_shap from JSON (no HF model). "
+            "Rows include PruneGraph-compatible completeness metrics and mean influence/relevance stats."
         )
     )
     parser.add_argument(
@@ -521,24 +468,21 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Source-set subdirectories under --graphs-root. "
-            "Default: clt-hp when --shap-values-json is set, else clt-hp and gemmascope-transcoder-16k."
+            "Default: clt-hp."
         ),
     )
     parser.add_argument(
         "--output-root",
-        default=None,
-        help=(
-            "Output root. Default: demos/eval_shap_prune when --shap-values-json is set, "
-            "else demos/subgraph."
-        ),
+        default="eval_outputs/prune/subgraph",
+        help="Output root (default: eval_outputs/prune/subgraph).",
     )
     parser.add_argument(
         "--shap-values-json",
         type=str,
-        default=None,
+        default=str(DEFAULT_SHAP_VALUES_JSON),
         help=(
-            "Path to shap_values.json (raw_shap per prompt). Enables sweep mode: "
-            "normalization grid, 2D node influence/relevance threshold sweep, graph_scores in results.json / summary.csv."
+            "Path to shap_values.json (raw_shap per prompt). "
+            "Runs normalization grid and 2D node influence/relevance threshold sweep."
         ),
     )
     parser.add_argument(
@@ -615,39 +559,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override sweep step for node_relevance_threshold only (else --sweep-node-step).",
     )
     parser.add_argument(
-        "--model-name",
-        default="google/gemma-2-2b",
-        help="HF model name for SHAP attribution (legacy mode only).",
-    )
-    parser.add_argument(
-        "--device",
-        choices=["auto", "cpu", "cuda"],
-        default="cuda",
-        help="Device used for model/explainer initialization (legacy mode only).",
-    )
-    parser.add_argument(
-        "--normalize-method",
-        choices=["softmax", "sparsemax", "entmax15", "entmax"],
-        default="sparsemax",
-        help="Normalization applied to SHAP attribution scores (legacy mode only).",
-    )
-    parser.add_argument(
         "--entmax-alpha",
         type=float,
-        default=1.3,
-        help="Alpha used when normalize method is 'entmax' (must satisfy 1 < alpha <= 2).",
+        default=1.25,
+        help="Alpha used for 'entmax' normalization (run separately for 1.25 and 1.5).",
     )
     parser.add_argument(
         "--logit-weights",
         type=_parse_logit_weights,
         default="target",
     )
-    parser.add_argument("--node-threshold", type=float, default=0.7)
     parser.add_argument(
         "--edge-threshold",
         type=float,
-        default=None,
-        help="Edge threshold. Default: 0.95 with --shap-values-json, else 0.98 (legacy).",
+        default=0.95,
+        help="Shared edge influence/relevance threshold in [0, 1] (default: 0.95).",
     )
     parser.add_argument("--keep-all-tokens-and-logits", action="store_true")
     parser.add_argument("--filter-act-density", action="store_true")
@@ -660,14 +586,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
-    if args.shap_values_json is None:
-        args.shap_values_json = str(DEFAULT_SHAP_VALUES_JSON)
     if args.source_sets is None:
-        args.source_sets = ["clt-hp"] if args.shap_values_json else list(DEFAULT_SOURCE_SETS)
-    if args.output_root is None:
-        args.output_root = "demos/eval_shap_prune" if args.shap_values_json else "demos/subgraph"
-    if args.edge_threshold is None:
-        args.edge_threshold = 0.95 if args.shap_values_json else 0.98
+        args.source_sets = list(DEFAULT_SOURCE_SETS)
     run(args)
 
 
