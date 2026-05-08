@@ -23,9 +23,7 @@ from summarization.cluster import (
     mapping_dict_to_supernodes,
     supernodes_to_mapping,
 )
-from summarization.flow_analysis import flow_faithfulness_report
 from summarization.prune import PruneGraph, load_prune_graph
-from summarization.supernode_graph import SummarizationGraph
 from summarization.utils import node_is_fixed
 
 METHOD_GRID: list[dict[str, str]] = [
@@ -56,27 +54,9 @@ SUMMARY_COLUMNS = [
     "dag_score",
     "n_middle",
     "within_cluster_weighted_edge_cosine_mean",
-    "F_phi",
-    "path_score",
-    "residual_score",
-    "shortcut_score",
-    "D_phi",
-    "R_phi",
-    "R_phi_balance",
-    "R_phi_suppressive",
-    "R_phi_max",
-    "shortcut_frac",
-    "sigma_phi",
-    "top_k_frac",
-    "n_paths",
-    "n_shortcuts",
-    "n_direct",
-    "n_suppressive",
-    "n_balanced",
     "result_path",
     "supernode_map_path",
     "auto_k_sweep_path",
-    "flow_report_path",
 ]
 
 
@@ -261,15 +241,12 @@ def _flatten_metrics(
     auto_k_candidates: int,
     final_supernodes: dict[str, list[str]],
     base_score: dict[str, Any],
-    flow_report: dict[str, Any],
     weighted_edge_cosine_mean: float | None,
     result_path: Path,
     supernode_map_path: Path,
     auto_k_sweep_path: Path | None,
-    flow_report_path: Path,
 ) -> dict[str, Any]:
-    combined = flow_report["combined"]
-    row = {
+    return {
         "graph_name": graph_name,
         "dataset": dataset,
         "graph_path": str(graph_path),
@@ -288,29 +265,10 @@ def _flatten_metrics(
         "dag_score": base_score.get("dag_score"),
         "n_middle": base_score.get("n_middle"),
         "within_cluster_weighted_edge_cosine_mean": weighted_edge_cosine_mean,
-        "F_phi": combined.get("F_phi"),
-        "path_score": combined.get("path_score"),
-        "residual_score": combined.get("residual_score"),
-        "shortcut_score": combined.get("shortcut_score"),
-        "D_phi": combined.get("D_phi"),
-        "R_phi": combined.get("R_phi"),
-        "R_phi_balance": combined.get("R_phi_balance"),
-        "R_phi_suppressive": combined.get("R_phi_suppressive"),
-        "R_phi_max": combined.get("R_phi_max"),
-        "shortcut_frac": combined.get("shortcut_frac"),
-        "sigma_phi": combined.get("sigma_phi"),
-        "top_k_frac": combined.get("top_k_frac"),
-        "n_paths": combined.get("n_paths"),
-        "n_shortcuts": combined.get("n_shortcuts"),
-        "n_direct": combined.get("n_direct"),
-        "n_suppressive": combined.get("n_suppressive"),
-        "n_balanced": combined.get("n_balanced"),
         "result_path": str(result_path),
         "supernode_map_path": str(supernode_map_path),
         "auto_k_sweep_path": str(auto_k_sweep_path) if auto_k_sweep_path else "",
-        "flow_report_path": str(flow_report_path),
     }
-    return row
 
 
 def _write_summary_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -390,7 +348,6 @@ def _evaluate_existing_method(
     run_dir = output_dir / "runs" / graph_name / method_slug
     supernode_map_path = run_dir / "supernode_map.json"
     auto_k_sweep_path = run_dir / "auto_k_sweep.json"
-    flow_report_path = run_dir / "flow_report.json"
     result_path = run_dir / "result.json"
 
     edge_cosine_mean = _within_cluster_mean_cosine(
@@ -398,11 +355,6 @@ def _evaluate_existing_method(
         final_supernodes,
         prune_graph,
     )
-    sng = SummarizationGraph(
-        supernodes=mapping_dict_to_supernodes(prune_graph, final_supernodes),
-        pruned_adj=prune_graph.pruned_adj,
-    )
-    flow_report = flow_faithfulness_report(sng, final_supernodes)
 
     _write_json(supernode_map_path, final_supernodes)
     _write_json(
@@ -412,7 +364,6 @@ def _evaluate_existing_method(
             for k, result in sweep.items()
         },
     )
-    _write_json(flow_report_path, flow_report)
 
     summary_row = _flatten_metrics(
         graph_name=graph_name,
@@ -426,18 +377,15 @@ def _evaluate_existing_method(
         auto_k_candidates=len(sweep),
         final_supernodes=final_supernodes,
         base_score=base_score,
-        flow_report=flow_report,
         weighted_edge_cosine_mean=edge_cosine_mean,
         result_path=result_path,
         supernode_map_path=supernode_map_path,
         auto_k_sweep_path=auto_k_sweep_path,
-        flow_report_path=flow_report_path,
     )
     result_payload = {
         **summary_row,
         "final_supernodes": final_supernodes,
         "score_details": base_score.get("details", {}),
-        "flow_report": flow_report,
     }
     _write_json(result_path, result_payload)
     return result_payload
@@ -475,7 +423,6 @@ def _evaluate_baseline(
     run_dir = output_dir / "runs" / graph_name / method
     supernode_map_path = run_dir / "supernode_map.json"
     auto_k_sweep_path = run_dir / "auto_k_sweep.json"
-    flow_report_path = run_dir / "flow_report.json"
     result_path = run_dir / "result.json"
 
     edge_cosine_mean = _within_cluster_mean_cosine(
@@ -483,11 +430,6 @@ def _evaluate_baseline(
         final_supernodes,
         prune_graph,
     )
-    sng = SummarizationGraph(
-        supernodes=mapping_dict_to_supernodes(prune_graph, final_supernodes),
-        pruned_adj=prune_graph.pruned_adj,
-    )
-    flow_report = flow_faithfulness_report(sng, final_supernodes)
 
     _write_json(supernode_map_path, final_supernodes)
     _write_json(
@@ -497,7 +439,6 @@ def _evaluate_baseline(
             for k, result in sweep.items()
         },
     )
-    _write_json(flow_report_path, flow_report)
 
     summary_row = _flatten_metrics(
         graph_name=graph_name,
@@ -511,18 +452,15 @@ def _evaluate_baseline(
         auto_k_candidates=len(sweep),
         final_supernodes=final_supernodes,
         base_score=base_score,
-        flow_report=flow_report,
         weighted_edge_cosine_mean=edge_cosine_mean,
         result_path=result_path,
         supernode_map_path=supernode_map_path,
         auto_k_sweep_path=auto_k_sweep_path,
-        flow_report_path=flow_report_path,
     )
     result_payload = {
         **summary_row,
         "final_supernodes": final_supernodes,
         "score_details": base_score.get("details", {}),
-        "flow_report": flow_report,
         "feature_dim": int(features.shape[1]) if features is not None else None,
     }
     _write_json(result_path, result_payload)

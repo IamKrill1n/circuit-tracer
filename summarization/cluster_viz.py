@@ -9,12 +9,18 @@ import numpy as np
 import plotly.graph_objects as go
 
 from summarization.utils import layer_index_from_node_id
-from summarization.flow_analysis import _flow_role
 from summarization.supernode_graph import SummarizationGraph, Supernode
 
 
 def _sn_kind(sn_name: str, node_by_name: dict[str, Supernode]) -> str:
-    return _flow_role(sn_name, node_by_name)
+    row = node_by_name.get(sn_name)
+    if row is not None:
+        return "middle" if row.type == "features" else row.type
+    if "EMB" in sn_name:
+        return "emb"
+    if "LOGIT" in sn_name:
+        return "logit"
+    return "middle"
 
 
 def _sn_title(sn: str, members: list[str], attr: dict[str, dict[str, Any]] | None) -> str:

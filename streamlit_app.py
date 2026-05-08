@@ -15,7 +15,6 @@ from api import save_subgraph
 from summarization.auto_grouping import find_best_k, score_clusters
 from summarization.cluster import cluster_graph, clusters_to_supernodes, compute_similarity
 from summarization.cluster_viz import supernode_graph_figure
-from summarization.flow_analysis import flow_faithfulness_report
 from summarization.prune import PruneGraph, load_prune_graph, prune_graph_pipeline, save_prune_graph
 from summarization.supernode_graph import SummarizationGraph
 from summarization.token_attribution import get_token_attribution_from_graph
@@ -732,11 +731,6 @@ def main() -> None:
                     auto_k=bool(auto_k),
                     auto_k_cfg=auto_k_cfg,
                 )
-                flow_report = flow_faithfulness_report(sng, supernode_map)
-                print(
-                    "[flow_analysis] report:\n"
-                    + json.dumps(_to_jsonable(flow_report), indent=2)
-                )
             except Exception as exc:  # noqa: BLE001
                 st.exception(exc)
                 st.stop()
@@ -747,7 +741,6 @@ def main() -> None:
             "prune_graph": prune_graph,
             "supernode_map": supernode_map,
             "sng": sng,
-            "flow_report": flow_report,
             "run_meta": run_meta,
             "prune_meta": prune_meta,
         }
@@ -762,15 +755,6 @@ def main() -> None:
     result_input_mode: str = result_payload.get("input_mode", input_mode)
     supernode_map: dict[str, list[str]] = result_payload["supernode_map"]
     sng: SummarizationGraph | dict[str, Any] = result_payload["sng"]
-    flow_report: dict[str, Any] | None = result_payload.get("flow_report")
-    if flow_report is None:
-        flow_report = flow_faithfulness_report(sng, supernode_map)
-        result_payload["flow_report"] = flow_report
-        print(
-            "[flow_analysis] report (backfilled):\n"
-            + json.dumps(_to_jsonable(flow_report), indent=2)
-        )
-    flow_report = cast(dict[str, Any], flow_report)
     run_meta: dict[str, Any] = result_payload.get("run_meta", {})
     prune_meta: dict[str, Any] = result_payload.get("prune_meta", {})
     cluster_score: dict[str, Any] = cast(dict[str, Any], run_meta.get("cluster_score", {}))
@@ -812,14 +796,6 @@ def main() -> None:
         )
         with st.expander("Cluster score details", expanded=False):
             st.json(_to_jsonable(cluster_score))
-
-    flow_combined = cast(dict[str, Any], flow_report.get("combined", {}))
-    st.subheader("Flow analysis summary")
-    flow_col_1, flow_col_2, flow_col_3, flow_col_4 = st.columns(4)
-    flow_col_1.metric("F_phi", f"{float(flow_combined.get('F_phi', 0.0)):.4f}")
-    flow_col_2.metric("D_phi", f"{float(flow_combined.get('D_phi', 0.0)):.4f}")
-    flow_col_3.metric("R_phi_balance", f"{float(flow_combined.get('R_phi_balance', 0.0)):.4f}")
-    flow_col_4.metric("shortcut_frac", f"{float(flow_combined.get('shortcut_frac', 0.0)):.4f}")
 
     supernode_graph = _build_supernode_network(
         supernode_map=supernode_map,

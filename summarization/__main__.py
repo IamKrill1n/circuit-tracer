@@ -13,7 +13,6 @@ from api import generate_graph, save_subgraph
 from summarization.auto_grouping import find_best_k
 from summarization.cluster import cluster_graph, clusters_to_supernodes
 from summarization.cluster_viz import supernode_graph_figure
-from summarization.flow_analysis import flow_faithfulness_report
 from summarization.prune import prune_graph_pipeline
 from summarization.supernode_graph import SummarizationGraph
 
@@ -175,8 +174,6 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     rows = clusters_to_supernodes(prune_graph, clusters)
     supernode_map = {s.name: s.member_node_ids() for s in rows}
     sng = SummarizationGraph(supernodes=rows, pruned_adj=prune_graph.pruned_adj)
-    flow_report = flow_faithfulness_report(sng, supernode_map)
-
     labelled_supernodes = _clustered_supernodes_for_upload(clusters)
 
     _save_json(args.supernodes_out, labelled_supernodes)
@@ -239,7 +236,6 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         "auto_k_candidates": len(sweep),
         "supernodes": labelled_supernodes,
         "supernode_map": supernode_map,
-        "flow_report": flow_report,
         "figure_html_out": figure_path,
         "upload_status": upload_status,
         "upload_body": upload_body,

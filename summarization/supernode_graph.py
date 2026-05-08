@@ -68,34 +68,21 @@ def node_from_prune_graph(
 ) -> Node:
     """Build a typed summarization node from ``PruneGraph.nodes`` plus score tensors."""
     nodes: list[Node] = prune_graph.nodes
-    lookup = {n.node_id: n for n in prune_graph.nodes}
+    lookup = {n.node_id: n for n in nodes}
     base = lookup.get(node_id)
     if base is None:
         raise KeyError(f"unknown node_id for PruneGraph: {node_id!r}")
 
     if id_to_idx is None:
         id_to_idx = {n.node_id: i for i, n in enumerate(nodes)}
-    idx = id_to_idx.get(node_id)
-    if idx is None and getattr(base, "node_idx", -1) >= 0:
-        idx = int(base.node_idx)
+    idx = id_to_idx[node_id]
 
-    ti = (
-        _tensor_value_at(prune_graph.node_influence, idx)
-        if idx is not None
-        else None
-    )
-    tr = (
-        _tensor_value_at(prune_graph.node_relevance, idx)
-        if idx is not None
-        else None
-    )
-
-    influence = ti if ti is not None else base.influence
-    relevance = tr if tr is not None else base.relevance
+    ti = _tensor_value_at(prune_graph.node_influence, idx)
+    tr = _tensor_value_at(prune_graph.node_relevance, idx)
 
     return Node(
         node_id=base.node_id,
-        node_idx=int(idx) if idx is not None else int(getattr(base, "node_idx", -1)),
+        node_idx=idx,
         feature=base.feature,
         layer=str(base.layer),
         ctx_idx=int(base.ctx_idx),
@@ -106,9 +93,9 @@ def node_from_prune_graph(
         reverse_ctx_idx=int(base.reverse_ctx_idx),
         jsNodeId=str(base.jsNodeId or base.node_id),
         clerp=str(base.clerp),
-        influence=influence,
+        influence=ti if ti is not None else base.influence,
         activation=base.activation,
-        relevance=relevance,
+        relevance=tr if tr is not None else base.relevance,
     )
 
 

@@ -136,7 +136,7 @@ ENV/
 env.bak/
 venv.bak/
 .cursor/
-
+.claude/
 # Spyder project settings
 .spyderproject
 .spyproject
@@ -182,3 +182,4 @@ demos/graphs/
 demos/temp_graph_files/
 nohup.out
 runs/
+

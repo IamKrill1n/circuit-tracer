@@ -200,7 +200,6 @@ def _cluster_metrics_from_parts(
         dtype=np.float64,
     )
     sil_raw, sil_norm = _silhouette_over_middle(s, prune_graph, rows)
-    dbcv = _dbcv_over_middle(s, prune_graph, rows)
     id_to_idx = {nid: i for i, nid in enumerate(prune_graph.node_ids)}
     internal_independence = _internal_independence_score(rows, prune_graph.pruned_adj, id_to_idx)
 
@@ -217,7 +216,6 @@ def _cluster_metrics_from_parts(
         "sil_raw": float(sil_raw),
         "sil_norm": float(sil_norm),
         "internal_independence": float(internal_independence),
-        "dbcv": float(dbcv),
         "dag_score": float(dag_score),
         "n_middle": int(n_middle),
     }

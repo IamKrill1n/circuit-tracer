@@ -3,7 +3,7 @@ import time
 import torch
 from api import get_feature, generate_autointerp
 import networkx as nx
-from typing import Any, Dict, List, Tuple, Optional, Literal, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 from summarization.supernode_graph import Node
 
@@ -112,8 +112,8 @@ def layer_index_from_node_id(node_id: str, *, layer: str | int | None = None) ->
         return 10_000
 
 
-def _build_index_sets(nodes: List[Node]) -> Dict[str, List[int]]:
-    sets: Dict[str, List[int]] = {
+def _build_index_sets(nodes: list[Node]) -> dict[str, list[int]]:
+    sets: dict[str, list[int]] = {
         "feature": [],
         "error": [],
         "embedding": [],

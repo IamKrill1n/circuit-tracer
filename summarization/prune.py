@@ -1,13 +1,13 @@
-# Unified pruning: AttrGraph -> PruneGraph; shared core with circuit_tracer.graph.prune_graph
+# Unified pruning: AttrGraph -> PruneGraph
 import json
 import logging
 from dataclasses import asdict, dataclass, replace
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Literal
 
 import torch
 
 from api import get_feature
-from circuit_tracer.graph import (
+from summarization.graph_utils import (
     combine_scores_geometric,
     combined_scores_arithmetic,
     combined_scores_harmonic,
@@ -48,7 +48,7 @@ def _nodes_from_payload(raw_nodes: Any) -> list[Node]:
 class PruneGraph:
     nodes: list[Node]
     pruned_adj: torch.Tensor
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
     node_influence: torch.Tensor | None = None
     node_relevance: torch.Tensor | None = None
     edge_influence: torch.Tensor | None = None
@@ -66,7 +66,7 @@ class PruneGraph:
     def node_ids(self) -> list[str]:
         return [n.node_id for n in self.nodes]
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "nodes": [asdict(n) for n in self.nodes],
             "pruned_adj": self.pruned_adj,
@@ -78,7 +78,7 @@ class PruneGraph:
         }
 
     @classmethod
-    def from_dict(cls, payload: Dict[str, Any]) -> "PruneGraph":
+    def from_dict(cls, payload: dict[str, Any]) -> "PruneGraph":
         required = {
             "nodes",
             "pruned_adj",
@@ -105,7 +105,7 @@ def save_prune_graph(prune_graph: PruneGraph, output_path: str) -> None:
 
 def load_prune_graph(
     input_path: str,
-    map_location: Optional[str | torch.device] = "cpu",
+    map_location: str | torch.device | None = "cpu",
 ) -> PruneGraph:
     payload = torch.load(input_path, map_location=map_location)
     if isinstance(payload, PruneGraph):
@@ -159,7 +159,7 @@ def _validate_inputs(
     adj: torch.Tensor,
     nodes: list[Node],
     logit_weights: LogitWeightMode | None,
-    token_weights: Optional[List[float]],
+    token_weights: list[float] | None,
     logits_seed: torch.Tensor | None,
     emb_weights_seed: torch.Tensor | None,
 ) -> None:
@@ -194,14 +194,10 @@ def remove_dangling_nodes(
         old[:] = node_mask
         edge_mask[~node_mask] = False
         edge_mask[:, ~node_mask] = False
-        if feature_idx.numel() > 0 and non_boundary.numel() > 0:
+        if non_boundary.numel() > 0:
             node_mask[non_boundary] &= edge_mask[:, non_boundary].any(0)
+        if feature_idx.numel() > 0:
             node_mask[feature_idx] &= edge_mask[feature_idx].any(1)
-        else:
-            if non_boundary.numel() > 0:
-                node_mask[non_boundary] &= edge_mask[:, non_boundary].any(0)
-            if feature_idx.numel() > 0:
-                node_mask[feature_idx] &= edge_mask[feature_idx].any(1)
     return node_mask
 
 
@@ -209,7 +205,7 @@ def prune_combined(
     adj: torch.Tensor,
     nodes: list[Node],
     logit_weights: LogitWeightMode | None = "target",
-    token_weights: Optional[List[float]] = None,
+    token_weights: list[float] | None = None,
     logits_seed: torch.Tensor | None = None,
     emb_weights_seed: torch.Tensor | None = None,
     node_influence_threshold: float = 0.8,
@@ -217,7 +213,7 @@ def prune_combined(
     edge_influence_threshold: float = 0.98,
     edge_relevance_threshold: float = 0.98,
     keep_all_tokens_and_logits: bool = True,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     n = adj.shape[0]
     idx = _build_index_sets(nodes)
 
@@ -288,11 +284,11 @@ def prune_combined(
 def prune_attr_graph(
     attr_graph: AttrGraph,
     logit_weights: LogitWeightMode | None = "target",
-    token_weights: Optional[List[float]] = None,
+    token_weights: list[float] | None = None,
     logits_seed: torch.Tensor | None = None,
     emb_weights_seed: torch.Tensor | None = None,
-    node_threshold: Optional[float] = None,
-    edge_threshold: Optional[float] = None,
+    node_threshold: float | None = None,
+    edge_threshold: float | None = None,
     node_influence_threshold: float = 0.8,
     node_relevance_threshold: float = 0.8,
     edge_influence_threshold: float = 0.98,
@@ -380,10 +376,8 @@ def prune_attr_graph(
             json_data = json.loads(data)
             explanations = json_data.get("explanations", [])
             clerp = ""
-            if isinstance(explanations, list) and explanations:
-                first_explanation = explanations[0]
-                if isinstance(first_explanation, dict):
-                    clerp = first_explanation.get("description", "")
+            if explanations:
+                clerp = explanations[0].get("description", "")
             act_density = json_data.get("frac_nonzero", 0)
             cur = nodes[i]
             if cur.clerp == "":
@@ -428,9 +422,9 @@ def prune_attr_graph(
 def prune_graph_pipeline(
     json_path: str,
     logit_weights: LogitWeightMode,
-    token_weights: Optional[List[float]] = None,
-    node_threshold: Optional[float] = None,
-    edge_threshold: Optional[float] = None,
+    token_weights: list[float] | None = None,
+    node_threshold: float | None = None,
+    edge_threshold: float | None = None,
     node_influence_threshold: float = 0.8,
     node_relevance_threshold: float = 0.8,
     edge_influence_threshold: float = 0.98,
@@ -461,16 +455,16 @@ def prune_graph_pipeline(
 def prune_masks_from_attr_graph(
     attr_graph: AttrGraph,
     *,
-    token_weights: Optional[torch.Tensor] = None,
-    logit_weights: Optional[torch.Tensor] = None,
+    token_weights: torch.Tensor | None = None,
+    logit_weights: torch.Tensor | None = None,
     logit_weights_mode: LogitWeightMode | None = "probs",
-    token_weights_list: Optional[List[float]] = None,
+    token_weights_list: list[float] | None = None,
     node_influence_threshold: float = 0.8,
     node_relevance_threshold: float = 0.8,
     edge_influence_threshold: float = 0.98,
     edge_relevance_threshold: float = 0.98,
     keep_all_tokens_and_logits: bool = True,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Shared pruning step returning masks and score tensors (used by ``circuit_tracer.graph.prune_graph``)."""
     adj = attr_graph.adj
     nodes = attr_graph.nodes
