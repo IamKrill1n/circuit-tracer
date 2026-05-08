@@ -1,201 +1,265 @@
+"""Evaluate PruneGraphs produced by ``eval/prune_graphs.py``.
+
+Reads a manifest.json describing the prune sweep and computes a battery of
+metrics per prune cell. In addition to the existing combined completeness
+scores and mean influence/relevance stats, this implements four new metrics
+that target the token-weighted relevance dimension that distinguishes our
+pruning algorithm from Anthropic's:
+
+1. relevance_conservation_rate: fraction of token-weighted forward relevance
+   over feature nodes that survives pruning.
+2. token_attribution_faithfulness: token-weight-weighted fraction of each
+   input token's flow to the target logit that survives pruning, computed on
+   the fixed full-graph row-normalized adjacency (mask but do not re-normalize).
+3. asymmetric_pruning_divergence: Jaccard distance between kept node sets when
+   pruning with the user's token weights vs uniform token weights at the same
+   thresholds. High = token weights are actually steering pruning.
+5. influence_relevance_agreement: Pearson correlation between node_influence
+   and node_relevance over kept feature nodes. Low correlation = the two
+   thresholds are filtering on genuinely orthogonal signals.
+"""
+
 from __future__ import annotations
 
 import argparse
 import csv
 import json
-import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import torch
 
+from summarization.attr_graph import AttrGraph
+from summarization.graph_utils import (
+    compute_relevance,
+    normalize_matrix,
+)
 from summarization.prune import (
-    LogitWeightMode,
+    PruneGraph,
     compute_combined_prune_graph_scores,
-    prune_graph_pipeline,
-    save_prune_graph,
+    load_prune_graph,
+    prune_attr_graph,
 )
-from summarization.token_attribution import (
-    NormalizeMethod,
-    _normalize_scores,
-    _special_token_mask,
-)
-from summarization.utils import _build_index_sets, get_data_from_json
-
-DEFAULT_SOURCE_SETS = ("clt-hp",)
-DEFAULT_SHAP_EVAL_NORMALIZATIONS: tuple[NormalizeMethod, ...] = (
-    "softmax",
-    "entmax",
-    "entmax15",
-)
-DEFAULT_SHAP_VALUES_JSON = Path("demos") / "shap_values.json"
+from summarization.utils import _build_index_sets
 
 
-def _discover_graph_files(graphs_root: Path, source_sets: tuple[str, ...]) -> dict[str, list[Path]]:
-    discovered: dict[str, list[Path]] = {}
-    for source_set in source_sets:
-        src_dir = graphs_root / source_set
-        files = sorted(src_dir.glob("*.json"))
-        discovered[source_set] = files
-    return discovered
+# --- Caches ---------------------------------------------------------------
 
+class GraphCache:
+    """Caches per-graph artifacts shared across many prune cells."""
 
-def _strip_bos_from_prompt(prompt: str) -> str:
-    p = (prompt or "").strip()
-    if p.lower().startswith("<bos>"):
-        p = p[5:].lstrip()
-    return p.strip()
+    def __init__(self) -> None:
+        self._attr_graph: dict[str, AttrGraph] = {}
+        self._idx_sets: dict[str, dict[str, list[int]]] = {}
+        self._a_full_norm: dict[str, torch.Tensor] = {}
+        self._full_target_rel: dict[str, dict[int, float]] = {}
+        self._id_to_idx: dict[str, dict[str, int]] = {}
+        self._uniform_prune: dict[tuple, PruneGraph] = {}
 
+    def attr_graph(self, path: str) -> AttrGraph:
+        if path not in self._attr_graph:
+            ag = AttrGraph.from_graph_file(path)
+            self._attr_graph[path] = ag
+            self._idx_sets[path] = _build_index_sets(ag.nodes)
+            self._id_to_idx[path] = {nd.node_id: i for i, nd in enumerate(ag.nodes)}
+        return self._attr_graph[path]
 
-def _load_shap_values_json(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8") as f:
-        return json.load(f)
+    def idx_sets(self, path: str) -> dict[str, list[int]]:
+        self.attr_graph(path)
+        return self._idx_sets[path]
 
+    def id_to_idx(self, path: str) -> dict[str, int]:
+        self.attr_graph(path)
+        return self._id_to_idx[path]
 
-def _build_shap_lookup(payload: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]]:
-    by_prompt: dict[str, dict[str, Any]] = {}
-    by_index: dict[int, dict[str, Any]] = {}
-    for row in payload.get("results", []):
-        if not isinstance(row, dict):
-            continue
-        prompt = str(row.get("prompt", "")).strip()
-        key = _strip_bos_from_prompt(prompt)
-        if key:
-            by_prompt[key] = row
-        idx = row.get("index")
-        if isinstance(idx, int):
-            by_index[idx] = row
-    return by_prompt, by_index
+    def a_full_norm(self, path: str) -> torch.Tensor:
+        if path not in self._a_full_norm:
+            ag = self.attr_graph(path)
+            # row-normalized transpose; same as compute_node_relevance internals
+            self._a_full_norm[path] = normalize_matrix(ag.adj.T)
+        return self._a_full_norm[path]
 
+    def full_target_rel(self, path: str, emb_idx: int) -> float:
+        """Full-graph relevance reaching the target logit when seeded one-hot at ``emb_idx``."""
+        per = self._full_target_rel.setdefault(path, {})
+        if emb_idx in per:
+            return per[emb_idx]
+        ag = self.attr_graph(path)
+        target_idx = self.idx_sets(path)["target_logit"]
+        if not target_idx:
+            per[emb_idx] = 0.0
+            return 0.0
+        n = ag.adj.shape[0]
+        seed = torch.zeros(n, dtype=torch.float32)
+        seed[emb_idx] = 1.0
+        full_rel = compute_relevance(self.a_full_norm(path), seed)
+        per[emb_idx] = float(full_rel[target_idx].sum().item())
+        return per[emb_idx]
 
-def _match_shap_row(
-    stem: str,
-    metadata: dict[str, Any],
-    by_prompt: dict[str, dict[str, Any]],
-    by_index: dict[int, dict[str, Any]],
-) -> dict[str, Any] | None:
-    meta_prompt = str(metadata.get("prompt", "")).strip()
-    key = _strip_bos_from_prompt(meta_prompt)
-    if key and key in by_prompt:
-        return by_prompt[key]
-    if meta_prompt and meta_prompt in by_prompt:
-        return by_prompt[meta_prompt]
-    m = re.search(r"-p(\d+)-", stem, flags=re.IGNORECASE)
-    if m:
-        return by_index.get(int(m.group(1)))
-    return None
-
-
-def _scatter_raw_shap_into_prompt_positions(
-    prompt_tokens: list[str],
-    raw_shap: list[float],
-) -> torch.Tensor:
-    """Map JSON raw_shap (no BOS) onto full graph prompt_tokens (may include BOS)."""
-    special = _special_token_mask(prompt_tokens)
-    n = len(prompt_tokens)
-    values = torch.zeros(n, dtype=torch.float32)
-    j = 0
-    for i in range(n):
-        if bool(special[i].item()):
-            continue
-        if j >= len(raw_shap):
-            raise ValueError(
-                f"raw_shap too short: need more than index {j} for {n} prompt tokens "
-                f"({int((~special).sum().item())} non-special positions)."
-            )
-        values[i] = float(raw_shap[j])
-        j += 1
-    expected = int((~special).sum().item())
-    if j != len(raw_shap) or j != expected:
-        raise ValueError(
-            f"raw_shap length {len(raw_shap)} does not match non-special token count {expected} "
-            f"(consumed {j})."
+    def uniform_prune(
+        self,
+        path: str,
+        node_influence_threshold: float,
+        node_relevance_threshold: float,
+        edge_threshold: float,
+        logit_weights: str,
+        keep_all_tokens_and_logits: bool,
+    ) -> PruneGraph:
+        key = (
+            path,
+            float(node_influence_threshold),
+            float(node_relevance_threshold),
+            float(edge_threshold),
+            str(logit_weights),
+            bool(keep_all_tokens_and_logits),
         )
-    return values
+        if key not in self._uniform_prune:
+            ag = self.attr_graph(path)
+            self._uniform_prune[key] = prune_attr_graph(
+                ag,
+                logit_weights=logit_weights,  # type: ignore[arg-type]
+                token_weights=None,
+                node_influence_threshold=node_influence_threshold,
+                node_relevance_threshold=node_relevance_threshold,
+                edge_threshold=edge_threshold,
+                keep_all_tokens_and_logits=keep_all_tokens_and_logits,
+            )
+        return self._uniform_prune[key]
 
 
-def normalize_shap_values_for_prune(
-    prompt_tokens: list[str],
-    raw_shap: list[float],
-    normalize_method: NormalizeMethod,
-    *,
-    masker_keep_prefix: int | None = None,
-    entmax_alpha: float | None = None,
+# --- Metric implementations ----------------------------------------------
+
+def _build_masked_A(
+    attr_graph: AttrGraph,
+    prune_graph: PruneGraph,
+    A_full_norm: torch.Tensor,
+    id_to_idx: dict[str, int],
 ) -> torch.Tensor:
-    """Map ``raw_shap`` onto full ``prompt_tokens`` and apply token normalization.
+    """Mask the full row-normalized adjacency to only edges/nodes kept after pruning.
 
-    ``masker_keep_prefix`` mirrors SHAP's Text masker ``keep_prefix``: the first *k*
-    tokens are treated as fixed (excluded from the normalized mass), matching
-    :func:`summarization.token_attribution.get_token_attribution`.
+    Pruning preserves edges and nodes; we do not re-normalize. ``A_full_norm`` is
+    indexed (source, target). Edge mask in adj convention is ``(target, source)``.
     """
-    values = _scatter_raw_shap_into_prompt_positions(
-        prompt_tokens, [float(x) for x in raw_shap]
+    kept_full_idx = [id_to_idx[nd.node_id] for nd in prune_graph.nodes]
+    pruned_full = torch.zeros_like(attr_graph.adj)
+    kept_t = torch.tensor(kept_full_idx, dtype=torch.long, device=pruned_full.device)
+    pruned_full[kept_t.unsqueeze(1), kept_t.unsqueeze(0)] = prune_graph.pruned_adj.to(
+        device=pruned_full.device, dtype=pruned_full.dtype
     )
-    special = _special_token_mask(prompt_tokens)
-    if masker_keep_prefix is not None and int(masker_keep_prefix) > 0:
-        k = min(int(masker_keep_prefix), int(special.shape[0]))
-        special = special.clone()
-        special[:k] = True
-    return _normalize_scores(
-        values.clone(),
-        normalize_method,
-        special,
-        entmax_alpha=entmax_alpha,
-    )
+    edge_mask = pruned_full != 0  # (target, source)
+    A_masked = A_full_norm.clone()
+    A_masked[~edge_mask.T] = 0.0
+    return A_masked
 
 
-def _token_weights_for_embeddings(
-    normalized: torch.Tensor,
-    node_ids: list[str],
-    emb_idx: list[int],
-) -> list[float]:
-    weights: list[float] = []
-    for i in emb_idx:
-        nid = node_ids[i]
-        parts = nid.split("_")
-        ctx_idx = int(parts[-1])
-        if ctx_idx < 0 or ctx_idx >= normalized.shape[0]:
-            raise ValueError(f"ctx_idx {ctx_idx} out of range for normalized len={normalized.shape[0]} ({nid=})")
-        weights.append(float(normalized[ctx_idx].item()))
-    return weights
-
-
-def _node_threshold_sweep(start: float, end: float, step: float) -> list[float]:
-    if step <= 0:
-        raise ValueError("sweep step must be positive")
-    out: list[float] = []
-    t = start
-    # Include end within float tolerance (e.g. 0.3 + 0.1 * 7 = 1.0)
-    while t <= end + 1e-9:
-        out.append(round(t, 6))
-        t = round(t + step, 6)
-    return out
-
-
-def _sweep_axis(
-    start_override: float | None,
-    end_override: float | None,
-    step_override: float | None,
+def relevance_conservation_rate(
+    attr_graph: AttrGraph,
+    prune_graph: PruneGraph,
+    token_weights: list[float],
     *,
-    fallback_start: float,
-    fallback_end: float,
-    fallback_step: float,
-) -> list[float]:
-    """Build one threshold axis; unset overrides use the shared --sweep-node-* fallbacks."""
-    return _node_threshold_sweep(
-        float(start_override if start_override is not None else fallback_start),
-        float(end_override if end_override is not None else fallback_end),
-        float(step_override if step_override is not None else fallback_step),
-    )
+    full_idx: dict[str, list[int]],
+    A_full_norm: torch.Tensor,
+    id_to_idx: dict[str, int],
+) -> float | None:
+    all_feat_idx = full_idx["feature"]
+    if not all_feat_idx:
+        return None
+
+    n = attr_graph.adj.shape[0]
+    emb_seed = torch.zeros(n, dtype=torch.float32)
+    emb_idx_full = full_idx["embedding"]
+    if len(token_weights) != len(emb_idx_full):
+        raise ValueError(
+            f"token_weights length {len(token_weights)} != embedding count {len(emb_idx_full)}"
+        )
+    for k, emb_i in enumerate(emb_idx_full):
+        emb_seed[emb_i] = float(token_weights[k])
+
+    full_rel = compute_relevance(A_full_norm, emb_seed)
+
+    kept_feat_full = [
+        id_to_idx[nd.node_id]
+        for nd in prune_graph.nodes
+        if nd.feature_type == "cross layer transcoder"
+    ]
+    kept_sum = float(full_rel[kept_feat_full].sum().item()) if kept_feat_full else 0.0
+    total_sum = float(full_rel[all_feat_idx].sum().item())
+    return kept_sum / total_sum if total_sum > 0 else 0.0
 
 
-def _write_json(path: Path, obj: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=False, indent=2)
+def token_attribution_faithfulness(
+    attr_graph: AttrGraph,
+    prune_graph: PruneGraph,
+    token_weights: list[float],
+    *,
+    full_idx: dict[str, list[int]],
+    A_full_norm: torch.Tensor,
+    id_to_idx: dict[str, int],
+    full_target_rel_fn: Callable[[int], float],
+) -> float | None:
+    target_idx = full_idx["target_logit"]
+    emb_idx_full = full_idx["embedding"]
+    if not target_idx or not emb_idx_full:
+        return None
+    if len(token_weights) != len(emb_idx_full):
+        raise ValueError(
+            f"token_weights length {len(token_weights)} != embedding count {len(emb_idx_full)}"
+        )
+
+    A_masked = _build_masked_A(attr_graph, prune_graph, A_full_norm, id_to_idx)
+    n = attr_graph.adj.shape[0]
+
+    weighted_sum = 0.0
+    weight_total = 0.0
+    for k, emb_i in enumerate(emb_idx_full):
+        w_t = float(token_weights[k])
+        if w_t <= 0:
+            continue
+        full_target = full_target_rel_fn(emb_i)
+        seed = torch.zeros(n, dtype=torch.float32)
+        seed[emb_i] = 1.0
+        pruned_rel = compute_relevance(A_masked, seed)
+        pruned_target = float(pruned_rel[target_idx].sum().item())
+        faith_t = (pruned_target / full_target) if full_target > 0 else 0.0
+        weighted_sum += w_t * faith_t
+        weight_total += w_t
+    return weighted_sum / weight_total if weight_total > 0 else 0.0
 
 
-def _compute_prune_metrics(prune_graph: Any) -> dict[str, float | None]:
+def asymmetric_pruning_divergence(
+    prune_graph: PruneGraph,
+    uniform_prune_graph: PruneGraph,
+) -> float:
+    A = {nd.node_id for nd in prune_graph.nodes}
+    B = {nd.node_id for nd in uniform_prune_graph.nodes}
+    union = A | B
+    if not union:
+        return 0.0
+    return 1.0 - len(A & B) / len(union)
+
+
+def influence_relevance_agreement(prune_graph: PruneGraph) -> float | None:
+    if prune_graph.node_influence is None or prune_graph.node_relevance is None:
+        return None
+    feat_idx = [
+        i for i, nd in enumerate(prune_graph.nodes) if nd.feature_type == "cross layer transcoder"
+    ]
+    if len(feat_idx) < 2:
+        return None
+    inf_t = prune_graph.node_influence[feat_idx].to(dtype=torch.float32)
+    rel_t = prune_graph.node_relevance[feat_idx].to(dtype=torch.float32)
+    inf_std = float(inf_t.std(unbiased=False).item())
+    rel_std = float(rel_t.std(unbiased=False).item())
+    if inf_std <= 1e-12 or rel_std <= 1e-12:
+        return None
+    inf_z = (inf_t - inf_t.mean()) / inf_std
+    rel_z = (rel_t - rel_t.mean()) / rel_std
+    return float((inf_z * rel_z).mean().item())
+
+
+# --- Existing per-PruneGraph metrics (unchanged) -------------------------
+
+def _compute_basic_prune_metrics(prune_graph: PruneGraph) -> dict[str, float | None]:
     metrics: dict[str, float | None] = {
         "score_geometric_min_max": None,
         "score_arithmetic_min_max": None,
@@ -207,388 +271,254 @@ def _compute_prune_metrics(prune_graph: Any) -> dict[str, float | None]:
     }
     try:
         metrics["score_geometric_min_max"] = compute_combined_prune_graph_scores(
-            prune_graph,
-            method="geometric",
-            normalization="min_max",
+            prune_graph, method="geometric", normalization="min_max"
         )
         metrics["score_arithmetic_min_max"] = compute_combined_prune_graph_scores(
-            prune_graph,
-            method="arithmetic",
-            normalization="min_max",
+            prune_graph, method="arithmetic", normalization="min_max"
         )
         metrics["score_harmonic_min_max"] = compute_combined_prune_graph_scores(
-            prune_graph,
-            method="harmonic",
-            normalization="min_max",
+            prune_graph, method="harmonic", normalization="min_max"
         )
     except ValueError:
         pass
 
-    node_influence = getattr(prune_graph, "node_influence", None)
-    node_relevance = getattr(prune_graph, "node_relevance", None)
-    edge_influence = getattr(prune_graph, "edge_influence", None)
-    edge_relevance = getattr(prune_graph, "edge_relevance", None)
-
-    if node_influence is not None:
-        metrics["mean_node_influence"] = float(node_influence.to(dtype=torch.float32).mean().item())
-    if node_relevance is not None:
-        metrics["mean_node_relevance"] = float(node_relevance.to(dtype=torch.float32).mean().item())
-    if edge_influence is not None:
-        metrics["mean_edge_influence"] = float(edge_influence.to(dtype=torch.float32).mean().item())
-    if edge_relevance is not None:
-        metrics["mean_edge_relevance"] = float(edge_relevance.to(dtype=torch.float32).mean().item())
+    if prune_graph.node_influence is not None:
+        metrics["mean_node_influence"] = float(
+            prune_graph.node_influence.to(dtype=torch.float32).mean().item()
+        )
+    if prune_graph.node_relevance is not None:
+        metrics["mean_node_relevance"] = float(
+            prune_graph.node_relevance.to(dtype=torch.float32).mean().item()
+        )
+    if prune_graph.edge_influence is not None:
+        metrics["mean_edge_influence"] = float(
+            prune_graph.edge_influence.to(dtype=torch.float32).mean().item()
+        )
+    if prune_graph.edge_relevance is not None:
+        metrics["mean_edge_relevance"] = float(
+            prune_graph.edge_relevance.to(dtype=torch.float32).mean().item()
+        )
     return metrics
 
 
-def run_shap_json_sweep(args: argparse.Namespace) -> None:
-    graphs_root = Path(args.graphs_root)
-    output_root = Path(args.output_root)
-    source_sets = tuple(args.source_sets)
-    shap_path = Path(args.shap_values_json)
+# --- Driver ---------------------------------------------------------------
 
-    payload = _load_shap_values_json(shap_path)
-    by_prompt, by_index = _build_shap_lookup(payload)
-    json_keep = payload.get("masker_keep_prefix")
-    if args.masker_keep_prefix is not None:
-        eff_keep_prefix: int | None = int(args.masker_keep_prefix)
-    elif isinstance(json_keep, (int, float)) and int(json_keep) > 0:
-        eff_keep_prefix = int(json_keep)
-    else:
-        eff_keep_prefix = None
+def _evaluate_record(
+    rec: dict[str, Any],
+    cache: GraphCache,
+    *,
+    skip_relevance_conservation: bool,
+    skip_token_faithfulness: bool,
+    skip_pruning_divergence: bool,
+    skip_influence_relevance_agreement: bool,
+) -> dict[str, float | None]:
+    metrics: dict[str, float | None] = {
+        "relevance_conservation_rate": None,
+        "token_attribution_faithfulness": None,
+        "asymmetric_pruning_divergence": None,
+        "influence_relevance_agreement": None,
+    }
 
-    normalizations: tuple[NormalizeMethod, ...] = tuple(args.eval_normalizations)  # type: ignore[assignment]
-    fb_s, fb_e, fb_st = float(args.sweep_node_start), float(args.sweep_node_end), float(args.sweep_node_step)
-    node_inf_thresholds = _sweep_axis(
-        args.sweep_node_influence_start,
-        args.sweep_node_influence_end,
-        args.sweep_node_influence_step,
-        fallback_start=fb_s,
-        fallback_end=fb_e,
-        fallback_step=fb_st,
-    )
-    node_rel_thresholds = _sweep_axis(
-        args.sweep_node_relevance_start,
-        args.sweep_node_relevance_end,
-        args.sweep_node_relevance_step,
-        fallback_start=fb_s,
-        fallback_end=fb_e,
-        fallback_step=fb_st,
-    )
-    edge_threshold = float(args.edge_threshold)
+    prune_graph = load_prune_graph(rec["prune_graph_path"])
+    metrics.update(_compute_basic_prune_metrics(prune_graph))
 
-    discovered = _discover_graph_files(graphs_root, source_sets)
+    graph_path = rec["graph_path"]
+    attr_graph = cache.attr_graph(graph_path)
+    full_idx = cache.idx_sets(graph_path)
+    A_full_norm = cache.a_full_norm(graph_path)
+    id_to_idx = cache.id_to_idx(graph_path)
+    token_weights = [float(w) for w in rec["token_weights"]]
+
+    if not skip_relevance_conservation:
+        metrics["relevance_conservation_rate"] = relevance_conservation_rate(
+            attr_graph,
+            prune_graph,
+            token_weights,
+            full_idx=full_idx,
+            A_full_norm=A_full_norm,
+            id_to_idx=id_to_idx,
+        )
+
+    if not skip_token_faithfulness:
+        metrics["token_attribution_faithfulness"] = token_attribution_faithfulness(
+            attr_graph,
+            prune_graph,
+            token_weights,
+            full_idx=full_idx,
+            A_full_norm=A_full_norm,
+            id_to_idx=id_to_idx,
+            full_target_rel_fn=lambda emb_i: cache.full_target_rel(graph_path, emb_i),
+        )
+
+    if not skip_pruning_divergence:
+        uniform_pg = cache.uniform_prune(
+            graph_path,
+            float(rec["node_influence_threshold"]),
+            float(rec["node_relevance_threshold"]),
+            float(rec["edge_threshold"]),
+            str(rec["logit_weights"]),
+            bool(rec.get("keep_all_tokens_and_logits", False)),
+        )
+        metrics["asymmetric_pruning_divergence"] = asymmetric_pruning_divergence(
+            prune_graph, uniform_pg
+        )
+
+    if not skip_influence_relevance_agreement:
+        metrics["influence_relevance_agreement"] = influence_relevance_agreement(prune_graph)
+
+    return metrics
+
+
+def _write_json(path: Path, obj: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False, indent=2)
+
+
+def run_eval(args: argparse.Namespace) -> None:
+    manifest_path = Path(args.manifest)
+    with manifest_path.open("r", encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    records: list[dict[str, Any]] = list(manifest.get("records") or [])
+    if not records and manifest.get("results_json"):
+        results_path = Path(manifest["results_json"])
+        if results_path.exists():
+            with results_path.open("r", encoding="utf-8") as f:
+                records = json.load(f)
+    if not records:
+        raise RuntimeError(f"No records found in manifest {manifest_path}")
+
+    if args.limit is not None:
+        records = records[: int(args.limit)]
+
+    output_root = Path(args.output_root) if args.output_root else manifest_path.parent / "eval"
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    cache = GraphCache()
     rows_out: list[dict[str, Any]] = []
     failures: list[str] = []
 
-    total_runs = 0
-    ok_runs = 0
+    n = len(records)
+    for i, rec in enumerate(records):
+        stem = rec.get("graph_stem", rec.get("graph_file", "?"))
+        norm = rec.get("normalize_method", "?")
+        nit = rec.get("node_influence_threshold")
+        nrt = rec.get("node_relevance_threshold")
+        try:
+            metrics = _evaluate_record(
+                rec,
+                cache,
+                skip_relevance_conservation=args.skip_relevance_conservation,
+                skip_token_faithfulness=args.skip_token_faithfulness,
+                skip_pruning_divergence=args.skip_pruning_divergence,
+                skip_influence_relevance_agreement=args.skip_influence_relevance_agreement,
+            )
+            row = {**rec, **metrics}
+            rows_out.append(row)
+            if (i + 1) % max(1, args.log_every) == 0:
+                print(
+                    f"[{i + 1}/{n}] {stem} norm={norm} "
+                    f"node_inf={nit} node_rel={nrt} "
+                    f"rcr={metrics['relevance_conservation_rate']} "
+                    f"taf={metrics['token_attribution_faithfulness']} "
+                    f"apd={metrics['asymmetric_pruning_divergence']} "
+                    f"ira={metrics['influence_relevance_agreement']}"
+                )
+        except Exception as exc:
+            msg = f"{stem} norm={norm} node_inf={nit} node_rel={nrt}: {exc}"
+            failures.append(msg)
+            print(f"[failed] {msg}")
 
-    for source_set, graph_paths in discovered.items():
-        print(f"\n=== Source set: {source_set} ({len(graph_paths)} files) ===")
-        if args.limit is not None:
-            graph_paths = graph_paths[: args.limit]
+    eval_results_path = output_root / "eval_results.json"
+    eval_summary_path = output_root / "eval_summary.csv"
+    eval_manifest_path = output_root / "eval_manifest.json"
 
-        for graph_path in graph_paths:
-            stem = graph_path.stem
-            try:
-                _adj, nodes, metadata = get_data_from_json(str(graph_path))
-                node_ids = [n.node_id for n in nodes]
-                idx = _build_index_sets(nodes)
-                emb_idx = idx["embedding"]
-                prompt_tokens = [str(t) for t in (metadata.get("prompt_tokens") or [])]
-                if not prompt_tokens:
-                    raise ValueError("metadata.prompt_tokens missing or empty")
-
-                row = _match_shap_row(stem, metadata, by_prompt, by_index)
-                if row is None:
-                    raise ValueError("no matching SHAP row (prompt / pNN index)")
-                raw_shap = row.get("raw_shap")
-                if not isinstance(raw_shap, list) or not raw_shap:
-                    raise ValueError("matched SHAP row has no raw_shap list")
-
-                for norm_method in normalizations:
-                    normalized = normalize_shap_values_for_prune(
-                        prompt_tokens,
-                        [float(x) for x in raw_shap],
-                        norm_method,  # type: ignore[arg-type]
-                        masker_keep_prefix=eff_keep_prefix,
-                        entmax_alpha=args.entmax_alpha,
-                    )
-                    token_weights = _token_weights_for_embeddings(normalized, node_ids, emb_idx)
-
-                    norm_dir = output_root / source_set / norm_method
-                    norm_dir.mkdir(parents=True, exist_ok=True)
-
-                    for node_inf_thr in node_inf_thresholds:
-                        for node_rel_thr in node_rel_thresholds:
-                            total_runs += 1
-                            try:
-                                prune_graph = prune_graph_pipeline(
-                                    json_path=str(graph_path),
-                                    logit_weights=args.logit_weights,
-                                    token_weights=token_weights,
-                                    node_influence_threshold=node_inf_thr,
-                                    node_relevance_threshold=node_rel_thr,
-                                    edge_threshold=edge_threshold,
-                                    keep_all_tokens_and_logits=args.keep_all_tokens_and_logits,
-                                    filter_act_density=args.filter_act_density,
-                                    act_density_lb=args.act_density_lb,
-                                    act_density_ub=args.act_density_ub,
-                                )
-                                prune_metrics = _compute_prune_metrics(prune_graph)
-                                thr_dir = norm_dir / f"node_inf_{node_inf_thr:.1f}_rel_{node_rel_thr:.1f}"
-                                thr_dir.mkdir(parents=True, exist_ok=True)
-                                prune_graph_path = thr_dir / f"{stem}_prune_graph.pt"
-                                save_prune_graph(prune_graph, str(prune_graph_path))
-
-                                rec = {
-                                    "source_set": source_set,
-                                    "graph_file": graph_path.name,
-                                    "graph_stem": stem,
-                                    "shap_json": str(shap_path),
-                                    "shap_row_index": row.get("index"),
-                                    "masker_keep_prefix": eff_keep_prefix,
-                                    "normalize_method": norm_method,
-                                    "node_influence_threshold": node_inf_thr,
-                                    "node_relevance_threshold": node_rel_thr,
-                                    "edge_threshold": edge_threshold,
-                                    "num_nodes": prune_graph.num_nodes,
-                                    "num_edges": prune_graph.num_edges,
-                                    **prune_metrics,
-                                    "prune_graph_path": str(prune_graph_path),
-                                }
-                                rows_out.append(rec)
-                                ok_runs += 1
-                            except Exception as inner_exc:
-                                msg = (
-                                    f"{source_set}/{graph_path.name} "
-                                    f"norm={norm_method} "
-                                    f"node_inf={node_inf_thr} node_rel={node_rel_thr}: {inner_exc}"
-                                )
-                                failures.append(msg)
-                                print(f"[failed] {msg}")
-            except Exception as exc:
-                msg = f"{source_set}/{graph_path.name}: {exc}"
-                failures.append(msg)
-                print(f"[failed] {msg}")
-
-    source_out = output_root / (source_sets[0] if len(source_sets) == 1 else "multi")
-    if len(source_sets) == 1:
-        source_out = output_root / source_sets[0]
-    else:
-        source_out = output_root / "multi"
-
-    source_out.mkdir(parents=True, exist_ok=True)
-    results_path = source_out / "results.json"
-    summary_path = source_out / "summary.csv"
-    manifest_path = source_out / "manifest.json"
-
-    _write_json(results_path, rows_out)
+    _write_json(eval_results_path, rows_out)
 
     if rows_out:
-        fieldnames = list(rows_out[0].keys())
-        with summary_path.open("w", encoding="utf-8", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=fieldnames)
+        csv_fields = [k for k in rows_out[0].keys() if k != "token_weights"]
+        with eval_summary_path.open("w", encoding="utf-8", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=csv_fields, extrasaction="ignore")
             w.writeheader()
             w.writerows(rows_out)
 
-    manifest = {
-        "graphs_root": str(graphs_root),
+    eval_manifest = {
+        "source_manifest": str(manifest_path),
         "output_root": str(output_root),
-        "shap_values_json": str(shap_path),
-        "source_sets": list(source_sets),
-        "masker_keep_prefix": eff_keep_prefix,
-        "eval_normalizations": list(normalizations),
-        "sweep_node_start": float(args.sweep_node_start),
-        "sweep_node_end": float(args.sweep_node_end),
-        "sweep_node_step": float(args.sweep_node_step),
-        "sweep_node_influence_start": args.sweep_node_influence_start,
-        "sweep_node_influence_end": args.sweep_node_influence_end,
-        "sweep_node_influence_step": args.sweep_node_influence_step,
-        "sweep_node_relevance_start": args.sweep_node_relevance_start,
-        "sweep_node_relevance_end": args.sweep_node_relevance_end,
-        "sweep_node_relevance_step": args.sweep_node_relevance_step,
-        "node_influence_thresholds": node_inf_thresholds,
-        "node_relevance_thresholds": node_rel_thresholds,
-        "edge_threshold": edge_threshold,
-        "logit_weights": args.logit_weights,
         "limit": args.limit,
-        "total_grid_cells_attempted": total_runs,
-        "successful_runs": ok_runs,
-        "n_result_rows": len(rows_out),
-        "results_json": str(results_path),
-        "summary_csv": str(summary_path),
+        "skip_relevance_conservation": args.skip_relevance_conservation,
+        "skip_token_faithfulness": args.skip_token_faithfulness,
+        "skip_pruning_divergence": args.skip_pruning_divergence,
+        "skip_influence_relevance_agreement": args.skip_influence_relevance_agreement,
+        "n_records_processed": len(rows_out),
+        "n_failures": len(failures),
+        "results_json": str(eval_results_path),
+        "summary_csv": str(eval_summary_path),
         "failures": failures,
     }
-    _write_json(manifest_path, manifest)
+    _write_json(eval_manifest_path, eval_manifest)
 
-    print("\n=== SHAP JSON sweep summary ===")
-    print(f"shap_values_json: {shap_path}")
+    print("\n=== Eval summary ===")
+    print(f"manifest: {manifest_path}")
     print(f"output: {output_root}")
-    print(f"result rows: {len(rows_out)} (ok cells: {ok_runs}, failures: {len(failures)})")
-    print(f"wrote {results_path}")
-    print(f"wrote {summary_path}")
-    print(f"wrote {manifest_path}")
+    print(f"rows: {len(rows_out)} (failures: {len(failures)})")
+    print(f"wrote {eval_results_path}")
+    print(f"wrote {eval_summary_path}")
+    print(f"wrote {eval_manifest_path}")
     if failures:
         print("\nFailures (first 20):")
         for item in failures[:20]:
             print(f"- {item}")
-    if ok_runs == 0:
-        raise RuntimeError("No successful prune+score runs in SHAP JSON sweep mode.")
-
-
-def run(args: argparse.Namespace) -> None:
-    run_shap_json_sweep(args)
-
-
-def _parse_logit_weights(value: str) -> LogitWeightMode:
-    if value not in ("probs", "target"):
-        raise argparse.ArgumentTypeError("--logit-weights must be 'probs' or 'target'.")
-    return value  # type: ignore[return-value]
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Batch-run prune_graph_pipeline with SHAP token weights for graph JSON files "
-            "in demos/temp_graph_files/<source_set>. "
-            "Sweeps node_influence_threshold × node_relevance_threshold using precomputed "
-            "raw_shap from JSON (no HF model). "
-            "Rows include PruneGraph-compatible completeness metrics and mean influence/relevance stats."
+            "Compute evaluation metrics on PruneGraphs produced by "
+            "eval/prune_graphs.py. Reads the prune sweep manifest.json and "
+            "emits eval_results.json + eval_summary.csv."
         )
     )
     parser.add_argument(
-        "--graphs-root",
-        default="demos/temp_graph_files",
-        help="Root folder containing source-set graph subdirectories.",
-    )
-    parser.add_argument(
-        "--source-sets",
-        nargs="+",
-        default=None,
-        help=(
-            "Source-set subdirectories under --graphs-root. "
-            "Default: clt-hp."
-        ),
+        "--manifest",
+        required=True,
+        help="Path to manifest.json produced by eval/prune_graphs.py.",
     )
     parser.add_argument(
         "--output-root",
-        default="eval_outputs/prune/subgraph",
-        help="Output root (default: eval_outputs/prune/subgraph).",
-    )
-    parser.add_argument(
-        "--shap-values-json",
-        type=str,
-        default=str(DEFAULT_SHAP_VALUES_JSON),
-        help=(
-            "Path to shap_values.json (raw_shap per prompt). "
-            "Runs normalization grid and 2D node influence/relevance threshold sweep."
-        ),
-    )
-    parser.add_argument(
-        "--eval-normalizations",
-        nargs="+",
-        choices=["softmax", "entmax", "entmax15", "sparsemax"],
-        default=list(DEFAULT_SHAP_EVAL_NORMALIZATIONS),
-        help="Token-weight normalizations in sweep mode (default: softmax entmax entmax15).",
-    )
-    parser.add_argument(
-        "--masker-keep-prefix",
-        type=int,
         default=None,
-        help=(
-            "SHAP masker keep_prefix for normalization (first k tokens pinned). "
-            "Default: use top-level masker_keep_prefix from --shap-values-json if set."
-        ),
+        help="Output directory (defaults to <manifest_dir>/eval).",
+    )
+    parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--log-every", type=int, default=20)
+    parser.add_argument(
+        "--skip-relevance-conservation",
+        action="store_true",
+        help="Skip metric 1 (relevance_conservation_rate).",
     )
     parser.add_argument(
-        "--sweep-node-start",
-        type=float,
-        default=0.0,
-        help=(
-            "Default sweep start for both node influence and relevance axes (inclusive). "
-            "Overridden per axis by --sweep-node-influence-* / --sweep-node-relevance-* when set."
-        ),
+        "--skip-token-faithfulness",
+        action="store_true",
+        help="Skip metric 2 (token_attribution_faithfulness).",
     )
     parser.add_argument(
-        "--sweep-node-end",
-        type=float,
-        default=1.0,
-        help="Default sweep end for both node axes (inclusive); per-axis overrides available.",
+        "--skip-pruning-divergence",
+        action="store_true",
+        help="Skip metric 3 (asymmetric_pruning_divergence).",
     )
     parser.add_argument(
-        "--sweep-node-step",
-        type=float,
-        default=0.1,
-        help="Default sweep step for both node axes; per-axis overrides available.",
+        "--skip-influence-relevance-agreement",
+        action="store_true",
+        help="Skip metric 5 (influence_relevance_agreement).",
     )
-    parser.add_argument(
-        "--sweep-node-influence-start",
-        type=float,
-        default=None,
-        help="Override sweep start for node_influence_threshold only (else --sweep-node-start).",
-    )
-    parser.add_argument(
-        "--sweep-node-influence-end",
-        type=float,
-        default=None,
-        help="Override sweep end for node_influence_threshold only (else --sweep-node-end).",
-    )
-    parser.add_argument(
-        "--sweep-node-influence-step",
-        type=float,
-        default=None,
-        help="Override sweep step for node_influence_threshold only (else --sweep-node-step).",
-    )
-    parser.add_argument(
-        "--sweep-node-relevance-start",
-        type=float,
-        default=None,
-        help="Override sweep start for node_relevance_threshold only (else --sweep-node-start).",
-    )
-    parser.add_argument(
-        "--sweep-node-relevance-end",
-        type=float,
-        default=None,
-        help="Override sweep end for node_relevance_threshold only (else --sweep-node-end).",
-    )
-    parser.add_argument(
-        "--sweep-node-relevance-step",
-        type=float,
-        default=None,
-        help="Override sweep step for node_relevance_threshold only (else --sweep-node-step).",
-    )
-    parser.add_argument(
-        "--entmax-alpha",
-        type=float,
-        default=1.25,
-        help="Alpha used for 'entmax' normalization (run separately for 1.25 and 1.5).",
-    )
-    parser.add_argument(
-        "--logit-weights",
-        type=_parse_logit_weights,
-        default="target",
-    )
-    parser.add_argument(
-        "--edge-threshold",
-        type=float,
-        default=0.95,
-        help="Shared edge influence/relevance threshold in [0, 1] (default: 0.95).",
-    )
-    parser.add_argument("--keep-all-tokens-and-logits", action="store_true")
-    parser.add_argument("--filter-act-density", action="store_true")
-    parser.add_argument("--act-density-lb", type=float, default=2e-5)
-    parser.add_argument("--act-density-ub", type=float, default=0.1)
-    parser.add_argument("--limit", type=int, default=None, help="Optional max files per source set.")
     return parser
 
 
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
-    if args.source_sets is None:
-        args.source_sets = list(DEFAULT_SOURCE_SETS)
-    run(args)
+    run_eval(args)
 
 
 if __name__ == "__main__":
