@@ -25,6 +25,25 @@ from summarization.utils import _build_index_sets, _node_from_json_dict
 logger = logging.getLogger(__name__)
 
 LogitWeightMode = Literal["probs", "target"]
+CombineMethod = Literal["geometric", "arithmetic", "harmonic"]
+NormalizationMethod = Literal["min_max", "rank"]
+
+
+def _combine_scores(
+    method: CombineMethod,
+    influence: torch.Tensor,
+    relevance: torch.Tensor,
+    normalization: NormalizationMethod,
+    alpha: float,
+    eps: float = 1e-10,
+) -> torch.Tensor:
+    if method == "geometric":
+        return combine_scores_geometric(influence, relevance, normalization=normalization, alpha=alpha, eps=eps)
+    if method == "arithmetic":
+        return combined_scores_arithmetic(influence, relevance, normalization=normalization, alpha=alpha, eps=eps)
+    if method == "harmonic":
+        return combined_scores_harmonic(influence, relevance, normalization=normalization, alpha=alpha, eps=eps)
+    raise ValueError(f"Invalid combine_method: {method}")
 
 
 def _nodes_from_payload(raw_nodes: Any) -> list[Node]:
@@ -208,10 +227,11 @@ def prune_combined(
     token_weights: list[float] | None = None,
     logits_seed: torch.Tensor | None = None,
     emb_weights_seed: torch.Tensor | None = None,
-    node_influence_threshold: float = 0.8,
-    node_relevance_threshold: float = 0.8,
-    edge_influence_threshold: float = 0.98,
-    edge_relevance_threshold: float = 0.98,
+    node_threshold: float = 0.8,
+    edge_threshold: float = 0.98,
+    combine_method: CombineMethod = "geometric",
+    normalization: NormalizationMethod = "rank",
+    alpha: float = 0.5,
     keep_all_tokens_and_logits: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     n = adj.shape[0]
@@ -251,9 +271,8 @@ def prune_combined(
     node_inf = compute_node_influence(adj, logits_seed_t)
     node_rel = compute_node_relevance(adj, emb_weights_t)
 
-    node_inf_mask = node_inf >= find_threshold(node_inf, node_influence_threshold)
-    node_rel_mask = node_rel >= find_threshold(node_rel, node_relevance_threshold)
-    node_mask = (node_inf_mask & node_rel_mask).bool()
+    node_score = _combine_scores(combine_method, node_inf, node_rel, normalization, alpha)
+    node_mask = (node_score >= find_threshold(node_score, node_threshold)).bool()
 
     if keep_all_tokens_and_logits:
         for i in idx["embedding"]:
@@ -269,14 +288,16 @@ def prune_combined(
     pruned[:, ~node_mask] = 0
     edge_inf = compute_edge_influence(pruned, logits_seed_t)
     edge_rel = compute_edge_relevance(pruned, emb_weights_t)
-    edge_inf_mask = edge_inf >= find_threshold(edge_inf.flatten(), edge_influence_threshold)
-    edge_rel_mask = edge_rel >= find_threshold(edge_rel.flatten(), edge_relevance_threshold)
-    edge_mask = (edge_inf_mask & edge_rel_mask).bool()
+    # Flatten before combining: rank-normalization needs a single 1D index space across all edges.
+    edge_score_flat = _combine_scores(
+        combine_method, edge_inf.flatten(), edge_rel.flatten(), normalization, alpha
+    )
+    edge_score = edge_score_flat.reshape(edge_inf.shape)
+    edge_mask = (edge_score >= find_threshold(edge_score_flat, edge_threshold)).bool()
 
     feature_idx = torch.tensor(idx["feature"], dtype=torch.long, device=adj.device)
     non_boundary = torch.tensor(idx["feature"] + idx["error"], dtype=torch.long, device=adj.device)
     node_mask = remove_dangling_nodes(node_mask, edge_mask, feature_idx, non_boundary)
-
 
     return node_mask, edge_mask, node_inf, node_rel, edge_inf, edge_rel
 
@@ -287,12 +308,11 @@ def prune_attr_graph(
     token_weights: list[float] | None = None,
     logits_seed: torch.Tensor | None = None,
     emb_weights_seed: torch.Tensor | None = None,
-    node_threshold: float | None = None,
-    edge_threshold: float | None = None,
-    node_influence_threshold: float = 0.8,
-    node_relevance_threshold: float = 0.8,
-    edge_influence_threshold: float = 0.98,
-    edge_relevance_threshold: float = 0.98,
+    node_threshold: float = 0.8,
+    edge_threshold: float = 0.98,
+    combine_method: CombineMethod = "geometric",
+    normalization: NormalizationMethod = "rank",
+    alpha: float = 0.5,
     keep_all_tokens_and_logits: bool = True,
     filter_act_density: bool = False,
     act_density_lb: float = 2e-5,
@@ -301,17 +321,8 @@ def prune_attr_graph(
     """
     Prune from a canonical ``AttrGraph``.
     """
-    if node_threshold is not None:
-        node_influence_threshold = node_threshold
-        node_relevance_threshold = node_threshold
-    if edge_threshold is not None:
-        edge_influence_threshold = edge_threshold
-        edge_relevance_threshold = edge_threshold
-
-    _validate_threshold("node_influence_threshold", node_influence_threshold)
-    _validate_threshold("node_relevance_threshold", node_relevance_threshold)
-    _validate_threshold("edge_influence_threshold", edge_influence_threshold)
-    _validate_threshold("edge_relevance_threshold", edge_relevance_threshold)
+    _validate_threshold("node_threshold", node_threshold)
+    _validate_threshold("edge_threshold", edge_threshold)
 
     nodes = [replace(n) for n in attr_graph.nodes]
     node_ids = [n.node_id for n in nodes]
@@ -328,10 +339,11 @@ def prune_attr_graph(
         token_weights=token_weights,
         logits_seed=logits_seed,
         emb_weights_seed=emb_weights_seed,
-        node_influence_threshold=node_influence_threshold,
-        node_relevance_threshold=node_relevance_threshold,
-        edge_influence_threshold=edge_influence_threshold,
-        edge_relevance_threshold=edge_relevance_threshold,
+        node_threshold=node_threshold,
+        edge_threshold=edge_threshold,
+        combine_method=combine_method,
+        normalization=normalization,
+        alpha=alpha,
         keep_all_tokens_and_logits=keep_all_tokens_and_logits,
     )
 
@@ -423,12 +435,11 @@ def prune_graph_pipeline(
     json_path: str,
     logit_weights: LogitWeightMode,
     token_weights: list[float] | None = None,
-    node_threshold: float | None = None,
-    edge_threshold: float | None = None,
-    node_influence_threshold: float = 0.8,
-    node_relevance_threshold: float = 0.8,
-    edge_influence_threshold: float = 0.98,
-    edge_relevance_threshold: float = 0.98,
+    node_threshold: float = 0.8,
+    edge_threshold: float = 0.98,
+    combine_method: CombineMethod = "geometric",
+    normalization: NormalizationMethod = "rank",
+    alpha: float = 0.5,
     keep_all_tokens_and_logits: bool = True,
     filter_act_density: bool = False,
     act_density_lb: float = 2e-5,
@@ -441,10 +452,9 @@ def prune_graph_pipeline(
         token_weights=token_weights,
         node_threshold=node_threshold,
         edge_threshold=edge_threshold,
-        node_influence_threshold=node_influence_threshold,
-        node_relevance_threshold=node_relevance_threshold,
-        edge_influence_threshold=edge_influence_threshold,
-        edge_relevance_threshold=edge_relevance_threshold,
+        combine_method=combine_method,
+        normalization=normalization,
+        alpha=alpha,
         keep_all_tokens_and_logits=keep_all_tokens_and_logits,
         filter_act_density=filter_act_density,
         act_density_lb=act_density_lb,
@@ -459,10 +469,11 @@ def prune_masks_from_attr_graph(
     logit_weights: torch.Tensor | None = None,
     logit_weights_mode: LogitWeightMode | None = "probs",
     token_weights_list: list[float] | None = None,
-    node_influence_threshold: float = 0.8,
-    node_relevance_threshold: float = 0.8,
-    edge_influence_threshold: float = 0.98,
-    edge_relevance_threshold: float = 0.98,
+    node_threshold: float = 0.8,
+    edge_threshold: float = 0.98,
+    combine_method: CombineMethod = "geometric",
+    normalization: NormalizationMethod = "rank",
+    alpha: float = 0.5,
     keep_all_tokens_and_logits: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Shared pruning step returning masks and score tensors (used by ``circuit_tracer.graph.prune_graph``)."""
@@ -483,10 +494,11 @@ def prune_masks_from_attr_graph(
         token_weights=tw_list,
         logits_seed=logits_seed,
         emb_weights_seed=emb_seed,
-        node_influence_threshold=node_influence_threshold,
-        node_relevance_threshold=node_relevance_threshold,
-        edge_influence_threshold=edge_influence_threshold,
-        edge_relevance_threshold=edge_relevance_threshold,
+        node_threshold=node_threshold,
+        edge_threshold=edge_threshold,
+        combine_method=combine_method,
+        normalization=normalization,
+        alpha=alpha,
         keep_all_tokens_and_logits=keep_all_tokens_and_logits,
     )
 
@@ -496,10 +508,8 @@ if __name__ == "__main__":
         json_path="demos/temp_graph_files/austin_clt.json",
         logit_weights="target",
         token_weights=[0, 0, 0, 0, 1 / 3, 0, 0, 1 / 3, 0, 1 / 3, 0],
-        node_influence_threshold=1,
-        node_relevance_threshold=1,
-        edge_influence_threshold=1,
-        edge_relevance_threshold=1,
+        node_threshold=1,
+        edge_threshold=1,
         keep_all_tokens_and_logits=False,
     )
 

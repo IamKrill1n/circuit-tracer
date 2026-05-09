@@ -190,17 +190,28 @@ def run_single_graph(
         nodes=nodes,
         logit_weights=logit_weights,  # type: ignore[arg-type]
         token_weights=token_weights,
-        node_influence_threshold=node_threshold,
-        node_relevance_threshold=node_threshold,
-        edge_influence_threshold=edge_threshold,
-        edge_relevance_threshold=edge_threshold,
+        node_threshold=node_threshold,
+        edge_threshold=edge_threshold,
+        combine_method=combined_scores_method,  # type: ignore[arg-type]
+        normalization=normalization,  # type: ignore[arg-type]
+        alpha=alpha,
         keep_all_tokens_and_logits=True,
     )
 
-    feature_influence = _to_numpy(node_influence[feature_indices])
-    feature_relevance = _to_numpy(node_relevance[feature_indices])
-    relevance_cutoff = float(find_threshold(node_relevance, node_threshold).item())
-    influence_cutoff = float(find_threshold(node_influence, node_threshold).item())
+    n_all = len(node_influence)
+    # Rank-percentile: spread scores uniformly to reveal correlation structure.
+    # Raw scores are both heavily zero-inflated; linear scale hides everything near (0,0).
+    def _rank_pct(t: torch.Tensor, indices: list[int]) -> np.ndarray:
+        ranks = torch.argsort(torch.argsort(t)).float() / max(n_all - 1, 1)
+        return _to_numpy(ranks[indices])
+
+    feature_influence = _rank_pct(node_influence, feature_indices)
+    feature_relevance = _rank_pct(node_relevance, feature_indices)
+    # Thresholds in rank space: keep top (1-threshold) fraction, so cutoff percentile = threshold.
+    relevance_cutoff = node_threshold
+    influence_cutoff = node_threshold
+
+    corr = float(np.corrcoef(feature_relevance, feature_influence)[0, 1])
 
     output_dir = output_root / source_set
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -229,14 +240,9 @@ def run_single_graph(
         label=f"influence threshold={node_threshold:.2f}",
     )
 
-    if _should_use_log_scale(feature_relevance):
-        ax.set_xscale("log")
-    if _should_use_log_scale(feature_influence):
-        ax.set_yscale("log")
-
-    ax.set_xlabel("Feature node relevance")
-    ax.set_ylabel("Feature node influence")
-    ax.set_title(f"{source_set}: {graph_path.stem}")
+    ax.set_xlabel("Feature node relevance (rank percentile)")
+    ax.set_ylabel("Feature node influence (rank percentile)")
+    ax.set_title(f"{source_set}: {graph_path.stem}  [r={corr:.2f}]")
     ax.grid(alpha=0.25, linestyle="--", linewidth=0.5)
     ax.legend(loc="best", fontsize=8)
     fig.tight_layout()

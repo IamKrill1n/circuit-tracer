@@ -15,8 +15,8 @@ pruning algorithm from Anthropic's:
    pruning with the user's token weights vs uniform token weights at the same
    thresholds. High = token weights are actually steering pruning.
 5. influence_relevance_agreement: Pearson correlation between node_influence
-   and node_relevance over kept feature nodes. Low correlation = the two
-   thresholds are filtering on genuinely orthogonal signals.
+   and node_relevance over kept feature nodes. A diagnostic of whether the
+   two flow signals carry independent information on the surviving features.
 """
 
 from __future__ import annotations
@@ -98,17 +98,21 @@ class GraphCache:
     def uniform_prune(
         self,
         path: str,
-        node_influence_threshold: float,
-        node_relevance_threshold: float,
+        node_threshold: float,
         edge_threshold: float,
+        combine_method: str,
+        normalization: str,
+        alpha: float,
         logit_weights: str,
         keep_all_tokens_and_logits: bool,
     ) -> PruneGraph:
         key = (
             path,
-            float(node_influence_threshold),
-            float(node_relevance_threshold),
+            float(node_threshold),
             float(edge_threshold),
+            str(combine_method),
+            str(normalization),
+            float(alpha),
             str(logit_weights),
             bool(keep_all_tokens_and_logits),
         )
@@ -118,9 +122,11 @@ class GraphCache:
                 ag,
                 logit_weights=logit_weights,  # type: ignore[arg-type]
                 token_weights=None,
-                node_influence_threshold=node_influence_threshold,
-                node_relevance_threshold=node_relevance_threshold,
+                node_threshold=node_threshold,
                 edge_threshold=edge_threshold,
+                combine_method=combine_method,  # type: ignore[arg-type]
+                normalization=normalization,  # type: ignore[arg-type]
+                alpha=alpha,
                 keep_all_tokens_and_logits=keep_all_tokens_and_logits,
             )
         return self._uniform_prune[key]
@@ -312,9 +318,11 @@ def _evaluate_record(
     if not skip_pruning_divergence:
         uniform_pg = cache.uniform_prune(
             graph_path,  # set above when needs_graph
-            float(rec["node_influence_threshold"]),
-            float(rec["node_relevance_threshold"]),
+            float(rec["node_threshold"]),
             float(rec["edge_threshold"]),
+            str(rec.get("combine_method", "geometric")),
+            str(rec.get("score_normalization", "rank")),
+            float(rec.get("alpha", 0.5)),
             str(rec["logit_weights"]),
             bool(rec.get("keep_all_tokens_and_logits", False)),
         )
@@ -362,8 +370,7 @@ def run_eval(args: argparse.Namespace) -> None:
     for i, rec in enumerate(records):
         stem = rec.get("graph_stem", rec.get("graph_file", "?"))
         norm = rec.get("normalize_method", "?")
-        nit = rec.get("node_influence_threshold")
-        nrt = rec.get("node_relevance_threshold")
+        nt = rec.get("node_threshold")
         try:
             metrics = _evaluate_record(
                 rec,
@@ -377,15 +384,14 @@ def run_eval(args: argparse.Namespace) -> None:
             rows_out.append(row)
             if (i + 1) % max(1, args.log_every) == 0:
                 print(
-                    f"[{i + 1}/{n}] {stem} norm={norm} "
-                    f"node_inf={nit} node_rel={nrt} "
+                    f"[{i + 1}/{n}] {stem} norm={norm} node={nt} "
                     f"rcr={metrics['relevance_conservation_rate']} "
                     f"taf={metrics['token_attribution_faithfulness']} "
                     f"apd={metrics['asymmetric_pruning_divergence']} "
                     f"ira={metrics['influence_relevance_agreement']}"
                 )
         except Exception as exc:
-            msg = f"{stem} norm={norm} node_inf={nit} node_rel={nrt}: {exc}"
+            msg = f"{stem} norm={norm} node={nt}: {exc}"
             failures.append(msg)
             print(f"[failed] {msg}")
 

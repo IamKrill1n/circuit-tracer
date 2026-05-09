@@ -97,10 +97,8 @@ def test_prune_combined_shapes_and_scores_subset(tiny_graph):
         nodes=nodes,
         logit_weights="target",
         token_weights=[1.0],
-        node_influence_threshold=0.9,
-        node_relevance_threshold=0.9,
-        edge_influence_threshold=0.9,
-        edge_relevance_threshold=0.9,
+        node_threshold=0.9,
+        edge_threshold=0.9,
         keep_all_tokens_and_logits=False,
     )
     assert node_mask.dtype == torch.bool
@@ -119,10 +117,8 @@ def test_prune_combined_keep_all_logits(tiny_graph):
         nodes=nodes,
         logit_weights="probs",
         token_weights=[1.0],
-        node_influence_threshold=0.99,
-        node_relevance_threshold=0.99,
-        edge_influence_threshold=0.99,
-        edge_relevance_threshold=0.99,
+        node_threshold=0.99,
+        edge_threshold=0.99,
         keep_all_tokens_and_logits=True,
     )
     assert bool(node_mask[0].item()) is True
@@ -142,10 +138,8 @@ def test_prune_combined_target_without_target_raises(tiny_graph):
             bad_nodes,
             logit_weights="target",
             token_weights=[1.0],
-            node_influence_threshold=0.9,
-            node_relevance_threshold=0.9,
-            edge_influence_threshold=0.9,
-            edge_relevance_threshold=0.9,
+            node_threshold=0.9,
+            edge_threshold=0.9,
             keep_all_tokens_and_logits=False,
         )
 
@@ -158,10 +152,8 @@ def test_prune_combined_token_weights_len_mismatch_raises(tiny_graph):
             nodes=nodes,
             logit_weights="target",
             token_weights=[0.5, 0.5],
-            node_influence_threshold=0.9,
-            node_relevance_threshold=0.9,
-            edge_influence_threshold=0.9,
-            edge_relevance_threshold=0.9,
+            node_threshold=0.9,
+            edge_threshold=0.9,
             keep_all_tokens_and_logits=False,
         )
 
@@ -204,7 +196,7 @@ def test_prune_graph_pipeline_threshold_validation(monkeypatch, tiny_graph):
 
     monkeypatch.setattr("summarization.attr_graph.get_data_from_json", fake_loader)
 
-    with pytest.raises(ValueError, match="node_influence_threshold"):
+    with pytest.raises(ValueError, match="node_threshold"):
         prune_graph_pipeline(
             json_path="dummy.json",
             logit_weights="target",

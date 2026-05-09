@@ -95,10 +95,8 @@ def test_prune_masks_from_attr_graph_accepts_native_seeds(tmp_path) -> None:
         ag,
         token_weights=emb,
         logit_weights=logits_seed,
-        node_influence_threshold=1.0,
-        node_relevance_threshold=1.0,
-        edge_influence_threshold=1.0,
-        edge_relevance_threshold=1.0,
+        node_threshold=1.0,
+        edge_threshold=1.0,
         keep_all_tokens_and_logits=True,
     )
     assert node_mask.shape == (num_nodes,)
