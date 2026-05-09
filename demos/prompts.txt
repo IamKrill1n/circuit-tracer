@@ -17,7 +17,6 @@ The saying goes: Nose is to smell as tongue is to taste
 The saying goes: Rain is to wet as sun is to dry
 The saying goes: Mother is to daughter as father is to son
 The saying goes: Apple is to fruit as carrot is to vegetable
-The saying goes: Ship is to sea as train is to track
 The saying goes: Needle is to sew as hammer is to hit
 The saying goes: Ear is to hearing as eye is to vision
 The saying goes: Winter is to snow as summer is to sun
@@ -35,12 +34,10 @@ The saying goes: Cloud is to sky as fish is to water
 The saying goes: Bird is to nest as bee is to hive
 The saying goes: Heart is to blood as lung is to air
 The saying goes: Tree is to leaf as flower is to petal
-The saying goes: Bread is to butter as coffee is to sugar
 The saying goes: Cat is to fur as bird is to feather
 The saying goes: Doctor is to medicine as farmer is to crops
 The saying goes: Fork is to eat as pen is to write
 The saying goes: Athlete is to sport as artist is to art
-The saying goes: River is to water as road is to cars
 The saying goes: Shoe is to foot as hat is to head
 The saying goes: Brain is to think as stomach is to digest
 The saying goes: Chair is to sit as bed is to sleep
@@ -89,7 +86,6 @@ The saying goes: Cloud is to sky as leaf is to tree
 The saying goes: Eye is to blink as mouth is to chew
 The saying goes: Farmer is to field as miner is to mine
 The saying goes: Candle is to wax as torch is to flame
-The saying goes: Seed is to grow as stone is to stay
 The saying goes: Flower is to bloom as fruit is to ripen
 The saying goes: Lock is to key as puzzle is to solution
 The saying goes: Music is to sound as painting is to color
