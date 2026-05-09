@@ -1,33 +1,33 @@
-from typing import Any, NamedTuple
+"""Graph data structures for attribution results."""
+
+from __future__ import annotations
+
+from typing import NamedTuple
+import warnings
 
 import torch
+
 from circuit_tracer.utils.tl_nnsight_mapping import (
     convert_nnsight_config_to_transformerlens,
     UnifiedConfig,
 )
 from circuit_tracer.utils import get_default_device
-
-
-def _coerce_graph_cfg(cfg: Any) -> UnifiedConfig:
-    """Normalize serialized / HF / dict configs without double-converting ``UnifiedConfig``."""
-    if isinstance(cfg, UnifiedConfig):
-        return cfg
-    if isinstance(cfg, dict):
-        return UnifiedConfig.from_dict(cfg)
-    return convert_nnsight_config_to_transformerlens(cfg)
+from circuit_tracer.attribution.targets import LogitTarget
 
 
 class Graph:
     input_string: str
     input_tokens: torch.Tensor
-    logit_tokens: torch.Tensor
+    logit_targets: list[LogitTarget]
     active_features: torch.Tensor
     adjacency_matrix: torch.Tensor
     selected_features: torch.Tensor
     activation_values: torch.Tensor
     logit_probabilities: torch.Tensor
+    vocab_size: int
     cfg: UnifiedConfig
     scan: str | list[str] | None
+    n_pos: int
 
     def __init__(
         self,
@@ -36,11 +36,12 @@ class Graph:
         active_features: torch.Tensor,
         adjacency_matrix: torch.Tensor,
         cfg,
-        logit_tokens: torch.Tensor,
-        logit_probabilities: torch.Tensor,
         selected_features: torch.Tensor,
         activation_values: torch.Tensor,
+        logit_targets: list[LogitTarget],
+        logit_probabilities: torch.Tensor,
         scan: str | list[str] | None = None,
+        vocab_size: int | None = None,
     ):
         """
         A graph object containing the adjacency matrix describing the direct effect of each
@@ -52,30 +53,35 @@ class Graph:
 
         Args:
             input_string (str): The input string attributed.
-            input_tokens (List[str]): The input tokens attributed.
+            input_tokens (torch.Tensor): The input tokens attributed.
             active_features (torch.Tensor): A tensor of shape (n_active_features, 3)
                 containing the indices (layer, pos, feature_idx) of the non-zero features
                 of the model on the given input string.
             adjacency_matrix (torch.Tensor): The adjacency matrix. Organized as
                 [active_features, error_nodes, embed_nodes, logit_nodes], where there are
                 model.cfg.n_layers * len(input_tokens) error nodes, len(input_tokens) embed
-                nodes, len(logit_tokens) logit nodes. The rows represent target nodes, while
+                nodes, len(logit_targets) logit nodes. The rows represent target nodes, while
                 columns represent source nodes.
-            cfg (HookedTransformerConfig): The cfg of the model.
-            logit_tokens (List[str]): The logit tokens attributed from.
-            logit_probabilities (torch.Tensor): The probabilities of each logit token, given
-                the input string.
+            cfg: The cfg of the model.
+            selected_features (torch.Tensor): Indices into active_features for selected nodes.
+            activation_values (torch.Tensor): Activation values for selected features.
+            logit_targets: List of LogitTarget records describing each logit target.
+            logit_probabilities: Tensor of logit target probabilities/weights.
             scan (Union[str,List[str]] | None, optional): The identifier of the
                 transcoders used in the graph. Without a scan, the graph cannot be uploaded
                 (since we won't know what transcoders were used). Defaults to None
+            vocab_size: Vocabulary size. If not provided, defaults to cfg.d_vocab.
         """
+        self.logit_targets = logit_targets
+        self.logit_probabilities = logit_probabilities
+        self.vocab_size = vocab_size if vocab_size is not None else cfg.d_vocab
+
         self.input_string = input_string
         self.adjacency_matrix = adjacency_matrix
-        self.cfg = _coerce_graph_cfg(cfg)
+        # Convert cfg to UnifiedConfig (handles both HookedTransformerConfig and NNSight configs)
+        self.cfg = convert_nnsight_config_to_transformerlens(cfg)
         self.n_pos = len(input_tokens)
         self.active_features = active_features
-        self.logit_tokens = logit_tokens
-        self.logit_probabilities = logit_probabilities
         self.input_tokens = input_tokens
         if scan is None:
             print("Graph loaded without scan to identify it. Uploading will not be possible.")
@@ -91,8 +97,40 @@ class Graph:
         """
         self.adjacency_matrix = self.adjacency_matrix.to(device)
         self.active_features = self.active_features.to(device)
-        self.logit_tokens = self.logit_tokens.to(device)
+        # logit_targets is list[LogitTarget], no device transfer needed
         self.logit_probabilities = self.logit_probabilities.to(device)
+
+    @property
+    def logit_token_ids(self) -> torch.Tensor:
+        """Tensor of logit target token IDs.
+
+        Returns token IDs for logit targets on the same device as other graph tensors.
+
+        Returns:
+            torch.Tensor: Long tensor of vocabulary indices
+        """
+        return torch.tensor(
+            [target.vocab_idx for target in self.logit_targets],
+            dtype=torch.long,
+            device=self.logit_probabilities.device,
+        )
+
+    @property
+    def logit_tokens(self) -> torch.Tensor:
+        """Get logit target token IDs tensor (legacy compatibility).
+
+        .. deprecated::
+            Use `logit_token_ids` property instead. This is an alias for backward compatibility.
+
+        Raises:
+            ValueError: If any targets have virtual indices
+        """
+        warnings.warn(
+            "logit_tokens property is deprecated. Use logit_token_ids property instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.logit_token_ids
 
     def to_pt(self, path: str):
         """Saves the graph at the given path
@@ -105,8 +143,9 @@ class Graph:
             "adjacency_matrix": self.adjacency_matrix,
             "cfg": self.cfg,
             "active_features": self.active_features,
-            "logit_tokens": self.logit_tokens,
+            "logit_targets": self.logit_targets,
             "logit_probabilities": self.logit_probabilities,
+            "vocab_size": self.vocab_size,
             "input_tokens": self.input_tokens,
             "selected_features": self.selected_features,
             "activation_values": self.activation_values,
@@ -118,6 +157,9 @@ class Graph:
     def from_pt(path: str, map_location="cpu") -> "Graph":
         """Load a graph (saved using graph.to_pt) from a .pt file at the given path.
 
+        Handles backward compatibility with older serialized graphs that stored
+        logit_targets as a torch.Tensor of token IDs.
+
         Args:
             path (str): The path of the Graph to load
             map_location (str, optional): the device to load the graph onto.
@@ -127,7 +169,14 @@ class Graph:
             Graph: the Graph saved at the specified path
         """
         d = torch.load(path, weights_only=False, map_location=map_location)
+        # BC: convert legacy tensor logit_targets to LogitTarget list
+        lt = d.get("logit_targets")
+        if isinstance(lt, torch.Tensor):
+            d["logit_targets"] = [
+                LogitTarget(token_str="", vocab_idx=int(idx)) for idx in lt.tolist()
+            ]
         return Graph(**d)
+
 
 def normalize_matrix(matrix: torch.Tensor) -> torch.Tensor:
     normalized = matrix.abs()
@@ -140,8 +189,7 @@ def compute_influence(A: torch.Tensor, logit_weights: torch.Tensor, max_iter: in
     # But it's faster / more efficient to compute logit_weights @ A + logit_weights @ A^2
     # as follows:
 
-    # current_influence = logit_weights @ A
-    current_influence = logit_weights.clone()
+    current_influence = logit_weights @ A
     influence = current_influence
     iterations = 0
     while current_influence.any():
@@ -162,34 +210,10 @@ def compute_node_influence(adjacency_matrix: torch.Tensor, logit_weights: torch.
 def compute_edge_influence(pruned_matrix: torch.Tensor, logit_weights: torch.Tensor):
     normalized_pruned = normalize_matrix(pruned_matrix)
     pruned_influence = compute_influence(normalized_pruned, logit_weights)
-    # pruned_influence += logit_weights
+    pruned_influence += logit_weights
     edge_scores = normalized_pruned * pruned_influence[:, None]
     return edge_scores
 
-def compute_relevance(A: torch.Tensor, emb_weights: torch.Tensor, max_iter: int = 1000):
-    # current_relevance = emb_weights @ A
-    current_relevance = emb_weights.clone()
-    relevance = current_relevance
-    iterations = 0
-    while current_relevance.any():
-        if iterations >= max_iter:
-            raise RuntimeError(
-                f"Relevance computation failed to converge after {iterations} iterations"
-            )
-        current_relevance = current_relevance @ A
-        relevance += current_relevance
-        iterations += 1
-    return relevance
-
-def compute_node_relevance(adjacency_matrix: torch.Tensor, emb_weights: torch.Tensor):
-    return compute_relevance(normalize_matrix(adjacency_matrix.T), emb_weights)
-
-def compute_edge_relevance(pruned_matrix: torch.Tensor, emb_weights: torch.Tensor):
-    normalized_pruned = normalize_matrix(pruned_matrix.T) # (n, n)
-    pruned_relevance = compute_relevance(normalized_pruned, emb_weights) # (1, n)
-    # pruned_relevance += emb_weights # (1, n)
-    edge_scores = normalized_pruned * pruned_relevance[:, None] # (n, n) * (n, n) -> (n, n)
-    return edge_scores.T # transpose back to original orientation
 
 def find_threshold(scores: torch.Tensor, threshold: float):
     # Find score threshold that keeps the desired fraction of total influence
@@ -200,144 +224,89 @@ def find_threshold(scores: torch.Tensor, threshold: float):
     threshold_index = min(threshold_index, len(cumulative_score) - 1)
     return sorted_scores[threshold_index]
 
+
 class PruneResult(NamedTuple):
     node_mask: torch.Tensor  # Boolean tensor indicating which nodes to keep
     edge_mask: torch.Tensor  # Boolean tensor indicating which edges to keep
     cumulative_scores: torch.Tensor  # Tensor of cumulative influence scores for each node
 
-def normalize_scores_min_max(scores: torch.Tensor, eps: float = 1e-10):
-    scores = scores.clone()
-    scores = scores - scores.min()
-    scores = scores / (scores.max() + eps)
-    return scores
-
-def normalize_scores_rank(scores):
-    ranks = torch.argsort(torch.argsort(scores))
-    return ranks.float() / (len(scores) - 1)
-
-def combine_scores_geometric(
-    influence: torch.Tensor,
-    relevance: torch.Tensor,
-    normalization: str = "min_max",
-    alpha: float = 0.5,
-    eps: float = 1e-10,
-):
-    # Normalize first (important!)
-    if normalization == "min_max":
-        I = normalize_scores_min_max(influence, eps)
-        R = normalize_scores_min_max(relevance, eps)
-    elif normalization == "rank":
-        I = normalize_scores_rank(influence)
-        R = normalize_scores_rank(relevance)
-    else:
-        raise ValueError(f"Invalid normalization method: {normalization}")
-
-    # Geometric mean with alpha
-    S = (I + eps) ** alpha * (R + eps) ** (1 - alpha)
-    return S
-
-def combined_scores_arithmetic(
-    influence: torch.Tensor,
-    relevance: torch.Tensor,
-    normalization: str = "min_max",
-    alpha: float = 0.5,
-    eps: float = 1e-10,
-):
-    if normalization == "min_max":
-        I = normalize_scores_min_max(influence, eps)
-        R = normalize_scores_min_max(relevance, eps)
-    elif normalization == "rank":
-        I = normalize_scores_rank(influence)
-        R = normalize_scores_rank(relevance)
-    else:
-        raise ValueError(f"Invalid normalization method: {normalization}")
-    return I * alpha + R * (1 - alpha)
-
-def combined_scores_harmonic(
-    influence: torch.Tensor,
-    relevance: torch.Tensor,
-    normalization: str = "min_max",
-    alpha: float = 0.5,
-    eps: float = 1e-10,
-):
-    if normalization == "min_max":
-        I = normalize_scores_min_max(influence, eps)
-        R = normalize_scores_min_max(relevance, eps)
-    elif normalization == "rank":
-        I = normalize_scores_rank(influence)
-        R = normalize_scores_rank(relevance)
-    else:
-        raise ValueError(f"Invalid normalization method: {normalization}")
-    return 1 / ((1 / (I + eps) + alpha) + (1 / (R + eps) + alpha))
 
 def prune_graph(
-    graph: Graph,
-    token_weights=None,
-    logit_weights=None,
-    combined_scores_method: str = "geometric",
-    normalization: str = "min_max",
-    node_threshold: float = 0.8,
-    edge_threshold: float = 0.98,
-    alpha: float = 0.5,
-    keep_all_tokens_and_logits: bool = True,
-):
-    """Prune using the same influence/relevance core as ``summarization.prune.prune_attr_graph``."""
-    from summarization.attr_graph import AttrGraph
-    from summarization.prune import prune_masks_from_attr_graph
+    graph: Graph, node_threshold: float = 0.8, edge_threshold: float = 0.98
+) -> PruneResult:
+    """Prunes a graph by removing nodes and edges with low influence on the output logits.
 
-    ag = AttrGraph.from_graph(graph)
-    device = graph.adjacency_matrix.device
-    num_nodes = graph.adjacency_matrix.shape[0]
+    Args:
+        graph: The graph to prune
+        node_threshold: Keep nodes that contribute to this fraction of total influence
+        edge_threshold: Keep edges that contribute to this fraction of total influence
+
+    Returns:
+        Tuple containing:
+        - node_mask: Boolean tensor indicating which nodes to keep
+        - edge_mask: Boolean tensor indicating which edges to keep
+        - cumulative_scores: Tensor of cumulative influence scores for each node
+    """
+
+    if node_threshold > 1.0 or node_threshold < 0.0:
+        raise ValueError("node_threshold must be between 0.0 and 1.0")
+    if edge_threshold > 1.0 or edge_threshold < 0.0:
+        raise ValueError("edge_threshold must be between 0.0 and 1.0")
+
+    # Extract dimensions
     n_tokens = len(graph.input_tokens)
-    n_logits = len(graph.logit_tokens)
+    n_logits = len(graph.logit_targets)
+    n_features = len(graph.selected_features)
 
-    logits_tensor = None
-    mode: str | None = "probs"
-    if isinstance(logit_weights, str):
-        mode = logit_weights if logit_weights in ("probs", "target") else "probs"
-    elif logit_weights is not None:
-        mode = None
-        logits_tensor = logit_weights.to(device=device).reshape(num_nodes)
-    else:
-        mode = "probs"
-
-    emb_tensor = None
-    token_list = None
-    if token_weights is not None and hasattr(token_weights, "to"):
-        emb_tensor = token_weights.to(device=device).reshape(num_nodes)
-    elif token_weights is not None:
-        token_list = [float(x) for x in token_weights]
-
-    node_mask, edge_mask, node_inf, node_rel, _edge_inf, _edge_rel, _ratio = (
-        prune_masks_from_attr_graph(
-            ag,
-            token_weights=emb_tensor,
-            logit_weights=logits_tensor,
-            logit_weights_mode=mode if logits_tensor is None else "probs",
-            token_weights_list=token_list,
-            node_influence_threshold=node_threshold,
-            node_relevance_threshold=node_threshold,
-            edge_influence_threshold=edge_threshold,
-            edge_relevance_threshold=edge_threshold,
-            keep_all_tokens_and_logits=keep_all_tokens_and_logits,
-        )
+    logit_weights = torch.zeros(
+        graph.adjacency_matrix.shape[0], device=graph.adjacency_matrix.device
     )
+    logit_weights[-n_logits:] = graph.logit_probabilities
 
-    node_scores = _combined_node_scores(
-        node_inf,
-        node_rel,
-        combined_scores_method=combined_scores_method,
-        normalization=normalization,
-        alpha=alpha,
-    )
-    sorted_scores, sorted_indices = torch.sort(node_scores, descending=True)
-    denom = torch.sum(sorted_scores).clamp(min=1e-12)
-    cumulative_scores = torch.cumsum(sorted_scores, dim=0) / denom
+    # Calculate node influence and apply threshold
+    node_influence = compute_node_influence(graph.adjacency_matrix, logit_weights)
+    node_mask = node_influence >= find_threshold(node_influence, node_threshold)
+    # Always keep tokens and logits
+    node_mask[-n_logits - n_tokens :] = True
 
-    final_scores = torch.zeros_like(node_scores)
+    # Create pruned matrix with selected nodes
+    pruned_matrix = graph.adjacency_matrix.clone()
+    pruned_matrix[~node_mask] = 0
+    pruned_matrix[:, ~node_mask] = 0
+    # we could also do iterative pruning here (see below)
+
+    # Calculate edge influence and apply threshold
+    edge_scores = compute_edge_influence(pruned_matrix, logit_weights)
+
+    edge_mask = edge_scores >= find_threshold(edge_scores.flatten(), edge_threshold)
+
+    old_node_mask = node_mask.clone()
+    # Ensure feature and error nodes have outgoing edges
+    node_mask[: -n_logits - n_tokens] &= edge_mask[:, : -n_logits - n_tokens].any(0)
+    # Ensure feature nodes have incoming edges
+    node_mask[:n_features] &= edge_mask[:n_features].any(1)
+
+    # iteratively prune until all nodes missing incoming / outgoing edges are gone
+    # (each pruning iteration potentially opens up new candidates for pruning)
+    # this should not take more than n_layers + 1 iterations
+    while not torch.all(node_mask == old_node_mask):
+        old_node_mask[:] = node_mask
+        edge_mask[~node_mask] = False
+        edge_mask[:, ~node_mask] = False
+
+        # Ensure feature and error nodes have outgoing edges
+        node_mask[: -n_logits - n_tokens] &= edge_mask[:, : -n_logits - n_tokens].any(0)
+        # Ensure feature nodes have incoming edges
+        node_mask[:n_features] &= edge_mask[:n_features].any(1)
+
+    # Calculate cumulative influence scores
+    sorted_scores, sorted_indices = torch.sort(node_influence, descending=True)
+    cumulative_scores = torch.cumsum(sorted_scores, dim=0) / torch.sum(sorted_scores)
+    final_scores = torch.zeros_like(node_influence)
     final_scores[sorted_indices] = cumulative_scores
 
     return PruneResult(node_mask, edge_mask, final_scores)
+
 
 def compute_graph_scores(graph: Graph) -> tuple[float, float]:
     """Compute metrics for evaluating how well the graph captures the model's computation.
@@ -363,11 +332,11 @@ def compute_graph_scores(graph: Graph) -> tuple[float, float]:
         reconstruction where all computation flows through interpretable features. Lower
         scores indicate more reliance on error nodes, suggesting incomplete feature coverage.
     """
-    n_logits = len(graph.logit_tokens)
+    n_logits = len(graph.logit_targets)
     n_tokens = len(graph.input_tokens)
     n_features = len(graph.selected_features)
     error_start = n_features
-    error_end = error_start + n_tokens * graph.cfg.n_layers  # type: ignore
+    error_end = error_start + n_tokens * graph.cfg.n_layers
     token_end = error_end + n_tokens
 
     logit_weights = torch.zeros(
@@ -383,124 +352,10 @@ def compute_graph_scores(graph: Graph) -> tuple[float, float]:
     replacement_score = token_influence / (token_influence + error_influence)
 
     non_error_fractions = 1 - normalized_matrix[:, error_start:error_end].sum(dim=-1)
-    output_influence = node_influence # + logit_weights
+    output_influence = node_influence + logit_weights
     completeness_score = (non_error_fractions * output_influence).sum() / output_influence.sum()
 
     return replacement_score.item(), completeness_score.item()
-
-
-def _combined_node_scores(
-    node_influence: torch.Tensor,
-    node_relevance: torch.Tensor,
-    combined_scores_method: str = "geometric",
-    normalization: str = "min_max",
-    alpha: float = 0.5,
-    eps: float = 1e-10,
-) -> torch.Tensor:
-    if combined_scores_method == "geometric":
-        return combine_scores_geometric(
-            node_influence,
-            node_relevance,
-            normalization=normalization,
-            alpha=alpha,
-            eps=eps,
-        )
-    if combined_scores_method == "arithmetic":
-        return combined_scores_arithmetic(
-            node_influence,
-            node_relevance,
-            normalization=normalization,
-            alpha=alpha,
-            eps=eps,
-        )
-    if combined_scores_method == "harmonic":
-        return combined_scores_harmonic(
-            node_influence,
-            node_relevance,
-            normalization=normalization,
-            alpha=alpha,
-            eps=eps,
-        )
-    raise ValueError(
-        "combined_scores_method must be one of "
-        "'geometric', 'arithmetic', or 'harmonic'"
-    )
-
-
-def compute_combined_prune_scores(
-    graph: Graph,
-    node_mask: torch.Tensor,
-    combined_scores_method: str = "geometric",
-    normalization: str = "min_max",
-    alpha: float = 0.5,
-    eps: float = 1e-10,
-) -> tuple[float, float]:
-    """Evaluate a pruned graph using influence+relevance combined metrics.
-
-    Args:
-        graph: Full graph before pruning.
-        node_mask: Boolean tensor over all graph nodes. True indicates a kept node.
-        combined_scores_method: How to combine influence/relevance.
-        normalization: Score normalization mode passed to combine functions.
-        alpha: Influence/relevance tradeoff weight for combined scores.
-        eps: Numerical stability constant.
-
-    Returns:
-        tuple[float, float]:
-            - combined_retention: Fraction of total combined node score retained by node_mask.
-            - combined_completeness_score: Within retained nodes, weighted average of the
-              non-error incoming-edge fraction, weighted by combined node score.
-    """
-    num_nodes = graph.adjacency_matrix.shape[0]
-    if node_mask.ndim != 1 or node_mask.shape[0] != num_nodes:
-        raise ValueError(
-            f"node_mask must have shape ({num_nodes},), got {tuple(node_mask.shape)}"
-        )
-    node_mask = node_mask.to(device=graph.adjacency_matrix.device, dtype=torch.bool)
-
-    n_logits = len(graph.logit_tokens)
-    n_tokens = len(graph.input_tokens)
-    n_features = len(graph.selected_features)
-    error_start = n_features
-    error_end = error_start + n_tokens * graph.cfg.n_layers  # type: ignore
-    embed_start_idx = num_nodes - n_logits - n_tokens
-    embed_end_idx = num_nodes - n_logits
-
-    logit_weights = torch.zeros(num_nodes, device=graph.adjacency_matrix.device)
-    logit_weights[-n_logits:] = graph.logit_probabilities
-
-    emb_weights = torch.zeros(num_nodes, device=graph.adjacency_matrix.device)
-    emb_weights[embed_start_idx:embed_end_idx] = 1 / max(n_tokens, 1)
-
-    node_influence = compute_node_influence(graph.adjacency_matrix, logit_weights)
-    node_relevance = compute_node_relevance(graph.adjacency_matrix, emb_weights)
-    combined_scores = _combined_node_scores(
-        node_influence=node_influence,
-        node_relevance=node_relevance,
-        combined_scores_method=combined_scores_method,
-        normalization=normalization,
-        alpha=alpha,
-        eps=eps,
-    )
-
-    total_combined = combined_scores.sum().clamp(min=eps)
-    kept_combined = combined_scores[node_mask].sum()
-    combined_retention = kept_combined / total_combined
-
-    pruned_matrix = graph.adjacency_matrix.clone()
-    pruned_matrix[~node_mask] = 0
-    pruned_matrix[:, ~node_mask] = 0
-    normalized_pruned = normalize_matrix(pruned_matrix)
-    non_error_fractions = 1 - normalized_pruned[:, error_start:error_end].sum(dim=-1)
-
-    kept_non_error = non_error_fractions[node_mask]
-    combined_weights = combined_scores[node_mask]
-    combined_completeness_score = (
-        (kept_non_error * combined_weights).sum()
-        / combined_weights.sum().clamp(min=eps)
-    )
-
-    return combined_retention.item(), combined_completeness_score.item()
 
 
 def compute_partial_influences(
@@ -510,7 +365,24 @@ def compute_partial_influences(
     max_iter: int = 128,
     device=None,
 ):
-    """Compute partial influences using power iteration method."""
+    """Compute partial influences using power iteration method.
+
+    This function calculates the influence of each node on the output logits
+    based on the edge weights in the graph.
+
+    Args:
+        edge_matrix: The edge weight matrix.
+        logit_p: The logit probabilities.
+        row_to_node_index: Mapping from row indices to node indices.
+        max_iter: Maximum number of iterations for convergence.
+        device: Device to perform computation on.
+
+    Returns:
+        torch.Tensor: Influence values for each node.
+
+    Raises:
+        RuntimeError: If computation fails to converge within max_iter.
+    """
     device = device or get_default_device()
 
     normalized_matrix = torch.empty_like(edge_matrix, device=device).copy_(edge_matrix)
