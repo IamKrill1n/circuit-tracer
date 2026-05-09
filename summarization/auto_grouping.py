@@ -62,7 +62,6 @@ def find_best_k(
     weights: dict[str, float] | None = None,
     max_sn: int | None = None,
     mean_method: Literal["geo", "harm", "arith"] = "arith",
-    similarity_mode: Literal["edge", "node"] = "node",
     decay_rate: float | None = None,
     enforce_dag: bool = False,
     random_state: int = 42,
@@ -78,7 +77,6 @@ def find_best_k(
         sim = compute_similarity(
             prune_graph,
             mean_method=mean_method,
-            similarity_mode=similarity_mode,
             decay_rate=decay_rate,
         )
     s_np = np.asarray(sim.detach().cpu().numpy() if hasattr(sim, "detach") else sim)
@@ -103,7 +101,6 @@ def find_best_k(
             max_layer_span=max_layer_span,
             max_sn=max_sn,
             mean_method=mean_method,
-            similarity_mode=similarity_mode,
             enforce_dag=enforce_dag,
             random_state=random_state,
             n_init=n_init,

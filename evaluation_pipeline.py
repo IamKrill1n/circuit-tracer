@@ -27,12 +27,8 @@ from summarization.prune import PruneGraph, load_prune_graph
 from summarization.utils import node_is_fixed
 
 METHOD_GRID: list[dict[str, str]] = [
-    {
-        "mean_method": mean_method,
-        "similarity_mode": similarity_mode,
-    }
+    {"mean_method": mean_method}
     for mean_method in ("harm", "arith")
-    for similarity_mode in ("node", "edge")
 ]
 
 SUMMARY_COLUMNS = [
@@ -42,7 +38,6 @@ SUMMARY_COLUMNS = [
     "method",
     "method_family",
     "mean_method",
-    "similarity_mode",
     "best_k",
     "auto_k_candidates",
     "n_supernodes",
@@ -236,7 +231,6 @@ def _flatten_metrics(
     method: str,
     method_family: str,
     mean_method: str | None,
-    similarity_mode: str | None,
     best_k: int,
     auto_k_candidates: int,
     final_supernodes: dict[str, list[str]],
@@ -253,7 +247,6 @@ def _flatten_metrics(
         "method": method,
         "method_family": method_family,
         "mean_method": mean_method,
-        "similarity_mode": similarity_mode,
         "best_k": best_k,
         "auto_k_candidates": auto_k_candidates,
         "n_supernodes": len(final_supernodes),
@@ -299,7 +292,6 @@ def _evaluate_existing_method(
     similarity = compute_similarity(
         prune_graph,
         mean_method=method_config["mean_method"],
-        similarity_mode=method_config["similarity_mode"],
     )
     best_k, sweep = find_best_k(
         prune_graph=prune_graph,
@@ -310,7 +302,6 @@ def _evaluate_existing_method(
         weights=weights,
         max_sn=None,
         mean_method=method_config["mean_method"],
-        similarity_mode=method_config["similarity_mode"],
         enforce_dag=enforce_dag,
         random_state=random_state,
         n_init=n_init,
@@ -328,7 +319,6 @@ def _evaluate_existing_method(
             target_k=max(best_k, 1),
             max_layer_span=max_layer_span,
             mean_method=method_config["mean_method"],
-            similarity_mode=method_config["similarity_mode"],
             enforce_dag=enforce_dag,
             random_state=random_state,
             n_init=n_init,
@@ -342,9 +332,7 @@ def _evaluate_existing_method(
             enforce_dag=enforce_dag,
         )
 
-    method_slug = (
-        f"ours-{method_config['mean_method']}-{method_config['similarity_mode']}"
-    )
+    method_slug = f"ours-{method_config['mean_method']}"
     run_dir = output_dir / "runs" / graph_name / method_slug
     supernode_map_path = run_dir / "supernode_map.json"
     auto_k_sweep_path = run_dir / "auto_k_sweep.json"
@@ -372,7 +360,6 @@ def _evaluate_existing_method(
         method=method_slug,
         method_family="ours",
         mean_method=method_config["mean_method"],
-        similarity_mode=method_config["similarity_mode"],
         best_k=best_k,
         auto_k_candidates=len(sweep),
         final_supernodes=final_supernodes,
@@ -447,7 +434,6 @@ def _evaluate_baseline(
         method=method,
         method_family="baseline",
         mean_method=None,
-        similarity_mode=None,
         best_k=best_k,
         auto_k_candidates=len(sweep),
         final_supernodes=final_supernodes,

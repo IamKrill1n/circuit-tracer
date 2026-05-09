@@ -36,7 +36,6 @@ from summarization.graph_utils import (
 )
 from summarization.prune import (
     PruneGraph,
-    compute_combined_prune_graph_scores,
     load_prune_graph,
     prune_attr_graph,
 )
@@ -257,50 +256,6 @@ def influence_relevance_agreement(prune_graph: PruneGraph) -> float | None:
     return float((inf_z * rel_z).mean().item())
 
 
-# --- Existing per-PruneGraph metrics (unchanged) -------------------------
-
-def _compute_basic_prune_metrics(prune_graph: PruneGraph) -> dict[str, float | None]:
-    metrics: dict[str, float | None] = {
-        "score_geometric_min_max": None,
-        "score_arithmetic_min_max": None,
-        "score_harmonic_min_max": None,
-        "mean_node_influence": None,
-        "mean_node_relevance": None,
-        "mean_edge_influence": None,
-        "mean_edge_relevance": None,
-    }
-    try:
-        metrics["score_geometric_min_max"] = compute_combined_prune_graph_scores(
-            prune_graph, method="geometric", normalization="min_max"
-        )
-        metrics["score_arithmetic_min_max"] = compute_combined_prune_graph_scores(
-            prune_graph, method="arithmetic", normalization="min_max"
-        )
-        metrics["score_harmonic_min_max"] = compute_combined_prune_graph_scores(
-            prune_graph, method="harmonic", normalization="min_max"
-        )
-    except ValueError:
-        pass
-
-    if prune_graph.node_influence is not None:
-        metrics["mean_node_influence"] = float(
-            prune_graph.node_influence.to(dtype=torch.float32).mean().item()
-        )
-    if prune_graph.node_relevance is not None:
-        metrics["mean_node_relevance"] = float(
-            prune_graph.node_relevance.to(dtype=torch.float32).mean().item()
-        )
-    if prune_graph.edge_influence is not None:
-        metrics["mean_edge_influence"] = float(
-            prune_graph.edge_influence.to(dtype=torch.float32).mean().item()
-        )
-    if prune_graph.edge_relevance is not None:
-        metrics["mean_edge_relevance"] = float(
-            prune_graph.edge_relevance.to(dtype=torch.float32).mean().item()
-        )
-    return metrics
-
-
 # --- Driver ---------------------------------------------------------------
 
 def _evaluate_record(
@@ -320,14 +275,18 @@ def _evaluate_record(
     }
 
     prune_graph = load_prune_graph(rec["prune_graph_path"])
-    metrics.update(_compute_basic_prune_metrics(prune_graph))
 
-    graph_path = rec["graph_path"]
-    attr_graph = cache.attr_graph(graph_path)
-    full_idx = cache.idx_sets(graph_path)
-    A_full_norm = cache.a_full_norm(graph_path)
-    id_to_idx = cache.id_to_idx(graph_path)
-    token_weights = [float(w) for w in rec["token_weights"]]
+    needs_graph = not (skip_relevance_conservation and skip_token_faithfulness and skip_pruning_divergence)
+    needs_token_weights = not (skip_relevance_conservation and skip_token_faithfulness)
+
+    if needs_graph:
+        graph_path = rec["graph_path"]
+        attr_graph = cache.attr_graph(graph_path)
+        full_idx = cache.idx_sets(graph_path)
+        A_full_norm = cache.a_full_norm(graph_path)
+        id_to_idx = cache.id_to_idx(graph_path)
+    if needs_token_weights:
+        token_weights = [float(w) for w in rec["token_weights"]]
 
     if not skip_relevance_conservation:
         metrics["relevance_conservation_rate"] = relevance_conservation_rate(
@@ -352,7 +311,7 @@ def _evaluate_record(
 
     if not skip_pruning_divergence:
         uniform_pg = cache.uniform_prune(
-            graph_path,
+            graph_path,  # set above when needs_graph
             float(rec["node_influence_threshold"]),
             float(rec["node_relevance_threshold"]),
             float(rec["edge_threshold"]),

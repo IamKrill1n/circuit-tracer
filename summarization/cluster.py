@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
 import numpy as np
 import torch
 from sklearn.cluster import SpectralClustering
+
 
 from summarization.prune import PruneGraph
 from summarization.supernode_graph import Node, Supernode, cluster_kind_to_supernode_type, node_from_prune_graph
@@ -47,16 +48,9 @@ def _weighted_row_cosine(features: torch.Tensor) -> torch.Tensor:
     return _cosine_norm(gram)
 
 
-def _normalize_edge_weights(weights: torch.Tensor) -> torch.Tensor:
-    # Preserve sign by normalizing with max absolute magnitude.
-    weights = torch.nan_to_num(weights, nan=0.0, posinf=0.0, neginf=0.0)
-    w_abs_max = float(weights.abs().max().item()) if weights.numel() else 0.0
-    if w_abs_max <= 0.0:
-        return torch.zeros_like(weights)
-    return weights / (w_abs_max + 1e-8)
-
-
-def _normalize_node_weights(scores: torch.Tensor | None, n_nodes: int, device: torch.device) -> torch.Tensor:
+def _prepare_node_weights(
+    scores: torch.Tensor | None, n_nodes: int, device: torch.device, normalize: bool = False
+) -> torch.Tensor:
     # Missing tensors can happen for older serialized PruneGraph payloads.
     if scores is None:
         return torch.ones(n_nodes, dtype=torch.float32, device=device)
@@ -65,62 +59,35 @@ def _normalize_node_weights(scores: torch.Tensor | None, n_nodes: int, device: t
     if values.numel() != n_nodes:
         return torch.ones(n_nodes, dtype=torch.float32, device=device)
 
-    values = torch.nan_to_num(values, nan=0.0, posinf=0.0, neginf=0.0)
-    v_min = float(values.min().item()) if values.numel() else 0.0
-    v_max = float(values.max().item()) if values.numel() else 0.0
-    if v_max - v_min <= 1e-8:
-        return torch.ones_like(values)
-
-    return ((values - v_min) / (v_max - v_min + 1e-8)).clamp(0.0, 1.0)
-
-
-def _edge_channels_sender_indexed(prune_graph: PruneGraph, adj_sender: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-    edge_rel = prune_graph.edge_relevance
-    edge_inf = prune_graph.edge_influence
-    if edge_rel is None or edge_inf is None:
-        # Backward-compatible fallback for older payloads.
-        fallback = _normalize_edge_weights(adj_sender)
-        return fallback, fallback
-
-    rel_sender = _normalize_edge_weights(edge_rel.float().T)
-    inf_sender = _normalize_edge_weights(edge_inf.float().T)
-    return rel_sender, inf_sender
-
-def sign_aware_normalize(tensor: torch.Tensor) -> torch.Tensor:
-    return torch.nan_to_num(tensor, nan=0.0, posinf=0.0, neginf=0.0) / (tensor.abs().max() + 1e-8)
+    values = torch.nan_to_num(values, nan=0.0, posinf=0.0, neginf=0.0).clamp(min=0.0)
+    if normalize:
+        v_max = float(values.max().item())
+        v_min = float(values.min().item())
+        if v_max - v_min > 1e-8:
+            values = (values - v_min) / (v_max - v_min + 1e-8)
+        else:
+            values = torch.ones_like(values)
+    return values
 
 def compute_similarity(
     prune_graph: PruneGraph,
     mean_method: Literal["geo", "harm", "arith"] = "arith",
-    similarity_mode: Literal["edge", "node"] = "node",
+    normalize_weights: bool = False,
     decay_rate: float | None = None,
     max_layer_span: int | None = None,
 ) -> torch.Tensor:
     """
     Compute node similarity from weighted shared out/in structure.
 
-    - `edge` mode uses edge influence/relevance channels (current behavior).
-    - `node` mode applies node influence/relevance pairwise weights.
-
     Output/input cosine similarities are always clamped to ``[0, 1]`` before
     being combined.
     """
     adj = prune_graph.pruned_adj.clone().float().T
-    if similarity_mode == "edge":
-        rel_sender, inf_sender = _edge_channels_sender_indexed(prune_graph, adj)
-        adj_sign = adj.sign()
-        weighted_out = adj_sign * inf_sender
-        weighted_in = (adj_sign * rel_sender).T
-        s_out = weighted_out @ weighted_out.T
-        s_in = weighted_in @ weighted_in.T
-    elif similarity_mode == "node":
-        n_nodes = adj.shape[0]
-        node_inf = _normalize_node_weights(prune_graph.node_influence, n_nodes, adj.device)
-        node_rel = _normalize_node_weights(prune_graph.node_relevance, n_nodes, adj.device)
-        s_out = adj @ torch.diag(node_inf) @ adj.T
-        s_in = adj.T @ torch.diag(node_rel) @ adj
-    else:
-        raise ValueError("Unsupported similarity_mode. Expected 'edge' or 'node'.")
+    n_nodes = adj.shape[0]
+    node_inf = _prepare_node_weights(prune_graph.node_influence, n_nodes, adj.device, normalize=normalize_weights)
+    node_rel = _prepare_node_weights(prune_graph.node_relevance, n_nodes, adj.device, normalize=normalize_weights)
+    s_out = adj @ torch.diag(node_inf) @ adj.T
+    s_in = adj.T @ torch.diag(node_rel) @ adj
 
     s_out_cos = _cosine_norm(s_out).clamp(0.0, 1.0)
     s_in_cos = _cosine_norm(s_in).clamp(0.0, 1.0)
@@ -319,7 +286,7 @@ def cluster_graph(
     max_layer_span: int = 4,
     max_sn: int | None = None,
     mean_method: Literal["geo", "harm", "arith"] = "arith",
-    similarity_mode: Literal["edge", "node"] = "node",
+    normalize_weights: bool = False,
     decay_rate: float | None = 1.0,
     enforce_dag: bool = True,
     random_state: int = 42,
@@ -334,7 +301,7 @@ def cluster_graph(
         max_layer_span: Maximum allowed layer span within a middle supernode.
         max_sn: Optional hard cap on number of middle supernodes.
         mean_method: Mean used to combine output/input cosine similarities.
-        similarity_mode: `edge` or `node` similarity construction.
+        normalize_weights: If True, min-max normalize influence/relevance weights before computing similarity.
         random_state: Random seed for spectral clustering k-means init.
         n_init: Number of k-means runs for `SpectralClustering(assign_labels="kmeans")`.
 
@@ -351,7 +318,7 @@ def cluster_graph(
     sim = compute_similarity(
         prune_graph,
         mean_method=mean_method,
-        similarity_mode=similarity_mode,
+        normalize_weights=normalize_weights,
         decay_rate=decay_rate,
         max_layer_span=max_layer_span,
     )

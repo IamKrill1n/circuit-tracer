@@ -44,23 +44,11 @@ def _build_test_graph() -> PruneGraph:
     )
 
 
-def test_compute_similarity_uses_edge_channels() -> None:
+def test_compute_similarity_shape_and_range() -> None:
     prune_graph = _build_test_graph()
-    sim_out = compute_similarity(
-        prune_graph,
-        mean_method="arith",
-        similarity_mode="edge",
-    )
-    sim_in = compute_similarity(
-        prune_graph,
-        mean_method="arith",
-        similarity_mode="node",
-    )
-
-    assert sim_out.shape == sim_in.shape == (len(prune_graph.node_ids), len(prune_graph.node_ids))
-    assert torch.all(sim_out >= 0.0) and torch.all(sim_out <= 1.0)
-    assert torch.all(sim_in >= 0.0) and torch.all(sim_in <= 1.0)
-    assert not torch.allclose(sim_out, sim_in)
+    sim = compute_similarity(prune_graph, mean_method="arith")
+    assert sim.shape == (len(prune_graph.node_ids), len(prune_graph.node_ids))
+    assert torch.all(sim >= 0.0) and torch.all(sim <= 1.0)
 
 
 def test_cluster_graph_spectral_output_shape() -> None:

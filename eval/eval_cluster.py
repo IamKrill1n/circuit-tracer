@@ -26,11 +26,9 @@ from summarization.utils import layer_index_from_node, node_is_fixed
 METHOD_GRID: list[dict[str, str | float]] = [
     {
         "mean_method": mean_method,
-        "similarity_mode": similarity_mode,
         "decay_rate": decay_rate,
     }
     for mean_method in ("arith", "harm", "geo")
-    for similarity_mode in ("node", "edge")
     for decay_rate in (i / 10.0 for i in range(11))
 ]
 
@@ -43,7 +41,6 @@ SUMMARY_COLUMNS = [
     "method",
     "method_family",
     "mean_method",
-    "similarity_mode",
     "decay_rate",
     "best_k",
     "auto_k_candidates",
@@ -351,7 +348,6 @@ def _flatten_metrics(
     method: str,
     method_family: str,
     mean_method: str | None,
-    similarity_mode: str | None,
     decay_rate: float | None,
     best_k: int,
     auto_k_candidates: int,
@@ -371,7 +367,6 @@ def _flatten_metrics(
         "method": method,
         "method_family": method_family,
         "mean_method": mean_method,
-        "similarity_mode": similarity_mode,
         "decay_rate": decay_rate,
         "best_k": best_k,
         "auto_k_candidates": auto_k_candidates,
@@ -417,12 +412,10 @@ def _evaluate_ours_fixed_k(
     n_init: int,
 ) -> dict[str, Any]:
     mean_method = cast(Literal["geo", "harm", "arith"], method_config["mean_method"])
-    similarity_mode = cast(Literal["node", "edge"], method_config["similarity_mode"])
     decay_rate = float(cast(float, method_config["decay_rate"]))
     similarity = compute_similarity(
         prune_graph,
         mean_method=mean_method,
-        similarity_mode=similarity_mode,
         decay_rate=decay_rate,
         max_layer_span=max_layer_span,
     )
@@ -431,7 +424,6 @@ def _evaluate_ours_fixed_k(
         target_k=target_k,
         max_layer_span=max_layer_span,
         mean_method=mean_method,
-        similarity_mode=similarity_mode,
         decay_rate=decay_rate,
         enforce_dag=True,
         random_state=random_state,
@@ -445,9 +437,7 @@ def _evaluate_ours_fixed_k(
         enforce_dag=True,
     )
 
-    method_slug = (
-        f"ours-{method_config['mean_method']}-{method_config['similarity_mode']}-decay-{decay_rate:.1f}"
-    )
+    method_slug = f"ours-{method_config['mean_method']}-decay-{decay_rate:.1f}"
     run_dir = output_dir / "runs" / graph_name / method_slug / k_selection
     supernode_map_path = run_dir / "supernode_map.json"
     auto_k_sweep_path = run_dir / "fixed_k_metrics.json"
@@ -481,7 +471,6 @@ def _evaluate_ours_fixed_k(
         method=method_slug,
         method_family="ours",
         mean_method=str(method_config["mean_method"]),
-        similarity_mode=str(method_config["similarity_mode"]),
         decay_rate=decay_rate,
         best_k=target_k,
         auto_k_candidates=0,
@@ -561,7 +550,6 @@ def _evaluate_baseline_fixed_k(
         method=method,
         method_family="baseline",
         mean_method=None,
-        similarity_mode=None,
         decay_rate=None,
         best_k=target_k,
         auto_k_candidates=0,

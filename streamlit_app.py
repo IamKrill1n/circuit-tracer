@@ -298,7 +298,6 @@ def _cluster_from_prune(
             k_max_override=auto_k_cfg["k_max_override"],
             max_sn=max_sn,
             mean_method=mean_method,
-            similarity_mode=cluster_cfg["similarity_mode"],
             decay_rate=cluster_cfg["decay_rate"],
             enforce_dag=enforce_dag,
             random_state=int(cluster_cfg["random_state"]),
@@ -327,7 +326,6 @@ def _cluster_from_prune(
         max_layer_span=int(cluster_cfg["max_layer_span"]),
         max_sn=max_sn,
         mean_method=mean_method,
-        similarity_mode=cluster_cfg["similarity_mode"],
         decay_rate=cluster_cfg["decay_rate"],
         enforce_dag=enforce_dag,
         random_state=int(cluster_cfg["random_state"]),
@@ -337,7 +335,6 @@ def _cluster_from_prune(
     similarity = compute_similarity(
         prune_graph,
         mean_method=mean_method,
-        similarity_mode=cluster_cfg["similarity_mode"],
         decay_rate=cluster_cfg["decay_rate"],
     )
     run_meta["cluster_score"] = score_clusters(
@@ -608,16 +605,6 @@ def main() -> None:
                 "until at most this many remain. Zero disables the cap."
             ),
         )
-        similarity_mode = st.selectbox(
-            "similarity_mode",
-            options=["edge", "node"],
-            index=0,
-            help=(
-                "What feeds the affinity matrix for spectral clustering: **edge** uses normalized edge "
-                "structure (influence/relevance channels), while **node** weights similarity using "
-                "node influence and node relevance scores."
-            ),
-        )
     with col_b:
         mean_method = st.selectbox(
             "mean_method",
@@ -693,7 +680,6 @@ def main() -> None:
         "max_layer_span": int(max_layer_span),
         "max_sn": None if int(max_sn_raw) == 0 else int(max_sn_raw),
         "mean_method": str(mean_method),
-        "similarity_mode": str(similarity_mode),
         "decay_rate": None if float(decay_rate_raw) <= 0.0 else float(decay_rate_raw),
         "random_state": int(random_state),
         "n_init": int(n_init),
