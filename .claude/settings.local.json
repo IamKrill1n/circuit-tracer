@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(conda run -n circuit python -c ' *)",
+      "Bash(conda run *)",
+      "Bash(unzip \"circuit \\(1\\).zip\" -d paper_tmp)",
+      "Bash(cp ../.claude/skills/paper/templates/acl.sty . && ls)",
+      "Bash(python *)",
+      "Bash(python3 *)",
+      "Bash(pytest *)",
+      "Bash(pip install *)",
+      "Bash(pip show *)",
+      "Bash(pip list *)",
+      "Bash(ruff check *)",
+      "Bash(ruff format *)",
+      "Bash(pyright *)",
+      "Bash(circuit-tracer *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git branch *)",
+      "Bash(git remote *)",
+      "Bash(git ls-tree *)",
+      "WebFetch(domain:transformer-circuits.pub)",
+      "WebFetch(domain:arxiv.org)"
+    ],
+    "defaultMode": "acceptEdits",
+    "additionalDirectories": [
+      "/home/tu/circuit-tracer/.claude/skills/paper/templates"
+    ]
+  }
+}

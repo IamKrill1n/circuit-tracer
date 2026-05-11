@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pdflatex -interaction=nonstopmode main.tex)",
+      "Bash(which pdflatex *)",
+      "Read(//usr/**)",
+      "Bash(rm -rf /tmp/eval_smoke)",
+      "Skill(update-config)",
+      "Skill(update-config:*)",
+      "Bash(ls -la /home/tu/circuit-tracer/.claude/ ~/.claude/settings.json 2>&1 | head -30)",
+      "Read(//home/tu/.claude/**)"
+    ],
+    "additionalDirectories": [
+      "/tmp/eval_smoke"
+    ]
+  }
+}
