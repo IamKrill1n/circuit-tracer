@@ -11,7 +11,7 @@ from sklearn.metrics import silhouette_score
 from summarization.cluster import mapping_dict_to_supernodes
 from summarization.prune import PruneGraph
 from summarization.supernode_graph import Supernode, SummarizationGraph
-from summarization.utils import node_is_fixed
+from summarization.utils import node_is_fixed, node_is_logit
 
 
 def _middle_indices(prune_graph: PruneGraph) -> list[int]:
@@ -173,6 +173,48 @@ def _dag_interleave_edge_fraction(
     return float(1.0 - (backward_mass / total_middle_mass))
 
 
+def _cv_cluster_sizes(rows: list[Supernode]) -> float:
+    """Coefficient of variation of cluster sizes (std/mean). Lower = more balanced."""
+    sizes = [len(row.member_node_ids()) for row in rows if row.type == "features"]
+    if len(sizes) < 2:
+        return 0.0
+    sizes_arr = np.array(sizes, dtype=np.float64)
+    mean = sizes_arr.mean()
+    if mean == 0.0:
+        return 0.0
+    return float(sizes_arr.std() / mean)
+
+
+def _opposing_sign_fraction(
+    rows: list[Supernode],
+    prune_adj: torch.Tensor,
+    nodes: list,
+) -> float:
+    """Fraction of intra-cluster pairs whose net output contributions have opposing signs."""
+    logit_indices = [i for i, n in enumerate(nodes) if node_is_logit(n)]
+    if not logit_indices:
+        return 0.0
+
+    id_to_idx = {n.node_id: i for i, n in enumerate(nodes)}
+    # net signed contribution of each node to all logit nodes
+    # prune_adj[target, source], so prune_adj[logit, u] = contribution of u toward logit
+    net_out = prune_adj[logit_indices, :].sum(dim=0)  # [n_nodes]
+
+    total_pairs = 0
+    opposing_pairs = 0
+    for row in rows:
+        if row.type != "features":
+            continue
+        indices = [id_to_idx[nid] for nid in row.member_node_ids() if nid in id_to_idx]
+        for i in range(len(indices)):
+            for j in range(i + 1, len(indices)):
+                total_pairs += 1
+                if float(net_out[indices[i]]) * float(net_out[indices[j]]) < 0:
+                    opposing_pairs += 1
+
+    return opposing_pairs / total_pairs if total_pairs > 0 else 0.0
+
+
 def _cluster_metrics_from_parts(
     rows: list[Supernode],
     prune_graph: PruneGraph,
@@ -192,6 +234,8 @@ def _cluster_metrics_from_parts(
             "sil_norm": 0.0,
             "internal_independence": 0.0,
             "dag_score": 1.0,
+            "cv_cluster_sizes": 0.0,
+            "opposing_sign_frac": 0.0,
             "n_middle": 0,
         }
 
@@ -205,6 +249,8 @@ def _cluster_metrics_from_parts(
 
     sn_adj_arr = np.asarray(sn_adj, dtype=np.float64)
     dag_score = _dag_interleave_edge_fraction(sn_adj_arr, sn_names, rows)
+    cv = _cv_cluster_sizes(rows)
+    opp = _opposing_sign_fraction(rows, prune_graph.pruned_adj, prune_graph.nodes)
     score_arith = (sil_norm + internal_independence) / 2.0
     score_harm = 2 / ((1 / (sil_norm + 1e-12)) + (1 / (internal_independence + 1e-12)))
     score_geo = np.sqrt(sil_norm * internal_independence)
@@ -217,6 +263,8 @@ def _cluster_metrics_from_parts(
         "sil_norm": float(sil_norm),
         "internal_independence": float(internal_independence),
         "dag_score": float(dag_score),
+        "cv_cluster_sizes": float(cv),
+        "opposing_sign_frac": float(opp),
         "n_middle": int(n_middle),
     }
 
