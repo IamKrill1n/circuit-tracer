@@ -45,15 +45,12 @@ SUMMARY_COLUMNS = [
     "best_k",
     "auto_k_candidates",
     "n_supernodes",
-    "score_arith",
-    "score_harm",
     "score_geo",
     "sil_raw",
     "sil_norm",
     "internal_independence",
     "dag_score",
     "n_middle",
-    "within_cluster_weighted_edge_cosine_mean",
     "result_path",
     "supernode_map_path",
     "auto_k_sweep_path",
@@ -201,10 +198,10 @@ def _middle_indices(prune_graph: PruneGraph) -> list[int]:
 
 
 def _fixed_k_from_num_nodes(n_middle: int, divisor: int) -> int:
-    """Integer k from round(num_nodes / divisor), clamped to [1, n_middle]."""
+    """Integer k from floor(num_nodes / divisor), clamped to [1, n_middle]."""
     if n_middle <= 0:
         return 1
-    return max(1, min(int(round(n_middle / float(divisor))), n_middle))
+    return max(1, min(n_middle // divisor, n_middle))
 
 
 def _fixed_k_schedule(n_middle: int) -> list[tuple[str, int]]:
@@ -213,34 +210,6 @@ def _fixed_k_schedule(n_middle: int) -> list[tuple[str, int]]:
         ("n_over_2", _fixed_k_from_num_nodes(n_middle, 2)),
         ("n_over_3", _fixed_k_from_num_nodes(n_middle, 3)),
     ]
-
-
-def _normalize_edge_weights(weights: torch.Tensor) -> torch.Tensor:
-    weights = torch.nan_to_num(weights, nan=0.0, posinf=0.0, neginf=0.0)
-    max_abs = float(weights.abs().max().item()) if weights.numel() else 0.0
-    if max_abs <= 0.0:
-        return torch.zeros_like(weights)
-    return weights / (max_abs + 1e-8)
-
-
-def _edge_weighted_profile_features(prune_graph: PruneGraph) -> np.ndarray:
-    adj_sender = prune_graph.pruned_adj.clone().float().T
-    edge_rel = prune_graph.edge_relevance
-    edge_inf = prune_graph.edge_influence
-    if edge_rel is None or edge_inf is None:
-        rel_sender = _normalize_edge_weights(adj_sender)
-        inf_sender = rel_sender
-    else:
-        rel_sender = _normalize_edge_weights(edge_rel.float().T)
-        inf_sender = _normalize_edge_weights(edge_inf.float().T)
-    weighted_out = adj_sender * inf_sender
-    weighted_in = (adj_sender * rel_sender).T
-    return torch.cat([weighted_out, weighted_in], dim=1).detach().cpu().numpy()
-
-
-def _node_profile_features(prune_graph: PruneGraph) -> np.ndarray:
-    adj_sender = prune_graph.pruned_adj.clone().float().T
-    return torch.cat([adj_sender, adj_sender.T], dim=1).detach().cpu().numpy()
 
 
 def _cosine_similarity(features: np.ndarray, nonnegative: bool = False) -> np.ndarray:
@@ -316,28 +285,6 @@ def _louvain_middle_labels(adjacency_mid: np.ndarray, random_state: int) -> np.n
     return labels
 
 
-def _within_cluster_mean_cosine(
-    features: np.ndarray,
-    final_supernodes: dict[str, list[str]],
-    prune_graph: PruneGraph,
-) -> float | None:
-    similarity = _cosine_similarity(features, nonnegative=False)
-    node_to_idx = {n.node_id: i for i, n in enumerate(prune_graph.nodes)}
-    pair_values: list[float] = []
-    for sn_name, members in final_supernodes.items():
-        if "EMB" in sn_name or "LOGIT" in sn_name:
-            continue
-        member_idx = [node_to_idx[node_id] for node_id in members if node_id in node_to_idx]
-        if len(member_idx) < 2:
-            continue
-        block = similarity[np.ix_(member_idx, member_idx)]
-        upper = block[np.triu_indices(len(member_idx), k=1)]
-        pair_values.extend(float(value) for value in upper.tolist())
-    if not pair_values:
-        return None
-    return float(np.mean(pair_values))
-
-
 def _flatten_metrics(
     *,
     graph_name: str,
@@ -353,7 +300,6 @@ def _flatten_metrics(
     auto_k_candidates: int,
     final_supernodes: dict[str, list[str]],
     base_score: dict[str, Any],
-    weighted_edge_cosine_mean: float | None,
     result_path: Path,
     supernode_map_path: Path,
     auto_k_sweep_path: Path | None,
@@ -371,15 +317,12 @@ def _flatten_metrics(
         "best_k": best_k,
         "auto_k_candidates": auto_k_candidates,
         "n_supernodes": len(final_supernodes),
-        "score_arith": base_score.get("score_arith"),
-        "score_harm": base_score.get("score_harm"),
         "score_geo": base_score.get("score_geo"),
         "sil_raw": base_score.get("sil_raw"),
         "sil_norm": base_score.get("sil_norm"),
         "internal_independence": base_score.get("internal_independence"),
         "dag_score": base_score.get("dag_score"),
         "n_middle": base_score.get("n_middle"),
-        "within_cluster_weighted_edge_cosine_mean": weighted_edge_cosine_mean,
         "result_path": str(result_path),
         "supernode_map_path": str(supernode_map_path),
         "auto_k_sweep_path": str(auto_k_sweep_path) if auto_k_sweep_path else "",
@@ -410,9 +353,11 @@ def _evaluate_ours_fixed_k(
     max_layer_span: int,
     random_state: int,
     n_init: int,
+    eval_similarity: np.ndarray,
 ) -> dict[str, Any]:
     mean_method = cast(Literal["geo", "harm", "arith"], method_config["mean_method"])
     decay_rate = float(cast(float, method_config["decay_rate"]))
+    # method-specific similarity used only for clustering, not for scoring
     similarity = compute_similarity(
         prune_graph,
         mean_method=mean_method,
@@ -433,7 +378,7 @@ def _evaluate_ours_fixed_k(
     base_score = score_k(
         final_supernodes,
         prune_graph,
-        similarity,
+        eval_similarity,
         enforce_dag=True,
     )
 
@@ -443,14 +388,6 @@ def _evaluate_ours_fixed_k(
     auto_k_sweep_path = run_dir / "fixed_k_metrics.json"
     result_path = run_dir / "result.json"
 
-    edge_cosine_mean = _within_cluster_mean_cosine(
-        _edge_weighted_profile_features(prune_graph),
-        final_supernodes,
-        prune_graph,
-    )
-    sweep_single = {
-        key: value for key, value in base_score.items()
-    }
     _write_json(supernode_map_path, final_supernodes)
     _write_json(
         auto_k_sweep_path,
@@ -458,7 +395,7 @@ def _evaluate_ours_fixed_k(
             "k_selection": k_selection,
             "target_k": target_k,
             "num_nodes": num_nodes,
-            "metrics": sweep_single,
+            "metrics": {key: value for key, value in base_score.items()},
         },
     )
 
@@ -476,7 +413,6 @@ def _evaluate_ours_fixed_k(
         auto_k_candidates=0,
         final_supernodes=final_supernodes,
         base_score=base_score,
-        weighted_edge_cosine_mean=edge_cosine_mean,
         result_path=result_path,
         supernode_map_path=supernode_map_path,
         auto_k_sweep_path=auto_k_sweep_path,
@@ -498,24 +434,19 @@ def _evaluate_baseline_fixed_k(
     dataset: str,
     output_dir: Path,
     method: str,
-    features: np.ndarray | None,
-    affinity: np.ndarray | torch.Tensor,
+    eval_similarity: np.ndarray,
     clusterer: Callable[[int], list[list[str]]],
     target_k: int,
     k_selection: str,
     num_nodes: int,
     enforce_dag: bool,
 ) -> dict[str, Any]:
-    if isinstance(affinity, torch.Tensor):
-        s_np = affinity.detach().cpu().numpy().astype(np.float64, copy=False)
-    else:
-        s_np = np.asarray(affinity, dtype=np.float64)
     clusters = clusterer(target_k)
     final_supernodes = supernodes_to_mapping(prune_graph, clusters)
     base_score = score_k(
         final_supernodes,
         prune_graph,
-        s_np,
+        eval_similarity,
         enforce_dag=enforce_dag,
     )
 
@@ -524,12 +455,6 @@ def _evaluate_baseline_fixed_k(
     auto_k_sweep_path = run_dir / "fixed_k_metrics.json"
     result_path = run_dir / "result.json"
 
-    edge_cosine_mean = _within_cluster_mean_cosine(
-        _edge_weighted_profile_features(prune_graph),
-        final_supernodes,
-        prune_graph,
-    )
-    sweep_single = {key: value for key, value in base_score.items()}
     _write_json(supernode_map_path, final_supernodes)
     _write_json(
         auto_k_sweep_path,
@@ -537,7 +462,7 @@ def _evaluate_baseline_fixed_k(
             "k_selection": k_selection,
             "target_k": target_k,
             "num_nodes": num_nodes,
-            "metrics": sweep_single,
+            "metrics": {key: value for key, value in base_score.items()},
         },
     )
 
@@ -555,7 +480,6 @@ def _evaluate_baseline_fixed_k(
         auto_k_candidates=0,
         final_supernodes=final_supernodes,
         base_score=base_score,
-        weighted_edge_cosine_mean=edge_cosine_mean,
         result_path=result_path,
         supernode_map_path=supernode_map_path,
         auto_k_sweep_path=auto_k_sweep_path,
@@ -564,7 +488,6 @@ def _evaluate_baseline_fixed_k(
         **summary_row,
         "final_supernodes": final_supernodes,
         "score_details": base_score.get("details", {}),
-        "feature_dim": int(features.shape[1]) if features is not None else None,
     }
     _write_json(result_path, result_payload)
     return result_payload
@@ -583,6 +506,9 @@ def evaluate_prune_graph(
     prune_graph = load_prune_graph(str(graph_path), map_location=map_location)
     graph_name, dataset = _graph_identity(graph_path, input_paths)
     rows: list[dict[str, Any]] = []
+
+    # fixed evaluation similarity space shared by all methods (default arith, no decay)
+    eval_similarity = compute_similarity(prune_graph).detach().cpu().numpy()
 
     num_nodes = len(_middle_indices(prune_graph))
     k_schedule = _fixed_k_schedule(num_nodes)
@@ -603,13 +529,12 @@ def evaluate_prune_graph(
                     max_layer_span=max_layer_span,
                     random_state=random_state,
                     n_init=n_init,
+                    eval_similarity=eval_similarity,
                 )
             )
 
     mid_idx = _middle_indices(prune_graph)
     middle_ids = [prune_graph.nodes[i].node_id for i in mid_idx]
-    node_features = _node_profile_features(prune_graph)
-    node_profile_similarity = _cosine_similarity(node_features, nonnegative=True)
     adjacency_affinity = _adjacency_affinity(prune_graph)
     adjacency_mid = adjacency_affinity[np.ix_(mid_idx, mid_idx)]
 
@@ -652,8 +577,7 @@ def evaluate_prune_graph(
             dataset=dataset,
             output_dir=output_dir,
             method="baseline-by-layer",
-            features=node_features,
-            affinity=node_profile_similarity,
+            eval_similarity=eval_similarity,
             clusterer=lambda _target_k: by_layer_clusters,
             target_k=by_layer_k,
             k_selection="by_layer",
@@ -671,8 +595,7 @@ def evaluate_prune_graph(
                 dataset=dataset,
                 output_dir=output_dir,
                 method="baseline-random",
-                features=node_features,
-                affinity=node_profile_similarity,
+                eval_similarity=eval_similarity,
                 clusterer=random_clusterer,
                 target_k=target_k,
                 k_selection=k_selection,
@@ -688,8 +611,7 @@ def evaluate_prune_graph(
                 dataset=dataset,
                 output_dir=output_dir,
                 method="baseline-louvain-adjacency",
-                features=None,
-                affinity=adjacency_affinity,
+                eval_similarity=eval_similarity,
                 clusterer=louvain_clusterer,
                 target_k=target_k,
                 k_selection=k_selection,

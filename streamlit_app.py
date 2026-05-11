@@ -83,10 +83,11 @@ def _prune_cache_path(repo_root: Path, input_path: Path, prune_cfg: dict[str, An
         "input_path": rel_input,
         "logit_weights": prune_cfg["logit_weights"],
         "token_weights": prune_cfg["token_weights"],
-        "node_influence_threshold": float(prune_cfg["node_influence_threshold"]),
-        "node_relevance_threshold": float(prune_cfg["node_relevance_threshold"]),
-        "edge_influence_threshold": float(prune_cfg["edge_influence_threshold"]),
-        "edge_relevance_threshold": float(prune_cfg["edge_relevance_threshold"]),
+        "node_threshold": float(prune_cfg["node_threshold"]),
+        "edge_threshold": float(prune_cfg["edge_threshold"]),
+        "combine_method": prune_cfg["combine_method"],
+        "normalization": prune_cfg["normalization"],
+        "alpha": float(prune_cfg["alpha"]),
         "keep_all_tokens_and_logits": bool(prune_cfg["keep_all_tokens_and_logits"]),
         "filter_act_density": bool(prune_cfg["filter_act_density"]),
         "act_density_lb": float(prune_cfg["act_density_lb"]),
@@ -202,10 +203,11 @@ def _load_prune_graph(input_mode: str, input_path: Path, prune_cfg: dict[str, An
             json_path=str(input_path),
             logit_weights=prune_cfg["logit_weights"],
             token_weights=prune_cfg["token_weights"],
-            node_influence_threshold=prune_cfg["node_influence_threshold"],
-            node_relevance_threshold=prune_cfg["node_relevance_threshold"],
-            edge_influence_threshold=prune_cfg["edge_influence_threshold"],
-            edge_relevance_threshold=prune_cfg["edge_relevance_threshold"],
+            node_threshold=prune_cfg["node_threshold"],
+            edge_threshold=prune_cfg["edge_threshold"],
+            combine_method=prune_cfg["combine_method"],
+            normalization=prune_cfg["normalization"],
+            alpha=prune_cfg["alpha"],
             keep_all_tokens_and_logits=prune_cfg["keep_all_tokens_and_logits"],
             filter_act_density=prune_cfg["filter_act_density"],
             act_density_lb=prune_cfg["act_density_lb"],
@@ -348,6 +350,24 @@ def _cluster_from_prune(
     return supernode_map, sng, run_meta
 
 
+def _load_eval_manifest(repo_root: Path) -> list[dict[str, Any]]:
+    manifest_path = repo_root / "eval_outputs" / "prune" / "subgraph" / "clt-hp" / "manifest.json"
+    if not manifest_path.exists():
+        return []
+    try:
+        return json.loads(manifest_path.read_text())["records"]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _slug_from_eval_pt(path: Path, records: list[dict[str, Any]]) -> str | None:
+    path_str = str(path)
+    for rec in records:
+        if path_str.endswith(rec["prune_graph_path"]):
+            return rec["graph_stem"]
+    return None
+
+
 def main() -> None:
     st.set_page_config(page_title="Cluster Graph Visualizer", layout="wide")
     st.title("Cluster Graph Visualizer")
@@ -367,6 +387,13 @@ def main() -> None:
         ".json",
     )
     default_pruned_files = _list_pruned_graphs(repo_root / "demos" / "subgraph")
+    eval_manifest_records = _load_eval_manifest(repo_root)
+    eval_pt_files = [
+        repo_root / rec["prune_graph_path"]
+        for rec in eval_manifest_records
+        if (repo_root / rec["prune_graph_path"]).exists()
+    ]
+    default_pruned_files = sorted(set(default_pruned_files + eval_pt_files), key=lambda p: str(p))
 
     input_mode = st.radio(
         "Input graph type",
@@ -410,6 +437,16 @@ def main() -> None:
     elif selected_label != "<none>":
         selected_path = repo_root / selected_label
 
+    if selected_path is not None and selected_path.suffix == ".pt" and input_mode == FULL_GRAPH_MODE:
+        st.warning(
+            "⚠️ Selected `.pt` file but `FULL_GRAPH_MODE` is active. Auto-switching to `PRUNED_GRAPH_MODE`."
+        )
+        input_mode = PRUNED_GRAPH_MODE
+
+    auto_slug = ""
+    if selected_path is not None and selected_path.suffix == ".pt":
+        auto_slug = _slug_from_eval_pt(selected_path, eval_manifest_records) or ""
+
     st.subheader("Display")
     edge_display_threshold = st.slider(
         "Display edge threshold (absolute weight)",
@@ -426,10 +463,11 @@ def main() -> None:
     prune_cfg: dict[str, Any] = {
         "logit_weights": "target",
         "token_weights": None,
-        "node_influence_threshold": 0.8,
-        "node_relevance_threshold": 0.8,
-        "edge_influence_threshold": 0.98,
-        "edge_relevance_threshold": 0.98,
+        "node_threshold": 0.8,
+        "edge_threshold": 0.98,
+        "combine_method": "geometric",
+        "normalization": "rank",
+        "alpha": 0.5,
         "keep_all_tokens_and_logits": True,
         "filter_act_density": False,
         "act_density_lb": 2e-5,
@@ -454,37 +492,42 @@ def main() -> None:
                         "node(s); **probs** uses each logit node’s `token_prob` from graph attributes."
                     ),
                 )
-                prune_cfg["node_influence_threshold"] = st.slider(
-                    "node_influence_threshold",
+                prune_cfg["node_threshold"] = st.slider(
+                    "node_threshold",
                     min_value=0.0,
                     max_value=1.0,
                     value=0.8,
                     step=0.01,
-                    help="Quantile-style cutoff on node *influence* (target-logit backward flow).",
+                    help="Quantile-style cutoff on combined node score (influence × relevance).",
                 )
-                prune_cfg["node_relevance_threshold"] = st.slider(
-                    "node_relevance_threshold",
-                    min_value=0.0,
-                    max_value=1.0,
-                    value=0.8,
-                    step=0.01,
-                    help="Quantile-style cutoff on node *relevance* (token forward flow).",
-                )
-                prune_cfg["edge_influence_threshold"] = st.slider(
-                    "edge_influence_threshold",
+                prune_cfg["edge_threshold"] = st.slider(
+                    "edge_threshold",
                     min_value=0.0,
                     max_value=1.0,
                     value=0.98,
                     step=0.01,
-                    help="Quantile-style cutoff on edge *influence*.",
+                    help="Quantile-style cutoff on combined edge score (influence × relevance).",
                 )
-                prune_cfg["edge_relevance_threshold"] = st.slider(
-                    "edge_relevance_threshold",
+                prune_cfg["combine_method"] = st.selectbox(
+                    "combine_method",
+                    options=["geometric", "arithmetic", "harmonic"],
+                    index=0,
+                    help="How node/edge influence and relevance scores are combined before thresholding.",
+                )
+                prune_cfg["normalization"] = st.selectbox(
+                    "normalization",
+                    options=["rank", "min_max"],
+                    index=0,
+                    help="Normalization applied to influence/relevance before combining.",
+                )
+                prune_cfg["alpha"] = st.number_input(
+                    "alpha (influence weight)",
                     min_value=0.0,
                     max_value=1.0,
-                    value=0.98,
-                    step=0.01,
-                    help="Quantile-style cutoff on edge *relevance*.",
+                    value=0.5,
+                    step=0.05,
+                    format="%.2f",
+                    help="Weight of influence vs relevance when combining: score = alpha*influence + (1-alpha)*relevance.",
                 )
             with prune_col_b:
                 prune_cfg["keep_all_tokens_and_logits"] = st.checkbox(
@@ -858,7 +901,7 @@ def main() -> None:
     upload_col_1, upload_col_2 = st.columns(2)
     with upload_col_1:
         upload_model_id = st.text_input("model_id", value="gemma-2-2b")
-        upload_slug = st.text_input("slug (parent graph slug)", value="")
+        upload_slug = st.text_input("slug (parent graph slug)", value=auto_slug)
         upload_display_name = st.text_input("display_name", value="")
     with upload_col_2:
         upload_pruning_threshold = st.number_input(

@@ -126,39 +126,33 @@ Since $\cG'$ is dense, we assume $|A'_{ij}| > 0$ for all $i,j$ with $\mathrm{lay
 For each attribution graph $\cG$, ASG constructs a candidate subgraph $\cG'$ by retaining nodes and edges that score highly under a \emph{combined} criterion that fuses two complementary signals: \textbf{influence}---the indirect effect of an internal node on the target logits \cite{circuit-tracer,arxiv:2410.13032}---and \textbf{relevance}---the indirect dependence of an internal node on the input tokens. Influence is propagated backward from logits through input-normalized edges; relevance is propagated forward from embeddings through output-normalized edges.
 
 \paragraph{Influence and relevance scores.}
-We define an input-normalized matrix $A^{\mathrm{in}}$ and an output-normalized matrix $A^{\mathrm{out}}$ by
+Let $A'_{ij}$ denote the edge weight from node $i$ to node $j$ in $\cG'$. We define input- and output-normalized matrices
 \[
 A^{\mathrm{in}}_{ij} \,=\, \frac{|A'_{ij}|}{\sum_{k}|A'_{kj}|}, \qquad
 A^{\mathrm{out}}_{ij} \,=\, \frac{|A'_{ij}|}{\sum_{k}|A'_{ik}|},
 \]
-so that each column of $A^{\mathrm{in}}$ sums to 1 (incoming mass normalized per node) and each row of $A^{\mathrm{out}}$ sums to 1 (outgoing mass normalized per node). The indirect influence and relevance matrices are the Neumann series
+so that each column of $A^{\mathrm{in}}$ sums to 1 (each target node's incoming mass sums to 1) and each row of $A^{\mathrm{out}}$ sums to 1 (each source node's outgoing mass sums to 1). Let $\ell\in\R^n$ be the logit-weight vector and $\tau\in\R^n$ the token-weight vector (set to normalized SHAP values \cite{shap}). Node scores are computed via the Neumann series, which converges because $\cG'$ is a DAG:
 \[
-B^{\mathrm{in}} = (I-(A^{\mathrm{in}})^{\top})^{-1}, \quad
-B^{\mathrm{out}} = (I-A^{\mathrm{out}})^{-1},
+\mathrm{Inf}_u = \bigl(\ell^\top (I-(A^{\mathrm{in}})^{\top})^{-1}\bigr)_u, \qquad
+\mathrm{Rel}_u = \bigl(\tau^\top (I-A^{\mathrm{out}})^{-1}\bigr)_u.
 \]
-which converge because $\cG$ is a DAG. Let $\ell\in\R^n$ denote the logit-weight vector ($\ell_u=0$ off the target logits, positive on them) and $\tau\in\R^n$ the token-weight vector, with $\tau_u=0$ off embedding nodes and $\tau_u\ge 0$ on input tokens. We set $\tau$ to normalized SHAP values \cite{shap}, providing a sparse, human-aligned per-token importance signal. The node-level scores are
+Edge scores decompose node scores by edge fraction:
 \[
-\mathrm{Inf}_u = (\ell^\top B^{\mathrm{in}})_u, \qquad
-\mathrm{Rel}_u = (\tau^\top B^{\mathrm{out}})_u,
+\mathrm{Inf}_{uv} = \mathrm{Inf}_v\,A^{\mathrm{in}}_{uv}, \qquad
+\mathrm{Rel}_{uv} = \mathrm{Rel}_u\,A^{\mathrm{out}}_{uv},
 \]
-and the edge-level scores are
-\[
-\mathrm{Inf}_{uv} = \mathrm{Inf}_v\,A^{\mathrm{in}}_{vu}, \qquad
-\mathrm{Rel}_{uv} = \mathrm{Rel}_u\,A^{\mathrm{out}}_{uv}.
-\]
+where $uv$ denotes the edge from source $u$ to target $v$, so $A^{\mathrm{in}}_{uv}$ is the fraction of $v$'s input mass from $u$, and $A^{\mathrm{out}}_{uv}$ is the fraction of $u$'s output mass to $v$.
 
 \paragraph{Combined score.}
-Influence and relevance live on different scales: both distributions are heavily zero-inflated and a small number of nodes dominate the raw mass, so directly comparing or summing the two vectors is unreliable. We therefore first normalize each score to a common $[0,1]$ scale and then combine them. Let $s\in\R^N$ be a score vector (either $\mathrm{Inf}$ or $\mathrm{Rel}$, evaluated over nodes or over the flattened edge set). We use the rank-percentile transform
+Because influence and relevance live on different scales and are heavily zero-inflated, we normalize each to $[0,1]$ via the rank-percentile transform
 \[
-\mathrm{rank}(s)_u \;=\; \frac{|\{v : s_v < s_u\}|}{N - 1} \;\in\; [0,1],
+\mathrm{rank}(s)_u \;=\; \frac{|\{v : s_v < s_u\}|}{N - 1},
 \]
-which is robust to zero-inflation and to outliers. Writing $\widehat{\mathrm{Inf}}=\mathrm{rank}(\mathrm{Inf})$ and $\widehat{\mathrm{Rel}}=\mathrm{rank}(\mathrm{Rel})$, the combined score with mixing parameter $\alpha\in[0,1]$ is the weighted geometric mean
+and combine them as the weighted geometric mean
 \[
-C_u \;=\; \bigl(\widehat{\mathrm{Inf}}_u + \varepsilon\bigr)^{\alpha}\,\bigl(\widehat{\mathrm{Rel}}_u + \varepsilon\bigr)^{1-\alpha}.
+C_u \;=\; \bigl(\widehat{\mathrm{Inf}}_u + \varepsilon\bigr)^{\alpha}\,\bigl(\widehat{\mathrm{Rel}}_u + \varepsilon\bigr)^{1-\alpha}, \quad \alpha\in[0,1].
 \]
-The geometric form penalizes nodes that are weak on either axis, encoding the desideratum that a retained node should be \emph{both} reachable from the input and influential on the output. Arithmetic and harmonic means are also supported as alternative combiners.
-
-We motivate the use of a combined score over the alternative of separately thresholding $\mathrm{Inf}$ and $\mathrm{Rel}$ and intersecting the resulting masks. The intersection rule drops every node that fails either independent threshold even if it scores moderately on both, and this loss is non-trivial in practice: empirically, the rank-percentile correlation between $\mathrm{Inf}$ and $\mathrm{Rel}$ on feature nodes is mildly positive (Pearson $r \approx 0.2$--$0.4$ on multihop prompts), so the two signals carry complementary information yet are not orthogonal. A single combined score with a single threshold yields a strictly more principled ranking and avoids the asymmetry of two independent cutoffs.
+The geometric form penalizes nodes weak on either axis, encoding the desideratum that a retained node must be \emph{both} reachable from input tokens and influential on the output. Arithmetic and harmonic means are also supported.
 
 \paragraph{Cumulative-mass thresholding.}
 Given a combined score vector $C$, we sort entries in descending order and keep the smallest prefix whose cumulative mass exceeds a threshold $\eta\in[0,1]$:
@@ -168,26 +162,7 @@ t = \min\Bigl\{k : \tfrac{\sum_{j\le k} C_{(j)}}{\sum_j C_{(j)}} \ge \eta\Bigr\}
 \]
 where $C_{(j)}$ denotes the $j$-th largest score. This is the same cumulative-mass rule used by prior circuit tracing work \cite{circuit-tracer}, applied here to the combined ranking rather than to a single metric.
 
-We apply this rule once at the node level with threshold $\eta_V$ to obtain a node mask, then recompute the edge-level combined score $C_{uv}$ on the node-pruned graph and apply the rule again at the edge level with threshold $\eta_E$. A final cleanup step removes dangling nodes (interior nodes with no surviving outgoing or incoming edges) until the masks reach a fixed point.
-
-\begin{algorithm}[H]
-\caption{Prune attribution graph (combined score)}
-\label{alg:prune}
-\begin{algorithmic}[1]
-\Require Graph $\cG$, \texttt{token\_weights}, \texttt{logit\_weights}, thresholds $(\eta_V,\eta_E)$, mixing $\alpha$
-\Ensure $(\texttt{node\_mask},\texttt{edge\_mask})$
-\State Compute $\mathrm{Inf}, \mathrm{Rel}$ on nodes via Neumann series
-\State $\widehat{\mathrm{Inf}} \gets \mathrm{rank}(\mathrm{Inf})$;\quad $\widehat{\mathrm{Rel}} \gets \mathrm{rank}(\mathrm{Rel})$
-\State $C^V_u \gets (\widehat{\mathrm{Inf}}_u+\varepsilon)^{\alpha}(\widehat{\mathrm{Rel}}_u+\varepsilon)^{1-\alpha}$
-\State $\texttt{node\_mask} \gets M_{\eta_V}(C^V)$;\quad force-keep tokens and target logits
-\State Recompute $\mathrm{Inf}_{uv}, \mathrm{Rel}_{uv}$ on the node-pruned graph
-\State $\widehat{\mathrm{Inf}}_{uv} \gets \mathrm{rank}(\mathrm{Inf}_{uv})$;\quad $\widehat{\mathrm{Rel}}_{uv} \gets \mathrm{rank}(\mathrm{Rel}_{uv})$
-\State $C^E_{uv} \gets (\widehat{\mathrm{Inf}}_{uv}+\varepsilon)^{\alpha}(\widehat{\mathrm{Rel}}_{uv}+\varepsilon)^{1-\alpha}$
-\State $\texttt{edge\_mask} \gets M_{\eta_E}(C^E)$
-\State Iteratively remove dangling nodes and edges
-\State \Return $(\texttt{node\_mask},\texttt{edge\_mask})$
-\end{algorithmic}
-\end{algorithm}
+We apply this rule at the node level with threshold $\eta_V$ to obtain a node mask, recompute edge-level combined scores $C_{uv}$ on the node-pruned graph, then apply it again at the edge level with threshold $\eta_E$. A final cleanup step iteratively removes dangling interior nodes (no surviving incoming or outgoing edges). The full procedure is given in \Cref{alg:prune}.
 
 \paragraph{Step 2: Supernode Clustering.}
 After pruning, the graph typically still contains groups of features with similar mechanistic roles—a consequence of feature splitting \cite{split} and the structure of the underlying feature manifold. We cluster these into supernodes to produce a compact summary.
@@ -276,5 +251,31 @@ Future work includes adaptive threshold selection based on graph statistics, tas
 We present ASG, an automated pipeline for summarizing attribution graphs in circuit tracing workflows. By combining joint influence--relevance pruning with DAG-constrained supernode clustering, ASG produces compact summaries that preserve attribution mass while grouping features into semantically coherent units. This addresses a practical bottleneck in mechanistic interpretability: the gap between raw attribution graphs and human-interpretable circuit diagrams. We provide a formal problem formulation, a detailed algorithm, and an experimental protocol. We hope ASG will serve as a standardized, reproducible foundation for attribution graph analysis.
 
 \bibliography{citation}
+
+\appendix
+
+\section{Pruning Algorithm}
+\label{sec:appendix-prune}
+
+\begin{algorithm}[H]
+\caption{Prune attribution graph (combined score)}
+\label{alg:prune}
+\begin{algorithmic}[1]
+\Require Graph $\cG$, \texttt{token\_weights} $\tau$, \texttt{logit\_weights} $\ell$, thresholds $(\eta_V,\eta_E)$, mixing $\alpha$
+\Ensure $(\texttt{node\_mask},\texttt{edge\_mask})$
+\State Compute $\mathrm{Inf}_u = (\ell^\top (I-(A^{\mathrm{in}})^\top)^{-1})_u$ for all $u$
+\State Compute $\mathrm{Rel}_u = (\tau^\top (I-A^{\mathrm{out}})^{-1})_u$ for all $u$
+\State $\widehat{\mathrm{Inf}} \gets \mathrm{rank}(\mathrm{Inf})$;\quad $\widehat{\mathrm{Rel}} \gets \mathrm{rank}(\mathrm{Rel})$
+\State $C^V_u \gets (\widehat{\mathrm{Inf}}_u+\varepsilon)^{\alpha}(\widehat{\mathrm{Rel}}_u+\varepsilon)^{1-\alpha}$
+\State $\texttt{node\_mask} \gets M_{\eta_V}(C^V)$;\quad force-keep all embedding and logit nodes
+\State Zero out rows/columns of $A'$ not in \texttt{node\_mask}
+\State Compute $\mathrm{Inf}_{uv} = \mathrm{Inf}_v A^{\mathrm{in}}_{uv}$ and $\mathrm{Rel}_{uv} = \mathrm{Rel}_u A^{\mathrm{out}}_{uv}$ on pruned graph
+\State $\widehat{\mathrm{Inf}}_{uv} \gets \mathrm{rank}(\mathrm{Inf}_{uv})$;\quad $\widehat{\mathrm{Rel}}_{uv} \gets \mathrm{rank}(\mathrm{Rel}_{uv})$
+\State $C^E_{uv} \gets (\widehat{\mathrm{Inf}}_{uv}+\varepsilon)^{\alpha}(\widehat{\mathrm{Rel}}_{uv}+\varepsilon)^{1-\alpha}$
+\State $\texttt{edge\_mask} \gets M_{\eta_E}(C^E)$
+\State \textbf{repeat} remove interior nodes with no surviving in- or out-edges \textbf{until} fixed point
+\State \Return $(\texttt{node\_mask},\texttt{edge\_mask})$
+\end{algorithmic}
+\end{algorithm}
 
 \end{document}

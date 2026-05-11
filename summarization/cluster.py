@@ -189,9 +189,9 @@ def _resolve_layer_interleaving(
                 # interleaving: a_lo < b_lo < a_hi < b_hi (or symmetric)
                 a_wraps_b_boundary = a_lo < b_lo < a_hi < b_hi
                 b_wraps_a_boundary = b_lo < a_lo < b_hi < a_hi
-                # containment
-                a_contains_b = a_lo < b_lo and b_hi < a_hi
-                b_contains_a = b_lo < a_lo and a_hi < b_hi
+                # containment: use <= so shared-boundary cases (a_lo==b_lo or a_hi==b_hi) are caught
+                a_contains_b = a_lo <= b_lo and b_hi <= a_hi and (a_lo, a_hi) != (b_lo, b_hi)
+                b_contains_a = b_lo <= a_lo and a_hi <= b_hi and (a_lo, a_hi) != (b_lo, b_hi)
 
                 if a_wraps_b_boundary or a_contains_b:
                     replacement = _split_cluster_by_boundary(a, b_lo, nodes_by_id)
@@ -332,9 +332,7 @@ def cluster_graph(
 
     mid_sim = sim[middle_idx][:, middle_idx].detach().cpu().numpy().clip(0.0, 1.0)
 
-    # assert symmetry of mid_sim
-    assert np.allclose(mid_sim, mid_sim.T)
-    # mid_sim = ((mid_sim + mid_sim.T) / 2.0).clip(0.0, 1.0)
+    mid_sim = ((mid_sim + mid_sim.T) / 2.0).clip(0.0, 1.0)
     target_k = max(1, min(target_k, len(middle_ids)))
 
     if target_k == 1:
