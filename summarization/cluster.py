@@ -353,16 +353,18 @@ def cluster_graph(
         grouped.setdefault(int(lbl), []).append(nid)
     middle_clusters = list(grouped.values())
 
-    if enforce_dag:
+    if enforce_dag and max_layer_span is not None:
         span_safe: list[list[str]] = []
         for cluster in middle_clusters:
             span_safe.extend(_split_cluster_by_span(cluster, nodes_by_id, max_layer_span=max_layer_span))
         middle_clusters = span_safe
 
     if enforce_dag:
+        print(f"Resolving layer interleaving in {len(middle_clusters)} initial clusters...")
         middle_clusters = _resolve_layer_interleaving(middle_clusters, nodes_by_id)
 
     if max_sn is not None and enforce_dag:
+        print(f"Merging to budget of {max_sn} supernodes...")
         middle_clusters = _merge_to_budget(middle_clusters, nodes_by_id, max_sn=max_sn)
 
     # Keep deterministic naming order for middle SNs, but return member lists only.

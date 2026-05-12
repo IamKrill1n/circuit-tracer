@@ -8,7 +8,8 @@
       "Skill(update-config)",
       "Skill(update-config:*)",
       "Bash(ls -la /home/tu/circuit-tracer/.claude/ ~/.claude/settings.json 2>&1 | head -30)",
-      "Read(//home/tu/.claude/**)"
+      "Read(//home/tu/.claude/**)",
+      "WebFetch(domain:www.neuronpedia.org)"
     ],
     "additionalDirectories": [
       "/tmp/eval_smoke"

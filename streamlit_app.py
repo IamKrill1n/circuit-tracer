@@ -399,6 +399,7 @@ def main() -> None:
         "Input graph type",
         options=[FULL_GRAPH_MODE, PRUNED_GRAPH_MODE],
         horizontal=True,
+        disabled=pipeline_running,
         help=(
             "Full JSON: run the pruning pipeline (with SHAP+sparsemax token weights), then cluster. "
             "Pruned .pt: load a saved `PruneGraph` directly."
@@ -420,12 +421,14 @@ def main() -> None:
         "Choose an input file",
         options=file_options,
         index=0,
+        disabled=pipeline_running,
         help="Pick a discovered file under the repo, or use the manual path field below.",
     )
     custom_path = st.text_input(
         "Or enter a path manually",
         value="",
         placeholder="e.g. demos/temp_graph_files/example.json",
+        disabled=pipeline_running,
         help="If set, this path wins over the dropdown. Relative paths are resolved from the repository root.",
     ).strip()
 
@@ -454,6 +457,7 @@ def main() -> None:
         max_value=1.0,
         value=0.0,
         step=0.01,
+        disabled=False,
         help=(
             "Visualization-only filter: supernode edges with |weight| below this are omitted from the "
             "networkx view and the edges table. Does not change clustering or saved outputs."
@@ -609,11 +613,13 @@ def main() -> None:
                 )
 
     st.subheader("Clustering parameters")
+    pipeline_running = st.session_state.pipeline_result is not None and "prune_graph" in st.session_state.pipeline_result
     col_a, col_b, col_c = st.columns(3)
     with col_a:
         auto_k = st.checkbox(
             "Pick k automatically (`find_best_k`)",
             value=False,
+            disabled=pipeline_running,
             help=(
                 "Sweep k over an eigengap-derived range (or your overrides), cluster each k, and pick "
                 "the k with the best composite score. The final clustering then uses that k."
@@ -625,6 +631,7 @@ def main() -> None:
             max_value=50,
             value=7,
             step=1,
+            disabled=pipeline_running,
             help="Desired number of middle supernodes for spectral clustering (clamped to the number of middle nodes).",
         )
         max_layer_span = st.slider(
@@ -633,6 +640,7 @@ def main() -> None:
             max_value=32,
             value=4,
             step=1,
+            disabled=pipeline_running,
             help=(
                 "Post-cluster repair: split any middle supernode whose member layers span more than this "
                 "many layers (keeps supernodes layer-local)."
@@ -643,6 +651,7 @@ def main() -> None:
             min_value=0,
             value=0,
             step=1,
+            disabled=pipeline_running,
             help=(
                 "Optional hard cap on the count of middle supernodes: greedily merge adjacent layer clusters "
                 "until at most this many remain. Zero disables the cap."
@@ -653,6 +662,7 @@ def main() -> None:
             "mean_method",
             options=["geo", "harm", "arith"],
             index=2,
+            disabled=pipeline_running,
             help=(
                 "How output/input cosine similarities are combined to form affinity: "
                 "**geo** (geometric), **harm** (harmonic), or **arith** (arithmetic)."
@@ -661,6 +671,7 @@ def main() -> None:
         enforce_dag = st.checkbox(
             "enforce_dag",
             value=True,
+            disabled=pipeline_running,
             help=(
                 "When splitting/repairing clusters, enforce layer ordering so supernode DAG interpretations "
                 "stay sensible. Passed through to supernode graph construction and auto-k scoring."
@@ -672,6 +683,7 @@ def main() -> None:
             max_value=2_147_483_647,
             value=42,
             step=1,
+            disabled=pipeline_running,
             help=(
                 "RNG seed for sklearn’s k-means label assignment in the **final** `cluster_graph` run. "
                 "The auto-k sweep calls `cluster_graph` without this argument and therefore uses library defaults."
@@ -683,6 +695,7 @@ def main() -> None:
             max_value=100,
             value=20,
             step=1,
+            disabled=pipeline_running,
             help=(
                 "k-means restarts for the **final** clustering step; the auto-k sweep uses `cluster_graph`’s "
                 "default `n_init` unless you change the library call."
@@ -694,6 +707,7 @@ def main() -> None:
             max_value=10.0,
             value=1.0,
             step=0.1,
+            disabled=pipeline_running,
             help=(
                 "Layer-distance penalty applied to similarity: exp(-decay_rate * |layer_i-layer_j|). "
                 "Set to 0 to disable distance decay."
@@ -707,6 +721,7 @@ def main() -> None:
             max_value=100,
             value=0,
             step=1,
+            disabled=pipeline_running,
             help="If non-zero, fixes the minimum k in the sweep instead of the eigengap-derived search_range lower bound.",
         )
         k_max_override_raw = st.number_input(
@@ -715,6 +730,7 @@ def main() -> None:
             max_value=100,
             value=0,
             step=1,
+            disabled=pipeline_running,
             help="If non-zero, fixes the maximum k in the sweep instead of the eigengap-derived upper bound.",
         )
 
@@ -737,7 +753,7 @@ def main() -> None:
     if "last_upload_result" not in st.session_state:
         st.session_state.last_upload_result = None
 
-    if st.button("Run clustering pipeline", type="primary"):
+    if st.button("Run clustering pipeline", type="primary", disabled=pipeline_running):
         if selected_path is None:
             st.error("Please select or enter an input path.")
             st.stop()
@@ -745,14 +761,19 @@ def main() -> None:
             st.error(f"Input file not found: {selected_path}")
             st.stop()
 
-        with st.spinner("Running pipeline..."):
-            try:
+        progress_container = st.container()
+        try:
+            with progress_container.status("Running pipeline...", expanded=True) as status:
+                st.write("Loading/pruning graph...")
                 prune_graph, prune_meta = _load_or_build_prune_graph(
                     repo_root=repo_root,
                     input_mode=input_mode,
                     input_path=selected_path,
                     prune_cfg=prune_cfg,
                 )
+                st.write(f"✓ Pruned graph ready ({prune_graph.num_nodes} nodes, {prune_graph.num_edges} edges)")
+
+                st.write("Running clustering...")
                 supernode_map, sng, run_meta = _cluster_from_prune(
                     prune_graph,
                     cluster_cfg,
@@ -760,9 +781,12 @@ def main() -> None:
                     auto_k=bool(auto_k),
                     auto_k_cfg=auto_k_cfg,
                 )
-            except Exception as exc:  # noqa: BLE001
-                st.exception(exc)
-                st.stop()
+                st.write(f"✓ Clustering complete ({len(supernode_map)} supernodes)")
+                status.update(label="Pipeline finished", state="complete")
+
+        except Exception as exc:  # noqa: BLE001
+            st.exception(exc)
+            st.stop()
 
         st.session_state.pipeline_result = {
             "input_mode": input_mode,

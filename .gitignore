@@ -180,6 +180,7 @@ cython_debug/
 #Big files
 demos/graphs/
 demos/temp_graph_files/
+demos/graph_files/
 nohup.out
 runs/
 
