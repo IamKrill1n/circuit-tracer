@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from summarization.cluster import cluster_graph, compute_similarity
+from summarization.cluster import cluster_graph, cluster_graph_bounded_layer_dp, compute_similarity
 from summarization.prune import PruneGraph
 from summarization.utils import _node_from_json_dict
 
@@ -65,3 +65,51 @@ def test_cluster_graph_spectral_output_shape() -> None:
     fixed = [sn for sn in supernodes if sn[0].startswith("E") or sn[0].startswith("27")]
     assert len(middle) == 2
     assert len(fixed) == 2  # one embedding and one logit singleton in this fixture
+
+
+def test_cluster_graph_bounded_layer_dp_output_shape() -> None:
+    prune_graph = _build_test_graph()
+    supernodes = cluster_graph_bounded_layer_dp(prune_graph, n_segments=2)
+
+    middle = [sn for sn in supernodes if not sn[0].startswith("E") and not sn[0].startswith("27")]
+    fixed = [sn for sn in supernodes if sn[0].startswith("E") or sn[0].startswith("27")]
+    assert len(middle) == 2
+    assert len(fixed) == 2
+
+
+def test_cluster_graph_bounded_layer_dp_no_interleaving() -> None:
+    # Fixture has layers 1 and 2 for middle nodes; 2 segments must not interleave.
+    prune_graph = _build_test_graph()
+    supernodes = cluster_graph_bounded_layer_dp(prune_graph, n_segments=2)
+
+    from summarization.cluster import _layer_numeric, _nodes_by_id
+    nodes_by_id = _nodes_by_id(prune_graph)
+    middle = [sn for sn in supernodes if not sn[0].startswith("E") and not sn[0].startswith("27")]
+
+    ranges = [(min(_layer_numeric(n, nodes_by_id) for n in sn),
+               max(_layer_numeric(n, nodes_by_id) for n in sn)) for sn in middle]
+
+    # No two supernodes should have overlapping layer ranges
+    for i, (lo_a, hi_a) in enumerate(ranges):
+        for j, (lo_b, hi_b) in enumerate(ranges):
+            if i >= j:
+                continue
+            assert hi_a < lo_b or hi_b < lo_a, f"Supernodes {i} and {j} have overlapping layers"
+
+
+def test_cluster_graph_bounded_layer_dp_all_nodes_covered() -> None:
+    prune_graph = _build_test_graph()
+    supernodes = cluster_graph_bounded_layer_dp(prune_graph, n_segments=2)
+
+    all_returned = {nid for sn in supernodes for nid in sn}
+    assert all_returned == set(prune_graph.node_ids)
+
+
+def test_cluster_graph_bounded_layer_dp_k_per_segment() -> None:
+    # With k_per_segment=2 and 2 nodes per layer, we get up to 2 supernodes per segment.
+    prune_graph = _build_test_graph()
+    supernodes = cluster_graph_bounded_layer_dp(prune_graph, n_segments=1, k_per_segment=2)
+
+    middle = [sn for sn in supernodes if not sn[0].startswith("E") and not sn[0].startswith("27")]
+    # 4 middle nodes, 1 segment, 2 per segment → 2 supernodes
+    assert len(middle) == 2

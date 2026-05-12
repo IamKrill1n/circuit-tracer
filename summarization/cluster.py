@@ -377,6 +377,154 @@ def cluster_graph(
     return supernodes
 
 
+def _dp_segment_layers(
+    middle_ids: list[str],
+    mid_sim: np.ndarray,
+    nodes_by_id: dict[str, Node],
+    k_segments: int,
+) -> list[list[str]]:
+    """
+    Partition middle nodes into k contiguous layer blocks via DP, maximising
+    total off-diagonal pairwise similarity within blocks.
+    """
+    layer_of = [_layer_numeric(nid, nodes_by_id) for nid in middle_ids]
+    distinct_layers = sorted(set(layer_of))
+    M = len(distinct_layers)
+    n = len(middle_ids)
+
+    k_segments = min(k_segments, M)
+
+    layer_to_lidx = {l: li for li, l in enumerate(distinct_layers)}
+    node_lidx = np.array([layer_to_lidx[l] for l in layer_of])
+
+    # block_coh[a][b] = sum of off-diagonal pairwise similarities for nodes in layers [a..b]
+    block_coh = np.zeros((M, M), dtype=np.float64)
+    for a in range(M):
+        a_nodes = np.where(node_lidx == a)[0]
+        running = list(a_nodes)
+        S_aa = mid_sim[np.ix_(a_nodes, a_nodes)]
+        block_coh[a, a] = (float(S_aa.sum()) - len(a_nodes)) / 2.0
+        for b in range(a + 1, M):
+            b_nodes = np.where(node_lidx == b)[0]
+            cross = float(mid_sim[np.ix_(np.array(running), b_nodes)].sum())
+            S_bb = mid_sim[np.ix_(b_nodes, b_nodes)]
+            intra_b = (float(S_bb.sum()) - len(b_nodes)) / 2.0
+            block_coh[a, b] = block_coh[a, b - 1] + cross + intra_b
+            running.extend(b_nodes.tolist())
+
+    # dp[k][j] = max cohesion covering layer indices 0..j-1 with exactly k segments
+    dp = np.full((k_segments + 1, M + 1), float("-inf"), dtype=np.float64)
+    back = np.full((k_segments + 1, M + 1), -1, dtype=np.int32)
+    dp[0][0] = 0.0
+
+    for k in range(1, k_segments + 1):
+        for j in range(k, M + 1):
+            for i in range(k - 1, j):
+                val = dp[k - 1][i] + block_coh[i, j - 1]
+                if val > dp[k][j]:
+                    dp[k][j] = val
+                    back[k][j] = i
+
+    # Traceback: seg_starts[i] = first layer index of segment i
+    seg_starts: list[int] = []
+    j = M
+    for k in range(k_segments, 0, -1):
+        i = int(back[k][j])
+        seg_starts.append(i)
+        j = i
+    seg_starts.reverse()
+
+    result: list[list[str]] = []
+    for seg_idx, start in enumerate(seg_starts):
+        end = seg_starts[seg_idx + 1] if seg_idx + 1 < len(seg_starts) else M
+        members = [middle_ids[i] for i in range(n) if start <= node_lidx[i] < end]
+        if members:
+            result.append(members)
+
+    return result
+
+
+def cluster_graph_bounded_layer_dp(
+    prune_graph: PruneGraph,
+    n_segments: int = 7,
+    k_per_segment: int = 1,
+    mean_method: Literal["geo", "harm", "arith"] = "arith",
+    normalize_weights: bool = False,
+    random_state: int = 42,
+    n_init: int = 20,
+) -> list[list[str]]:
+    """
+    Cluster via Bounded-Layer DP (Approach 2 from clusterv3.md).
+
+    Finds n_segments contiguous layer blocks via DP (maximising within-block
+    similarity), then optionally runs spectral clustering within each block.
+    DAG ordering is guaranteed by construction — no post-processing needed.
+
+    Args:
+        prune_graph: Output of prune_graph_pipeline.
+        n_segments: Number of contiguous layer blocks to find via DP.
+        k_per_segment: Supernodes per block. 1 = each block is one supernode.
+        mean_method: How to combine out/in similarities.
+        normalize_weights: Min-max normalize influence/relevance before similarity.
+        random_state: Seed for within-segment spectral clustering k-means.
+        n_init: k-means initialisations for within-segment spectral clustering.
+
+    Returns:
+        List of supernodes (member id lists). Embeddings/logits are singletons.
+    """
+    kept_ids = prune_graph.node_ids
+    nodes_by_id = _nodes_by_id(prune_graph)
+
+    if not kept_ids:
+        return []
+
+    sim = compute_similarity(prune_graph, mean_method=mean_method, normalize_weights=normalize_weights)
+
+    middle_idx = [i for i, nid in enumerate(kept_ids) if not node_is_fixed(nodes_by_id[nid])]
+    middle_ids = [kept_ids[i] for i in middle_idx]
+
+    if not middle_ids:
+        return [[nid] for nid in kept_ids]
+
+    mid_sim = sim[middle_idx][:, middle_idx].detach().cpu().numpy().clip(0.0, 1.0)
+    mid_sim = ((mid_sim + mid_sim.T) / 2.0).clip(0.0, 1.0)
+
+    segments = _dp_segment_layers(middle_ids, mid_sim, nodes_by_id, k_segments=n_segments)
+
+    middle_clusters: list[list[str]] = []
+    for seg_members in segments:
+        if k_per_segment <= 1 or len(seg_members) <= 1:
+            middle_clusters.append(seg_members)
+            continue
+
+        seg_idx_map = {nid: i for i, nid in enumerate(middle_ids)}
+        indices = [seg_idx_map[nid] for nid in seg_members]
+        seg_sim = mid_sim[np.ix_(indices, indices)]
+        k = min(k_per_segment, len(seg_members))
+
+        if k == len(seg_members):
+            middle_clusters.extend([[nid] for nid in seg_members])
+        else:
+            seg_labels = SpectralClustering(
+                n_clusters=k,
+                affinity="precomputed",
+                assign_labels="kmeans",
+                random_state=int(random_state),
+                n_init=int(n_init),
+            ).fit_predict(seg_sim)
+            grouped: dict[int, list[str]] = {}
+            for nid, lbl in zip(seg_members, seg_labels):
+                grouped.setdefault(int(lbl), []).append(nid)
+            middle_clusters.extend(grouped.values())
+
+    named_middle = _name_middle_supernodes(middle_clusters, nodes_by_id)
+
+    emb_singletons = [[nid] for nid in kept_ids if node_is_embedding(nodes_by_id[nid])]
+    logit_singletons = [[nid] for nid in kept_ids if node_is_logit(nodes_by_id[nid])]
+
+    return list(named_middle.values()) + emb_singletons + logit_singletons
+
+
 def cluster_graph_with_labels(
     prune_graph: PruneGraph,
     **kwargs,
