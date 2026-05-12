@@ -377,6 +377,156 @@ def cluster_graph(
     return supernodes
 
 
+def _merge_creates_cycle(ca: np.ndarray, a: int, b: int, active: set[int]) -> bool:
+    """
+    True iff merging clusters a and b would create a cycle in the cluster DAG.
+
+    A direct edge a→b (or b→a) is fine — it just becomes internal to the merged
+    cluster. A cycle arises only when an out-neighbor of the merged cluster can
+    reach {a, b} via other clusters, i.e. there is an indirect path (length ≥ 2)
+    between a and b.
+    """
+    n = ca.shape[0]
+    # Out-neighbors of the merged cluster that are neither a nor b
+    out_nbrs = [c for c in range(n) if c in active and c != a and c != b and (ca[a, c] or ca[b, c])]
+    for c in out_nbrs:
+        visited = {c}
+        stack = [c]
+        while stack:
+            node = stack.pop()
+            for nbr in range(n):
+                if ca[node, nbr] and nbr in active and nbr not in visited:
+                    if nbr == a or nbr == b:
+                        return True
+                    visited.add(nbr)
+                    stack.append(nbr)
+    return False
+
+
+def cluster_graph_agglomerative(
+    prune_graph: PruneGraph,
+    target_k: int = 7,
+    max_layer_span: int = 4,
+    max_sn: int | None = None,
+    mean_method: Literal["geo", "harm", "arith"] = "arith",
+    normalize_weights: bool = False,
+    decay_rate: float | None = 1.0,
+) -> list[list[str]]:
+    """
+    Cycle-Constrained Agglomerative Clustering (Approach 1 from clusterv3.md).
+
+    Merges the most-similar pair of clusters that (a) keeps layer span <= max_layer_span
+    and (b) does not create a cycle in the supernode DAG, until target_k middle clusters
+    remain. The DAG guarantee is native — no post-processing needed.
+    """
+    kept_ids = prune_graph.node_ids
+    nodes_by_id = _nodes_by_id(prune_graph)
+
+    if not kept_ids:
+        return []
+
+    sim = compute_similarity(
+        prune_graph,
+        mean_method=mean_method,
+        normalize_weights=normalize_weights,
+        decay_rate=decay_rate,
+        max_layer_span=max_layer_span,
+    )
+
+    middle_idx = [i for i, nid in enumerate(kept_ids) if not node_is_fixed(nodes_by_id[nid])]
+    middle_ids = [kept_ids[i] for i in middle_idx]
+
+    if not middle_ids:
+        return [[nid] for nid in kept_ids]
+
+    m = len(middle_ids)
+    target_k = max(1, min(target_k, m))
+
+    # Symmetrized similarity between middle nodes
+    mid_sim = sim[middle_idx][:, middle_idx].detach().cpu().numpy().clip(0.0, 1.0)
+    mid_sim = ((mid_sim + mid_sim.T) / 2.0).clip(0.0, 1.0)
+
+    # Working cluster-level similarity matrix (weighted average linkage)
+    cs = mid_sim.copy()
+    np.fill_diagonal(cs, -np.inf)
+
+    sizes = np.ones(m, dtype=float)
+
+    # members[k] = list of indices into middle_ids
+    members: dict[int, list[int]] = {i: [i] for i in range(m)}
+
+    # Cluster-level DAG: ca[s, t] = True iff any edge from cluster s -> cluster t
+    # pruned_adj[target, source]: pruned_adj[t, s] > 0 means edge s -> t
+    full_adj = prune_graph.pruned_adj.detach().cpu().numpy()
+    adj_mid = full_adj[np.ix_(middle_idx, middle_idx)]  # adj_mid[t, s] = edge s -> t
+
+    ca = np.zeros((m, m), dtype=bool)
+    tgts, srcs = np.where(adj_mid > 0)
+    for s, t in zip(srcs, tgts):
+        if s != t:
+            ca[s, t] = True  # edge s -> t
+
+    active: set[int] = set(range(m))
+
+    # Precompute per-node layer values for span checks
+    node_layers = [_layer_numeric(nid, nodes_by_id) for nid in middle_ids]
+
+    while len(active) > target_k:
+        active_list = sorted(active)
+        best_sim = -np.inf
+        best_a = best_b = -1
+
+        for ii in range(len(active_list)):
+            a = active_list[ii]
+            for jj in range(ii + 1, len(active_list)):
+                b = active_list[jj]
+                if cs[a, b] <= best_sim:
+                    continue
+                # Hard layer-span constraint
+                merged_layers = [node_layers[i] for i in members[a]] + [node_layers[i] for i in members[b]]
+                if max(merged_layers) - min(merged_layers) > max_layer_span:
+                    continue
+                # Cycle constraint: reject if merge would create a cycle
+                if _merge_creates_cycle(ca, a, b, active):
+                    continue
+                best_sim = cs[a, b]
+                best_a, best_b = a, b
+
+        if best_a < 0:
+            break  # no valid merge remains
+
+        # Merge best_b into best_a (weighted average linkage)
+        sa, sb = sizes[best_a], sizes[best_b]
+        for k in active:
+            if k == best_a or k == best_b:
+                continue
+            merged_val = (sa * cs[best_a, k] + sb * cs[best_b, k]) / (sa + sb)
+            cs[best_a, k] = merged_val
+            cs[k, best_a] = merged_val
+
+        sizes[best_a] = sa + sb
+        members[best_a].extend(members.pop(best_b))
+
+        # Update cluster DAG: best_a inherits best_b's edges
+        ca[best_a, :] |= ca[best_b, :]
+        ca[:, best_a] |= ca[:, best_b]
+        ca[best_a, best_a] = False  # no self-loop
+        ca[best_b, :] = False
+        ca[:, best_b] = False
+
+        active.discard(best_b)
+
+    middle_clusters = [[middle_ids[i] for i in members[k]] for k in sorted(active)]
+
+    if max_sn is not None and len(middle_clusters) > max_sn:
+        middle_clusters = _merge_to_budget(middle_clusters, nodes_by_id, max_sn=max_sn)
+
+    named_middle = _name_middle_supernodes(middle_clusters, nodes_by_id)
+    emb_singletons = [[nid] for nid in kept_ids if node_is_embedding(nodes_by_id[nid])]
+    logit_singletons = [[nid] for nid in kept_ids if node_is_logit(nodes_by_id[nid])]
+    return list(named_middle.values()) + emb_singletons + logit_singletons
+
+
 def cluster_graph_with_labels(
     prune_graph: PruneGraph,
     **kwargs,
